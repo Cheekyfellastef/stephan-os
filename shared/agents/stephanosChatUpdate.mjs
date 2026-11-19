@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
+import { projectIgnitionInertEvidenceV1, projectIgnitionOwnerResultV1,
+  projectPostSyncRemainingIgnitionObligationsV1 } from './postSyncRuntimeRefreshCoordinator.mjs';
+import { collectPostSyncRefreshDebt, resolvePostSyncRefreshDebt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
+import { createFixedSyncAndRefreshAdapter, SYNC_AND_REFRESH_CHILD_BUDGET_MS,
+  SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS, readCanonicalPostSyncRefreshEvidenceV1,
+  resolveCanonicalSyncAndRefreshPaths } from '../../scripts/battle-bridge-github-sync-and-refresh.mjs';
+import { adjudicateBattleBridgeIgnitionSyncPreflightResultV1 } from '../../scripts/battle-bridge-ignition-sync-preflight.mjs';
 import {
   DEFAULT_CODEX_DISPATCH_REPO_ROOT,
   runBattleBridgeDiagnostics,
@@ -12,6 +21,8 @@ export const DEFAULT_RUNTIME_PROOF_DELAY_MS = 2000;
 
 const MAX_RUNTIME_PROOF_ATTEMPTS = 8;
 const MAX_RUNTIME_PROOF_DELAY_MS = 10000;
+const UPDATE_RUNTIME_BUDGET_MS = 900000;
+const SHA40 = /^[a-f0-9]{40}$/;
 const APPROVED_RUNTIME_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
   'data/',
@@ -58,6 +69,137 @@ function capture(spawnSyncFn, command, args, { cwd, timeout = 900000 } = {}) {
     stderr: bounded(result?.stderr),
     error: result?.error?.message || '',
   });
+}
+
+// The source-sync owner returns the real transition; it does not perform or
+// publish canonical runtime adoption. Reuse the existing coordinator and
+// preflight owners before the direct service supervisor can have effects.
+async function admitCanonicalUpdateRuntime({ repoRoot, sync, spawnSyncFn, adoptionEvidenceReader }) {
+  const beforeHead = sync?.beforeHead, sourceHead = sync?.afterHead;
+  const deadline = performance.now() + UPDATE_RUNTIME_BUDGET_MS;
+  const remaining = () => Math.max(0, Math.floor(deadline - performance.now()));
+  const stages = [];
+  const result = (ok, blocker = '') => Object.freeze({ ok, blocker, sourceHead: typeof sourceHead === 'string' ? sourceHead : '',
+    beforeHead: typeof beforeHead === 'string' ? beforeHead : '', stages: Object.freeze(stages), remainingBudgetMs: remaining() });
+  if (!SHA40.test(beforeHead || '') || !SHA40.test(sourceHead || '') || sync.branch !== 'main'
+    || sync.approvedTargetHead !== sourceHead || sync.sourceConverged !== true || sync.verificationPassed !== true
+    || sync.tests?.ok !== true || typeof sync.updated !== 'boolean' || sync.updated !== (beforeHead !== sourceHead))
+    return result(false, 'CHAT_UPDATE_SOURCE_TRANSITION_UNPROVEN');
+  const observer = createFixedSyncAndRefreshAdapter({ spawnSyncFn });
+  const exactHead = () => {
+    const observed = observer.observeCurrentHead(repoRoot, { timeoutMs: remaining() });
+    return observed?.ok === true && observed.head === sourceHead;
+  };
+  const safeBlocker = value => typeof value === 'string' && /^[A-Z0-9_:-]{1,180}$/.test(value)
+    ? value : 'CANONICAL_RUNTIME_ADOPTION_HELD';
+  function stage(script, args, marker, ceiling) {
+    if (!exactHead()) return { ok: false, blocker: 'CHAT_UPDATE_SOURCE_ADVANCED_BEFORE_ADOPTION' };
+    const timeout = Math.min(ceiling, remaining());
+    if (timeout <= 0) return { ok: false, blocker: 'CHAT_UPDATE_RUNTIME_BUDGET_EXHAUSTED' };
+    let child;
+    try { child = spawnSyncFn(process.execPath, [join(repoRoot, 'scripts', script), ...args], {
+      cwd: repoRoot, shell: false, windowsHide: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      env: createBattleBridgeMinimalChildEnvironment(process.env), timeout, maxBuffer: 256 * 1024,
+    }); } catch { child = { status: null, error: { code: 'SPAWN_UNPROVEN' } }; }
+    const closed = !child?.error && !child?.signal && [0, 2].includes(child?.status);
+    let parsed = null;
+    try {
+      const lines = typeof child?.stdout === 'string' ? child.stdout.split(/\r?\n/).filter(line => line.startsWith(marker)) : [];
+      if (closed && lines.length === 1) parsed = projectIgnitionInertEvidenceV1(JSON.parse(lines[0].slice(marker.length)));
+    } catch { /* Missing/invalid authority remains a hold. */ }
+    const sourceStillExact = exactHead();
+    const summary = Object.freeze({ script, exitCode: Number.isInteger(child?.status) ? child.status : null,
+      sourceStillExact, parsed: parsed !== null,
+      blocker: child?.error?.code === 'ETIMEDOUT' ? 'CHAT_UPDATE_ADOPTION_TIMEOUT'
+        : !sourceStillExact ? 'CHAT_UPDATE_SOURCE_ADVANCED_DURING_ADOPTION'
+          : !closed || !parsed ? 'CHAT_UPDATE_ADOPTION_RESULT_UNPROVEN' : parsed.ok === true ? '' : safeBlocker(parsed.blocker) });
+    stages.push(summary);
+    return { ok: summary.blocker === '' && child.status === 0, normalTerminal: closed && parsed !== null && sourceStillExact,
+      exitCode: child?.status, blocker: summary.blocker || safeBlocker(parsed?.blocker), parsed };
+  }
+  const changed = beforeHead !== sourceHead;
+  const paths = resolveCanonicalSyncAndRefreshPaths();
+  const ancestry = (before, after) => before === after ? { ok: true, ancestor: true }
+    : observer.isAncestor(before, after, repoRoot, { timeoutMs: remaining() });
+  async function canonicalEvidence() {
+    if (!exactHead()) return { ok: false, blocker: 'CHAT_UPDATE_SOURCE_ADVANCED_BEFORE_EVIDENCE' };
+    let view;
+    try { view = projectIgnitionInertEvidenceV1(await adoptionEvidenceReader(paths)); } catch { /* A read failure is not absent history. */ }
+    if (!exactHead()) return { ok: false, blocker: 'CHAT_UPDATE_SOURCE_ADVANCED_DURING_EVIDENCE' };
+    if (!view || view.schemaVersion !== 'stephanos.canonical-post-sync-refresh-evidence.v1' || !view.canonicalRecords)
+      return { ok: false, blocker: 'CHAT_UPDATE_CANONICAL_ADOPTION_EVIDENCE_UNPROVEN' };
+    // Re-derive authority from the actual bounded canonical records. A supplied
+    // summary/ok flag never substitutes for owner, span or scoped proof checks.
+    const evidence = collectPostSyncRefreshDebt(view.canonicalRecords);
+    if (!evidence.ok) return evidence;
+    const resolved = resolvePostSyncRefreshDebt({ ...evidence, currentHead: sourceHead, requireCurrentCoverage: true, isAncestor: ancestry });
+    if (!resolved.ok) return resolved;
+    let paid = !changed && resolved.debt === null;
+    if (changed) {
+      const covered = resolvePostSyncRefreshDebt({ ...evidence, requestedSpans: [{ beforeHead, afterHead: sourceHead }],
+        currentHead: sourceHead, requireCurrentCoverage: true, isAncestor: ancestry });
+      if (!covered.ok) return covered;
+      paid = covered.debt === null;
+      if (!paid) {
+        const debt = resolved.debt;
+        const coversStart = debt && debt.afterHead === sourceHead ? ancestry(debt.beforeHead, beforeHead) : null;
+        if (!debt || coversStart?.ok !== true || coversStart.ancestor !== true)
+          return { ok: false, blocker: 'CHAT_UPDATE_TRANSITION_RETENTION_UNPROVEN' };
+      }
+    }
+    return { ok: true, paid, records: view.canonicalRecords };
+  }
+  if (beforeHead !== sourceHead) {
+    const refresh = stage('battle-bridge-post-sync-refresh.mjs', ['--before', beforeHead, '--after', sourceHead],
+      'POST_SYNC_REFRESH_RESULT=', SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh);
+    if (!refresh.normalTerminal) return result(false, refresh.blocker);
+    const record = projectIgnitionOwnerResultV1({ ok: true, result: refresh.parsed }, 'refresh')?.result;
+    const obligations = projectPostSyncRemainingIgnitionObligationsV1(record, sourceHead);
+    if (!record || record.schemaVersion !== 'stephanos.post-sync-runtime-refresh.v1'
+      || typeof record.ok !== 'boolean' || record.sourceHead !== sourceHead
+      || record.phase !== (record.ok ? 'complete' : 'blocked') || refresh.exitCode !== (record.ok ? 0 : 2) || !obligations)
+      return result(false, 'CHAT_UPDATE_ADOPTION_PROJECTION_UNPROVEN');
+  }
+  const beforeEvidence = await canonicalEvidence();
+  if (!beforeEvidence.ok) return result(false, beforeEvidence.blocker);
+  const preflight = stage('battle-bridge-ignition-sync-preflight.mjs', [],
+    'BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT=', SYNC_AND_REFRESH_CHILD_BUDGET_MS);
+  if (!preflight.ok) return result(false, preflight.blocker);
+  const proof = preflight.parsed;
+  const classifications = ['IGNITION_SYNC_PREFLIGHT_PASS', 'IGNITION_SYNC_PREFLIGHT_PASS_CONTROL_PLANE_DEGRADED',
+    'IGNITION_SYNC_PREFLIGHT_PASS_COMMANDER_CUSTODY_DEGRADED', 'IGNITION_SYNC_PREFLIGHT_PASS_PLUGIN_HOST_DEGRADED'];
+  const common = ['schemaVersion','ok','skipped','classification','sourceHead','syncClassification','syncBlockerReason',
+    'refreshCount','pendingRefreshObserved','sourceForwardedBeforeRefresh','refreshDebtCoalesced','controlPlaneRepairObserved','blocker','finalVerdict'];
+  const optional = proof.classification === classifications[1] ? ['controlPlaneDegraded','controlPlaneBlocker']
+    : proof.classification === classifications[2] ? ['commanderDegraded','commanderBlocker']
+      : proof.classification === classifications[3] ? ['pluginHostDegraded','pluginHostBlocker'] : [];
+  if (proof.schemaVersion !== 'stephanos.battle-bridge-ignition-sync-preflight.v1' || proof.ok !== true
+    || proof.skipped !== false || proof.sourceHead !== sourceHead || !classifications.includes(proof.classification)
+    || common.some(key => !Object.hasOwn(proof,key)) || Object.keys(proof).some(key => !common.includes(key) && !optional.includes(key))
+    || proof.syncClassification !== 'SYNC_NO_CHANGE' || typeof proof.syncBlockerReason !== 'string'
+    || !Number.isSafeInteger(proof.refreshCount) || proof.refreshCount < 0 || proof.refreshCount > 3
+    || ['pendingRefreshObserved','sourceForwardedBeforeRefresh','refreshDebtCoalesced','controlPlaneRepairObserved'].some(key => typeof proof[key] !== 'boolean')
+    || (optional.length && (proof[optional[0]] !== true || typeof proof[optional[1]] !== 'string'))
+    || proof.blocker !== '' || proof.finalVerdict !== 'IGNITION_SYNC_PREFLIGHT_PASS')
+    return result(false, 'CHAT_UPDATE_ADOPTION_PREFLIGHT_UNPROVEN');
+  const afterEvidence = await canonicalEvidence();
+  if (!afterEvidence.ok) return result(false, afterEvidence.blocker);
+  if (proof.classification !== classifications[0] && (!afterEvidence.records.refreshRecord
+    || afterEvidence.records.refreshRecord.afterHead !== sourceHead))
+    return result(false, 'CHAT_UPDATE_OPTIONAL_ADOPTION_COHORT_UNPROVEN');
+  if (!afterEvidence.paid) {
+    const refresh = afterEvidence.records.refreshRecord;
+    if (!refresh || refresh.afterHead !== sourceHead) return result(false, 'CHAT_UPDATE_OPTIONAL_ADOPTION_COHORT_UNPROVEN');
+    // Reuse the exact canonical optional-hold decision over the actual current
+    // record. This is a pure check, with no additional sync/writer/executor.
+    const decision = adjudicateBattleBridgeIgnitionSyncPreflightResultV1({ ok: false, blocker: refresh.blocker,
+      sourceHead, syncClassification: 'SYNC_NO_CHANGE', refreshes: [{ result: refresh }], finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
+    if (decision.ok !== true || decision.classification !== proof.classification)
+      return result(false, 'CHAT_UPDATE_CANONICAL_MANDATORY_OBLIGATIONS_UNPROVEN');
+  }
+  if (!exactHead()) return result(false, 'CHAT_UPDATE_SOURCE_ADVANCED_BEFORE_SUPERVISOR');
+  if (remaining() <= 0) return result(false, 'CHAT_UPDATE_RUNTIME_BUDGET_EXHAUSTED');
+  return result(true);
 }
 
 function parsePorcelain(output = '') {
@@ -241,6 +383,7 @@ export async function updateStephanosFromChat({
   operatorApproval = '',
   platform = process.platform,
   spawnSyncFn = spawnSync,
+  adoptionEvidenceReader = readCanonicalPostSyncRefreshEvidenceV1,
   syncFn = syncCodexDispatchBridge,
   diagnosticsFn = runBattleBridgeDiagnostics,
   runtimeProofAttempts = DEFAULT_RUNTIME_PROOF_ATTEMPTS,
@@ -307,8 +450,16 @@ export async function updateStephanosFromChat({
   const preDiagnostics = await diagnosticsFn({ repoRoot, spawnSyncFn });
   const statusBefore = capture(spawnSyncFn, 'git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot, timeout: 120000 });
   const dirtBefore = classifyUpdateDirt(statusBefore.stdout);
+  const runtimeAdoption = await admitCanonicalUpdateRuntime({ repoRoot, sync, spawnSyncFn, adoptionEvidenceReader });
+  if (!runtimeAdoption.ok) return Object.freeze({ ok: false, schemaVersion: STEPHANOS_CHAT_UPDATE_SCHEMA,
+    status: 'BLOCKED', verdict: 'FAIL', finalVerdict: 'SOURCE_INSTALLED_ADOPTION_HELD', blocker: runtimeAdoption.blocker,
+    sync, sourceInstalled: true, sourceHead: normalizedAfterHead, branch: expectedBranch,
+    sourceInstallStatus: sync.updated ? 'SOURCE_UPDATED' : 'SOURCE_ALREADY_CURRENT', runtimeAdoption,
+    runtimeRefreshAttempted: runtimeAdoption.stages.length > 0, serviceSupervisorInvoked: false,
+    readinessScope: 'SOURCE_AND_SERVED_SERVICES', desktopIgnitionReadiness: 'UNPROVEN',
+    operatorPowerShellRequired: false, nextOperatorAction: 'Source remains installed. Resolve the canonical runtime-adoption hold before retrying ordinary Ignition; do not discard source or invent desktop readiness.' });
   const ignitionScript = join(repoRoot, 'scripts', 'run-battle-bridge-ignition.mjs');
-  const ignition = capture(spawnSyncFn, process.execPath, [ignitionScript], { cwd: repoRoot, timeout: 900000 });
+  const ignition = capture(spawnSyncFn, process.execPath, [ignitionScript, '--expected-main', normalizedAfterHead], { cwd: repoRoot, timeout: runtimeAdoption.remainingBudgetMs });
   const attempts = boundedInteger(runtimeProofAttempts, DEFAULT_RUNTIME_PROOF_ATTEMPTS, 1, MAX_RUNTIME_PROOF_ATTEMPTS);
   const delayMs = boundedInteger(runtimeProofDelayMs, DEFAULT_RUNTIME_PROOF_DELAY_MS, 0, MAX_RUNTIME_PROOF_DELAY_MS);
   const runtimeProof = await collectRuntimeProof({
@@ -369,6 +520,10 @@ export async function updateStephanosFromChat({
     sync,
     preDiagnostics,
     ignition,
+    runtimeAdoption,
+    serviceSupervisorInvoked: true,
+    readinessScope: 'SOURCE_AND_SERVED_SERVICES',
+    desktopIgnitionReadiness: 'UNPROVEN',
     postDiagnostics,
     servedUiProof: finalProof?.servedUiProof || servedUiProof(postDiagnostics || {}),
     sourceHeadUnchangedDuringRefresh: finalProof?.sourceHeadUnchangedDuringRefresh === true,
@@ -399,7 +554,7 @@ export async function updateStephanosFromChat({
     nextOperatorAction: passed
       ? (sync.restartRequired
         ? 'Stephanos source and runtime are exact-head. Restart the desktop app when convenient so changed local MCP code is reloaded.'
-        : 'Stephanos source and runtime are exact-head. No PowerShell action is required.')
+        : 'Stephanos source and served services are exact-head. Full desktop Ignition readiness requires the existing canonical launcher and its fresh browser-window receipts.')
       : (runtimeProofPending
         ? 'Source is installed and safe. Re-run bounded read-only exact-head runtime proof after the grace window; do not repeat the Git update or discard local work.'
         : 'Inspect the returned bounded blocker. Do not reset, clean, stash, force-checkout, or discard local work.'),

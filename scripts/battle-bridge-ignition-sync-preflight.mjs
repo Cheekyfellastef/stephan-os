@@ -148,37 +148,9 @@ function canDegradeUnattachedPluginHost(result = {}, projection = {}) {
   return true;
 }
 
-export async function runBattleBridgeIgnitionSyncPreflight({
-  platform = process.platform,
-  repoRoot = CURRENT_REPO_ROOT,
-  canonicalRepoRoot = resolveCanonicalSyncAndRefreshPaths().repoRoot,
-  syncAndRefreshFn = runBattleBridgeSyncAndRefresh,
-} = {}) {
-  if (platform !== 'win32') {
-    return Object.freeze({
-      schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
-      ok: true,
-      skipped: true,
-      classification: 'IGNITION_SYNC_PREFLIGHT_SKIPPED_NON_WINDOWS',
-      sourceHead: '',
-      blocker: '',
-      finalVerdict: 'IGNITION_SYNC_PREFLIGHT_SKIPPED',
-    });
-  }
-
-  if (!sameCheckout(repoRoot, canonicalRepoRoot, platform)) {
-    return Object.freeze({
-      schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
-      ok: true,
-      skipped: true,
-      classification: 'IGNITION_SYNC_PREFLIGHT_SKIPPED_NON_CANONICAL_CHECKOUT',
-      sourceHead: '',
-      blocker: '',
-      finalVerdict: 'IGNITION_SYNC_PREFLIGHT_SKIPPED',
-    });
-  }
-
-  const result = projectIgnitionPreflightResultV1(await syncAndRefreshFn({ platform }))
+// Pure canonical decision reused by every consumer of the existing startup proof.
+export function adjudicateBattleBridgeIgnitionSyncPreflightResultV1(rawResult) {
+  const result = projectIgnitionPreflightResultV1(rawResult)
     || Object.freeze({ ok: false, blocker: 'IGNITION_SYNC_AND_REFRESH_PROOF_INVALID' });
   const projection = projectSyncAndRefreshResult(result);
 
@@ -261,6 +233,39 @@ export async function runBattleBridgeIgnitionSyncPreflight({
     blocker: '',
     finalVerdict: 'IGNITION_SYNC_PREFLIGHT_PASS',
   });
+}
+
+export async function runBattleBridgeIgnitionSyncPreflight({
+  platform = process.platform,
+  repoRoot = CURRENT_REPO_ROOT,
+  canonicalRepoRoot = resolveCanonicalSyncAndRefreshPaths().repoRoot,
+  syncAndRefreshFn = runBattleBridgeSyncAndRefresh,
+} = {}) {
+  if (platform !== 'win32') {
+    return Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
+      ok: true,
+      skipped: true,
+      classification: 'IGNITION_SYNC_PREFLIGHT_SKIPPED_NON_WINDOWS',
+      sourceHead: '',
+      blocker: '',
+      finalVerdict: 'IGNITION_SYNC_PREFLIGHT_SKIPPED',
+    });
+  }
+
+  if (!sameCheckout(repoRoot, canonicalRepoRoot, platform)) {
+    return Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
+      ok: true,
+      skipped: true,
+      classification: 'IGNITION_SYNC_PREFLIGHT_SKIPPED_NON_CANONICAL_CHECKOUT',
+      sourceHead: '',
+      blocker: '',
+      finalVerdict: 'IGNITION_SYNC_PREFLIGHT_SKIPPED',
+    });
+  }
+
+  return adjudicateBattleBridgeIgnitionSyncPreflightResultV1(await syncAndRefreshFn({ platform }));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
