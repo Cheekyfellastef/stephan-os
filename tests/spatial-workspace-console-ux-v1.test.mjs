@@ -442,3 +442,23 @@ test('a denied native stop remains a local reconnect fence without sessionStorag
   assert.equal(h.client.getState().status,'selecting');
   await h.client.stop();
 });
+
+
+test('HTTP success without a stopped receipt cannot release the native session or admit another',async()=>{
+  let releaseStatus='still-active';
+  const h=clientFixture(({path})=>{
+    if(path==='/session')return {token};
+    if(path==='/windows')return {windows:[windowOne]};
+    if(path==='/stop')return {status:releaseStatus};
+    throw Error('Unexpected native request '+path);
+  });
+  assert.equal(await h.client.discover(),true);
+  assert.equal(await h.client.stop(),false,'HTTP 200 with a different status is not a verified native release');
+  assert.match(h.client.getState().message,/did not confirm capture release/);
+  assert.equal(await h.client.discover(),false,'no replacement session while the previous native capture may exist');
+  assert.equal(h.calls.filter(call=>call.path==='/session').length,1);
+  releaseStatus='stopped';
+  assert.equal(await h.client.discover(),true,'only the fixed terminal receipt admits a new session');
+  assert.equal(h.calls.filter(call=>call.path==='/session').length,2);
+  assert.equal(await h.client.stop(),true);
+});
