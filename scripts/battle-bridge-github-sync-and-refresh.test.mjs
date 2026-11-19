@@ -317,14 +317,17 @@ test('real permission failures, malformed refusals and possible side effects are
     { ...busySync(), evaluation: { ...busySync().evaluation, performsShellExecution: undefined } },
     { ...busySync(), evaluation: { ...busySync().evaluation, exactNextAction: 'C:\\private\\path' } },
   ];
-  for (const refusal of variants) {
+  for (const [index, refusal] of variants.entries()) {
     let calls = 0, waits = 0;
     const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
       pendingReader: async () => null, sleepFn: async () => { waits += 1; },
       adapter: { runSync() { calls += 1; return { ok: true, result: refusal }; },
         runRefresh() { assert.fail('unsafe refusal reached refresh'); } },
     });
-    assert.equal(result.ok, false); assert.equal(result.blocker, 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED');
+    // Explicit undefined cannot occur in the fixed child's JSON; these two
+    // injected graphs fail at the shared boundary, still before any retry.
+    assert.equal(result.ok, false); assert.equal(result.blocker,
+      [1, 8].includes(index) ? 'SYNC_AND_REFRESH_OWNER_EVIDENCE_INVALID' : 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED');
     assert.equal(calls, 1); assert.equal(waits, 0);
     assert.ok(['', 'SYNC_ALREADY_RUNNING', 'LOCK_ACQUISITION_FAILED'].includes(result.syncBlockerReason));
     assert.doesNotMatch(JSON.stringify(projectSyncAndRefreshStatus(result)), /private|receipt|existing/);

@@ -15,6 +15,23 @@ def load_builder():
     builder = importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
     return builder
 
+def complete_receipt():
+    receipt = {"pairedSourceObservation": True, "records": 2, "attempted": 2,
+               "observationIsDiagnosticOnly": True, "windowReason": 1,
+               "pagePolicyAccepted": True, "residualPrivateCowPages": 0,
+               "normalProcessExitRequired": True}
+    receipt.update({field: False for field in analyzer.FALSE_PROOFS})
+    receipt.update({field: True for field in ("bound", "nativeDrained", "comRestored", "coverageOwnedBeforeDisarm", "slotsRestored", "calleeBytesUnchanged", "exactPageFlagsRestored")})
+    receipt.update({field: 0 for field in ("failure", "modelFailure", "dropped", "openApi")})
+    receipt.update({field: False for field in ("invalid", "sinkFaulted", "fiberPoisoned")})
+    return receipt
+
+def diagnostic_rows(receipt):
+    events = [{"pairedEvent": 1, "sequence": eye + 1, "role": eye,
+               "sourceCanonical": 10 + eye, "typedResource": 20 + eye} for eye in range(2)]
+    terminal = {"status": "finished", "originalBytesAndProtectionRestored": True, "dropped": 0}
+    return [receipt, terminal] + events
+
 class SourceTests(unittest.TestCase):
     def test_no_native_copy_authority(self):
         text = (ROOT / "native-paired-source-observer.h").read_text()
@@ -47,11 +64,7 @@ class SourceTests(unittest.TestCase):
         self.assertFalse(result["pixelAuthority"])
 
     def test_journal_count_and_source_alias(self):
-        receipt = {"pairedSourceObservation": True, "records": 2, "attempted": 2, "observationIsDiagnosticOnly": True, "windowReason": 1}
-        receipt.update({field: False for field in analyzer.FALSE_PROOFS})
-        receipt.update({field: True for field in ("bound", "nativeDrained", "comRestored", "coverageOwnedBeforeDisarm", "slotsRestored", "calleeBytesUnchanged", "exactPageFlagsRestored")})
-        receipt.update({field: 0 for field in ("failure", "modelFailure", "dropped", "openApi")})
-        receipt.update({field: False for field in ("invalid", "sinkFaulted", "fiberPoisoned")})
+        receipt = complete_receipt()
         events = [{"pairedEvent": 1, "sequence": eye + 1, "role": eye, "sourceCanonical": 10 + eye, "typedResource": 20 + eye} for eye in range(2)]
         terminal = {"status": "finished", "originalBytesAndProtectionRestored": True, "dropped": 0}
         result = analyzer.analyze([receipt, terminal] + events);self.assertFalse(result["errors"]);self.assertFalse(result["submissionAuthority"])
@@ -61,11 +74,7 @@ class SourceTests(unittest.TestCase):
         self.assertIn("Journal count mismatch", analyzer.analyze([receipt] + events)["errors"])
 
     def test_two_resource_state_isolation(self):
-        receipt = {"pairedSourceObservation": True, "observationIsDiagnosticOnly": True, "windowReason": 1}
-        receipt.update({field: False for field in analyzer.FALSE_PROOFS})
-        receipt.update({field: True for field in ("bound", "nativeDrained", "comRestored", "coverageOwnedBeforeDisarm", "slotsRestored", "calleeBytesUnchanged", "exactPageFlagsRestored")})
-        receipt.update({field: 0 for field in ("failure", "modelFailure", "dropped", "openApi")})
-        receipt.update({field: False for field in ("invalid", "sinkFaulted", "fiberPoisoned")})
+        receipt = complete_receipt()
         events = [{"pairedEvent": 1, "role": eye, "sourceCanonical": 10 + eye, "typedResource": 20 + eye} for eye in range(2)]
         events += [{"pairedEvent": 2, "list": 30, "generation": 1, "success": True, "coveredResetGeneration": True},
                    {"pairedEvent": 6, "list": 30, "generation": 1, "role": 1, "sourceCanonical": 11, "typedResource": 21, "wholeUnsplit": True, "before": 1024, "afterState": 4},
@@ -76,6 +85,50 @@ class SourceTests(unittest.TestCase):
         terminal = {"status": "finished", "originalBytesAndProtectionRestored": True, "dropped": 0}
         result = analyzer.analyze([receipt, terminal] + events)
         self.assertFalse(result["errors"]);self.assertEqual(result["diagnosticLocalWitnessCounts"], [0, 0]);self.assertFalse(result["pixelAuthority"])
+
+    def test_native_receipt_discloses_the_original_page_policy_and_residual_count(self):
+        text = (ROOT / "native-paired-source-observer.h").read_text()
+        self.assertIn(r'\"pagePolicyAccepted\":%s', text)
+        self.assertIn(r'\"residualPrivateCowPages\":%u', text)
+        self.assertIn(r'\"normalProcessExitRequired\":true', text)
+        self.assertIn('receipt.pagePolicyAccepted?"true":"false",receipt.residualPrivateCowPages', text)
+
+    def test_exact_and_accepted_cow_are_distinct_and_neither_proves_process_exit(self):
+        for residual in (0, 1, 64):
+            receipt = complete_receipt()
+            receipt.update(exactPageFlagsRestored=(residual == 0), residualPrivateCowPages=residual,
+                           processExitProven=True)  # Journal input cannot prove process exit.
+            result = analyzer.analyze(diagnostic_rows(receipt))
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["outcome"], "OBSERVATION_COMPLETE_NO_PIXEL_AUTHORITY")
+            self.assertEqual(result["pageProtectionOutcome"], "EXACT_FLAGS_RESTORED" if residual == 0
+                             else "ACCEPTED_PRIVATE_COW_REQUIRES_PROCESS_EXIT")
+            self.assertEqual(result["residualPrivateCowPages"], residual)
+            self.assertTrue(result["normalProcessExitRequired"])
+            for field in ("processExitProven", "pixelAuthority", "submissionAuthority", "gpuCompletionProven",
+                          "openxrSubmitted", "sameSimulationUpdateProven"):
+                self.assertIs(result[field], False)
+
+    def test_missing_rejected_and_contradictory_page_policies_fail_closed(self):
+        changes = [{"pagePolicyAccepted": value} for value in (False, None, 1)]
+        changes += [{"exactPageFlagsRestored": value} for value in (False, None, 1)]
+        changes += [{"residualPrivateCowPages": value} for value in (True, -1, 65, 1.0, "0", None, 1)]
+        changes += [{"normalProcessExitRequired": value} for value in (False, None, 1)]
+        changes += [{"exactPageFlagsRestored": False, "residualPrivateCowPages": 1,
+                     "slotsRestored": False},
+                    {"exactPageFlagsRestored": False, "residualPrivateCowPages": 1,
+                     "calleeBytesUnchanged": False}]
+        for change in changes:
+            receipt = complete_receipt(); receipt.update(change)
+            with self.subTest(change=change):
+                result = analyzer.analyze(diagnostic_rows(receipt))
+                self.assertTrue(result["errors"])
+                self.assertEqual(result["outcome"], "INCOMPLETE_OBSERVATION_NO_PIXEL_AUTHORITY")
+                self.assertFalse(result["processExitProven"])
+        for missing in ("pagePolicyAccepted", "exactPageFlagsRestored", "residualPrivateCowPages",
+                        "normalProcessExitRequired"):
+            receipt = complete_receipt(); receipt.pop(missing)
+            self.assertTrue(analyzer.analyze(diagnostic_rows(receipt))["errors"])
 
     def test_build_overlay_member_contract(self):
         builder = load_builder()

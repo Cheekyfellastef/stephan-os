@@ -77,8 +77,8 @@ Add-Type -AssemblyName System.Drawing
 # The third card is the attended monitor entry for the independent bridge.
 # Its protocol never admits arbitrary commands, file paths or a headset claim.
 $monitorBridgePath = Join-Path $PSScriptRoot 'starfield-native-monitor\splash_monitor_bridge.py'
-$monitorBridgeSha256 = '959fb334034e34d574a47a6a8b4df66d7b639c5c7e36fe871cd54440cff3ae82'
-$monitorRunnerSha256 = '26cc78b3eb8b8eac551f305a028de3ec5c6f8f80d9e9809544f742ff47ec4c2c'
+$monitorBridgeSha256 = '4703d73c9932aba8b498e5b0cac198f4608f07676fb0e2df934e9577ad91abce'
+$monitorRunnerSha256 = '81a2e4ab5c97093c4f8d25d8d33ea455d06549ac249d68c2a508625c46c73dec'
 $monitorProtocol = 'stephanos.native-eye-output.splash.v1'
 $monitorState = [pscustomobject]@{
     Process = $null
@@ -244,7 +244,7 @@ import hashlib,pathlib,sys,types
 p=pathlib.Path(sys.argv[1])
 raw=p.read_bytes()
 actual=hashlib.sha256(raw).hexdigest()
-if actual!='959fb334034e34d574a47a6a8b4df66d7b639c5c7e36fe871cd54440cff3ae82': raise SystemExit('Monitor bridge hash mismatch; no monitor code executed')
+if actual!='4703d73c9932aba8b498e5b0cac198f4608f07676fb0e2df934e9577ad91abce': raise SystemExit('Monitor bridge hash mismatch; no monitor code executed')
 sys.argv=[str(p)]+sys.argv[2:]
 m=types.ModuleType('__main__')
 m.__file__=str(p)
@@ -381,6 +381,11 @@ function Get-MonitorCustodyPaths {
         (Join-Path $runRoot 'loader-child-consumed.json'),
         (Join-Path $sourceRoot 'native-eye-output-monitor-session-v1.json'),
         (Join-Path $sourceRoot 'native-eye-output-monitor-session-v1.lock'),
+        (Join-Path $runRoot 'paired-source-v1'),
+        (Join-Path $runRoot 'paired-source-v1\session.json'),
+        (Join-Path $runRoot 'paired-source-v1\stock-child-consumed.json'),
+        (Join-Path $runRoot 'paired-source-v1\loader-child-consumed.json'),
+        (Join-Path $sourceRoot 'native-paired-source-monitor-session-v1.json'),
         'C:\Program Files (x86)\Steam\steamapps\common\Starfield\dxgi.stephanos-eye-capture-20261106-held'
     )
 }

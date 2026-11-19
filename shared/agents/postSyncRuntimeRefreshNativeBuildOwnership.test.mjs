@@ -23,16 +23,41 @@ const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40);
 const governor = 'scripts/windows/run-vr-resource-governor.ps1';
 const pass = () => ({ ok: true, exactHeadProofOk: true, sourceHead: B });
 const readSource = path => readFileSync(new URL('../../' + path, import.meta.url), 'utf8');
-// The oracle covers canonical tracked source, including dotfiles and nested
-// inputs. Generated Python caches are not source and must not change this set.
-const inventory = prefix => {
+// Inspect the actual tested source workspace, including new patch members.
+// Escrow validation applies a verified patch before making its final commit;
+// HEAD alone would silently omit those inputs. Git ignores keep generated
+// caches out, while an unregistered source neighbor still fails completeness.
+const inventory = (prefix, cwd = new URL('../../', import.meta.url)) => {
   const result = spawnSync(process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git',
-    ['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', prefix],
-    { cwd: new URL('../../', import.meta.url), encoding: 'utf8', shell: false, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024 });
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', prefix],
+    { cwd, encoding: 'utf8', shell: false, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024 });
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.split('\0').filter(Boolean).sort();
 };
+
+test('source inventory includes unapplied-to-HEAD patch members and refuses unknown source neighbors', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'starfield-source-inventory-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
+  const runGit = args => {
+    const result = spawnSync(git, args, { cwd: root, encoding: 'utf8', shell: false, windowsHide: true, timeout: 10_000 });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+  };
+  runGit(['init', '--quiet']);
+  await mkdir(join(root, 'source', '__pycache__'), { recursive: true });
+  await writeFile(join(root, '.gitignore'), '__pycache__/\n');
+  await writeFile(join(root, 'source', 'tracked.py'), '# tracked fixture\n');
+  runGit(['add', '--', '.gitignore', 'source/tracked.py']);
+  await writeFile(join(root, 'source', 'new.py'), '# new verified patch member\n');
+  await writeFile(join(root, 'source', '__pycache__', 'generated.pyc'), 'generated fixture');
+  const registered = ['source/new.py', 'source/tracked.py'];
+  assert.deepEqual(inventory('source/', root), registered);
+  await writeFile(join(root, 'source', 'unregistered.py'), '# unknown neighbor\n');
+  assert.notDeepEqual(inventory('source/', root), registered);
+  assert.ok(inventory('source/', root).includes('source/unregistered.py'));
+});
 const proof = (sourceHead = B) => ({ schemaVersion: 'stephanos.post-sync-governor-proof.v1', watchdogSucceeded: true,
   normalOperatorObserved: true, healthy: true, inventoryComplete: true, processCount: 1,
   identityVerified: true, progressVerified: true, currentSourceVerified: true,
@@ -171,8 +196,10 @@ test('source ownership is complete against canonical recipe, fresh capture, and 
   const recipe = JSON.parse(readSource(recipePath));
   const packageInputs = [recipePath, ...recipe.publicMembers.map(row => row.path),
     'VR-Research-Lab/native/starfield-paired-observer-v1/.gitattributes',
-    'VR-Research-Lab/native/starfield-paired-observer-v1/README.md'];
-  assert.equal(packageInputs.length, 14);
+    'VR-Research-Lab/native/starfield-paired-observer-v1/README.md',
+    'VR-Research-Lab/native/starfield-paired-observer-v1/reconstruct_paired_loader.py',
+    'VR-Research-Lab/native/starfield-paired-observer-v1/test_paired_loader_preparation.py'];
+  assert.equal(packageInputs.length, 16);
   assert.deepEqual([...ownership.offlinePackage].sort(), packageInputs.sort());
   for (const row of recipe.publicMembers) {
     const bytes = readFileSync(new URL('../../' + row.path, import.meta.url));
@@ -182,7 +209,7 @@ test('source ownership is complete against canonical recipe, fresh capture, and 
   assert.equal(ownership.freshCapture.length, 5);
   assert.equal(ownership.offlineBuild.length, 9);
   assert.deepEqual([...ownership.freshCapture, ...ownership.offlineBuild].sort(), inventory('scripts/windows/starfield-native-build/'));
-  assert.equal(new Set([...ownership.freshCapture, ...ownership.offlineBuild, ...ownership.offlinePackage]).size, 28);
+  assert.equal(new Set([...ownership.freshCapture, ...ownership.offlineBuild, ...ownership.offlinePackage]).size, 30);
   const builder = readSource('shared/agents/starfieldVrNativeBuildV1.mjs');
   const declarations = [...builder.matchAll(/^const (RUNNER|OWNED_JOB|LAUNCHER|RUNTIME_MODULE|RUNTIME_MANIFEST) = '([^']+)';$/gm)];
   assert.equal(declarations.length, 5);

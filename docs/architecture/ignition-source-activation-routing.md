@@ -100,3 +100,89 @@ custody, plugin activation or Spatial adoption.
 Changing the shared sync-policy proof/debt contract changes the fixed-runtime
 source closure. Protected source merge and test success do not commission that
 new closure: its existing attended installation and later real boot gate apply.
+
+## Startup degradation and remaining mandatory obligations
+
+The real coordinator/projection/preflight composition exposed two instances of
+the same defect. A desktop-plugin hold could hide retained Spatial adoption
+debt, and classifying the Governor under its real owner made Commander custody
+degradation capable of hiding the new Governor proof requirement. A displayed
+blocker did not describe all unpaid obligations. The earlier PR3539 interaction
+review was superseded; merging it did not authorize commissioning this state.
+
+All three optional startup waivers now consume one closed residual-obligation
+model derived from the canonical current-head refresh projection. Every target
+needs its own exact-head result; scoped Governor and relay debt need their
+existing closed proofs. Spatial, plugin, approval, unsafe and unknown debt stay
+separate. Missing, malformed, contradictory or future unknown authority fields
+stay unproved. A waiver may cover only its one declared optional hold. An
+unexecuted trailing natural-reload target has no adoption evidence and cannot be
+silently paid. These startup decisions never manufacture REFRESH_COMPLETE or
+clear the existing retained refresh records.
+
+An auxiliary-control-plane-only waiver additionally requires the existing sync
+child's actually published same-head status and a fresh read of the canonical
+completion/debt records. The existing fixed adapter checks current HEAD before
+and after those reads. Shared consumers rerun canonical completion/debt
+inspection and resolution using only the bounded ancestry observations made by
+the existing Git adapter. A missing publication, missing completion, source
+advance or unresolved span leaves the witness unavailable. No-history cases do
+not infer authority from absent refresh output. This proves commit binding and
+settled canonical adoption debt, not atomic absence of dirty edits, loaded
+memory bytes, native qualification, interactive acceptance or new execution
+authority.
+
+Regressions compose the actual coordinator, projection and Ignition preflight
+across optional and mandatory obligations, retain the complete 818-path corpus,
+and exercise canonical witness production, stale/malformed records, source
+advance, missing publication, and positive optional-only cases. Spatial resident
+adoption remains explicitly unimplemented and held; its existing operator
+launcher and guarded preparation profile retain their separate scopes.
+# Transitive startup evidence and Git identity
+
+The ignition obligation boundary snapshots every consumed nested proof graph before
+canonical completion inspection, debt collection/resolution, optional-hold checks
+or output projection. It uses proxy-first refusal, own data descriptors, bounded
+null-prototype records, dense rebuilt arrays and finite JSON values. All copied
+fields are enumerable, including hidden own fields; cycles, accessors, sparse
+arrays and resource-bound violations remain typed holds. Consumers use the same
+inert graph throughout and never resume the original caller's arrays, methods,
+iterators or nested proof references after validation. This is a boundary for the
+affected startup evidence path, not a claim about every legacy repository API.
+
+The wrapper snapshots initial/polled pending evidence and fresh child results.
+Only a genuine null pending-reader result denotes absent history; an invalid
+non-null graph cannot become empty debt. Settled evidence is re-derived from the
+normalized canonical sync and completion records, rather than trusting a supplied
+debt summary. Closed outer frames exclude irrelevant child stdout and execution
+payloads while preserving every consumed authority field. These observations grant
+no source, native, custody, process, refresh or loaded-byte authority.
+
+One private fixed-Git executable/config/minimal-environment context and one bound
+repository argument set serve both current-HEAD and ancestry observations. An
+adapter cannot switch repositories, inherit GIT_DIR/config/PATH authority, reset
+the five-second ancestry allowance or exceed the one-second call/remaining-parent
+budget. Failed, signalled or timed-out observations remain unproven.
+
+The convergence lesson is transitive: validating a shallow copy and later using
+original nested references leaves the same authority defect open. Property tests
+therefore cover nested arrays, records, proofs and outer frames across the real
+producer, wrapper and preflight composition, plus actual isolated Git repositories.
+
+## Unattended ordinary startup and chat update scope
+
+The existing canonical Windows launcher accepts an explicit -Unattended switch. It defers optional fixed-runtime commissioning and retained-custody preparation before inspection, package preparation or dialogs. Its same canonical outcome reports preparation DEFERRED and observed Native/custody state UNKNOWN, with qualificationProven and custodyReleased false. This does not prove Native availability, release custody, discharge activation debt or grant execution authority. The interactive shortcut remains unchanged.
+
+Mandatory recovery decisions become ATTENDED_ACTION_REQUIRED with a closed reason and the requesting source head. The existing helper/mutex and current-helper logs carry that result to the existing terminal launcher projection. Unattended failure never waits for Read-Host or CMD pause, and helper windows remain hidden. Every ordinary source-adoption preflight, exact-head service check and final required browser/window receipt stays binding. OpenClaw remains optional under its existing contract.
+
+Unattended launcher-root startup requires a successful fixed CIM listener census proving port5173 vacant. Occupied or unproven state is held before any Stop-Process call. Existing interactive5173 termination is retained as bounded architectural debt: a later repair should prove the canonical listener owner rather than terminate an arbitrary occupant. This change grants no foreign-process termination.
+
+Chat source sync previously fast-forwarded and ran bridge tests without publishing the transition to canonical runtime adoption. The updater now sends its genuine exact before/after receipt through the existing fixed post-sync coordinator and its canonical lock/checkpoint/debt writer, then runs the existing canonical ignition preflight even for no-change updates. Current-head barriers and the actual canonical record view prove that the requested span is paid or remains retained before and after preflight. The same pure canonical adjudicator decides any sole optional hold; the updater never invents a waiver or demands a stricter local completion. Required Governor, Relay, Spatial, unsafe or unknown debt cannot disappear behind a healthy endpoint. Installed source remains recorded when adoption is held. No parent/mutex/resource qualification is fabricated; existing target refusals remain binding.
+
+The direct supervisor accepts one optional exact --expected-main binding. It rejects malformed/additional arguments and a mismatched initial canonical head before service effects, then uses its existing repeated source-truth barriers for that same head. Existing unpinned interactive startup still proves canonical source through its original collector.
+
+Chat update reports SOURCE_AND_SERVED_SERVICES scope and desktop ignition UNPROVEN. It does not open cockpit windows or rewrite launcher-status.json. Full desktop readiness belongs to the original canonical launcher and its fresh exact-head service plus required-window recensus. The reusable invariant is one owner per proof scope: source installation, activation adoption, served service health, desktop/browser readiness and Native qualification are distinct facts.
+
+The richer existing reader is read-only and returns inert canonical records. Its old pending-debt interface is preserved. A caller summary or include-records flag grants no authority: owner, exact source cohort, requested-span coverage, actual fixed-Git ancestry and mandatory residual obligations are re-derived. Tests use the actual canonical writer, on-disk records, reader and preflight for plugin-only, Commander-custody-only and paid-runtime auxiliary holds, while missing/foreign/wrong-head/failed reads and mandatory debt remain held. Optional degraded startup leaves its canonical pending span intact.
+
+The fresh Windows launcher chain has one exact activation-owner inventory: its CMD entry, PowerShell launcher and approval helper. Natural reload and essential-member removal/rename refusal derive from that same inventory. A whole-delta classifier regression covers this source increment; unknown neighboring scripts remain blocked. This closes repeated classification drift without a wildcard or an ignition waiver.

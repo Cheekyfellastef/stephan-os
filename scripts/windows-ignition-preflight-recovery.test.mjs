@@ -33,7 +33,7 @@ function Initialize-IgnitionProofWorkspace {}
 ${definition('Get-LauncherChildBlocker')}
 ${body}
 `, 'utf8');
-    return spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], {
+    return spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], {
       encoding: 'utf8', windowsHide: true, shell: false, timeout: 10_000,
     });
   } finally { rmSync(directory, { recursive: true, force: true }); }
@@ -66,6 +66,26 @@ test('current helper preflight packets preserve safe refusal codes and exclude s
       assert.equal(observation.packetType, 'ignition-sync-preflight', fixture.name);
       assert.doesNotMatch(JSON.stringify(observation), /private|token\.txt|rawLine/);
     } else assert.equal(observation, null, fixture.name);
+  }
+});
+
+test('only the current helper can project a closed attended-action request and never reuse malformed latest output', { skip: process.platform !== 'win32' },()=>{
+  const prefix='STEPHANOS_IGNITION_ATTENDED_ACTION_REQUIRED=';
+  const value={schemaVersion:'stephanos.ignition-attended-action-required.v1',blocker:'ATTENDED_ACTION_REQUIRED',requiredAction:'OPENCLAW_SERVICE_RESTART',sourceHead:'a'.repeat(40)};
+  for(const fixture of [
+    {stdout:prefix+JSON.stringify(value),expected:true},
+    {stderr:prefix+JSON.stringify(value)},
+    {stdout:prefix+JSON.stringify({...value,requiredAction:'C:\\private\\secret'})},
+    {stdout:prefix+JSON.stringify({...value,sourceHead:'unknown'})},
+    {stdout:prefix+JSON.stringify({...value,schemaVersion:'foreign'})},
+    {stdout:prefix+JSON.stringify(value)+'\n'+prefix+'{'},
+  ]){
+    const result=runFixture('ConvertTo-Json -InputObject (Get-LauncherChildBlocker) -Depth 8 -Compress',{
+      'current.stdout.log':fixture.stdout||'', 'current.stderr.log':fixture.stderr||''});
+    assert.equal(result.status,0,result.stderr||result.stdout);const observed=result.stdout.trim()?JSON.parse(result.stdout.trim()):null;
+    if(fixture.expected){assert.equal(observed.reason,'ATTENDED_ACTION_REQUIRED');assert.equal(observed.packetType,'ignition-attended-action-required');}
+    else assert.equal(observed,null);
+    assert.doesNotMatch(JSON.stringify(observed),/private|secret|rawLine/);
   }
 });
 
