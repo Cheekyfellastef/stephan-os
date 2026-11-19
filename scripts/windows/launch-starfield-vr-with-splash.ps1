@@ -240,10 +240,11 @@ namespace Stephanos.Starfield {
                         .ToString(System.Globalization.CultureInfo.InvariantCulture);
                     if (!String.Equals(birth, createdFileTime, StringComparison.Ordinal))
                         return "game-creation-identity-changed";
-                    string image = game.MainModule.FileName;
-                    if (!String.Equals(image, @"C:\Program Files (x86)\Steam\steamapps\common\Starfield\Starfield.exe",
-                                       StringComparison.OrdinalIgnoreCase))
-                        return "game-executable-identity-changed";
+                    // The pinned monitor runner already authenticated the absolute image.
+                    // This UI helper only rechecks its exact PID/birth and process name;
+                    // it cannot launch a game or authorize the capture.
+                    if (!String.Equals(game.ProcessName, "Starfield", StringComparison.OrdinalIgnoreCase))
+                        return "game-process-name-changed";
                     List<IntPtr> windows = new List<IntPtr>();
                     EnumWindowsCallback callback = delegate(IntPtr hwnd, IntPtr argument) {
                         uint owner;
