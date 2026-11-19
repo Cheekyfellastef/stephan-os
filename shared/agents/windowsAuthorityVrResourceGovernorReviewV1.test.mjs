@@ -350,6 +350,28 @@ test('rejected source variant must not emit positive proof references', () => {
   assert.equal(registered.proofRefs.length, 1);
 });
 
+test('rejects inherited source provenance even with matching bytes and blob', () => {
+  const accepted = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input());
+  assert.equal(accepted.eligible, true);
+  assert.equal(accepted.clean, true);
+  for (const field of ['schemaVersion', 'repository', 'path', 'ref', 'exists', 'size', 'blobSha', 'content']) {
+    const candidate = input();
+    const evidence = candidate.sources[0];
+    const inheritedValue = evidence[field];
+    delete evidence[field];
+    Object.setPrototypeOf(evidence, { [field]: inheritedValue });
+    assert.equal(Object.hasOwn(evidence, field), false, field);
+    assert.equal(evidence[field], inheritedValue, field);
+    const rejected = analyzeWindowsAuthorityVrResourceGovernorReviewV1(candidate);
+    assert.equal(rejected.eligible, true, field);
+    assert.equal(rejected.clean, false, field);
+    assert.deepEqual(rejected.proofRefs, [], field);
+    assert.equal(rejected.mergeAuthority, false, field);
+    assert.equal(rejected.runtimeMutationAllowed, false, field);
+    assert.equal(rejected.providerQualificationAuthority, false, field);
+  }
+});
+
 test('source identity and single-source custody checks remain fail closed', () => {
   const wrongBlob = input();
   wrongBlob.sources[0].blobSha = '0'.repeat(40);

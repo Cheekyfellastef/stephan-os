@@ -68,6 +68,9 @@ function exactSource(source, repository, head) {
     source
     && typeof source === 'object'
     && !Array.isArray(source)
+    // Provenance and content must be explicit wire evidence, never prototype defaults.
+    && ['schemaVersion', 'repository', 'path', 'ref', 'exists', 'size', 'blobSha', 'content']
+      .every((key) => Object.hasOwn(source, key))
     && source.schemaVersion === SOURCE_SCHEMA
     && source.repository === repository
     && source.path === PATH
