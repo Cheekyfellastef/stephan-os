@@ -291,3 +291,59 @@ test('Spatial Voice and Disconnect guidance keeps ChatGPT audio control in the o
   assert.ok(guide.some(text=>text.includes('Disconnect stops the window picture and input')));
   assert.equal(h.inputs.length,0,'opening guidance never sends an app action');
 });
+
+test('an uncertain native editor update discards queued Enter instead of repeating or submitting a draft',async()=>{
+  let serial=0;
+  const delivered=[];
+  const h=clientFixture(({path,body})=>{
+    if(path==='/session')return {token};
+    if(path==='/windows')return {windows:[windowOne]};
+    if(path==='/bind')return {status:'connected'};
+    if(path==='/frame')return {status:'frame',serial:++serial,generation:1,jpeg:'synthetic fixture'};
+    if(path==='/input'){
+      delivered.push(body);
+      return {status:body.kind==='click'?'editor-accessibility-selected':'editor-update-unverified'};
+    }
+    return {status:'stopped'};
+  });
+  await h.client.discover();await h.client.connect(windowOne.id);await h.tick();
+  assert.equal(h.client.input({kind:'click',x:.5,y:.5}),true);await h.tick();
+  assert.equal(h.client.input({kind:'text',text:'unsent draft'}),true);
+  assert.equal(h.client.input({kind:'key',key:'Enter'}),true,'operator may queue Enter while the text result is unknown');
+  await h.tick();
+  assert.match(h.client.getState().inputStatus,/did not confirm.*do not retry/);
+  assert.deepEqual(delivered.map(item=>item.kind),['click','text'],'the queued Enter must never reach native input');
+  assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'editor consent must be revoked after uncertain mutation');
+  assert.equal(h.client.input({kind:'text',text:'duplicate'}),false,'repeated characters require a fresh explicit editor selection');
+  assert.deepEqual(delivered.map(item=>item.sequence),[1,2]);
+  await h.client.stop();
+});
+
+test('a lost native reply cannot replay a potentially applied draft or a pending Send',async()=>{
+  let serial=0;
+  const delivered=[];
+  const h=clientFixture(({path,body})=>{
+    if(path==='/session')return {token};
+    if(path==='/windows')return {windows:[windowOne]};
+    if(path==='/bind')return {status:'connected'};
+    if(path==='/frame')return {status:'frame',serial:++serial,generation:1,jpeg:'synthetic fixture'};
+    if(path==='/input'){
+      delivered.push(body);
+      if(body.kind==='text')throw new Error('synthetic lost reply after possible app-side mutation');
+      return {status:'editor-accessibility-selected'};
+    }
+    return {status:'stopped'};
+  });
+  await h.client.discover();await h.client.connect(windowOne.id);await h.tick();
+  assert.equal(h.client.input({kind:'click',x:.5,y:.5}),true);await h.tick();
+  assert.equal(h.client.input({kind:'text',text:'possibly applied'}),true);
+  assert.equal(h.client.input({kind:'key',key:'Enter'}),true);
+  await h.tick();
+  assert.equal(h.client.getState().status,'unavailable');
+  assert.match(h.client.getState().inputStatus,/may already have changed.*do not resend automatically/);
+  assert.deepEqual(delivered.map(item=>item.kind),['click','text'],'uncertain request must not auto-deliver queued Enter');
+  assert.equal(h.client.input({kind:'key',key:'Enter'}),false);
+  assert.equal(h.client.input({kind:'text',text:'retry'}),false);
+  assert.deepEqual(delivered.map(item=>item.sequence),[1,2]);
+  await h.client.stop();
+});
