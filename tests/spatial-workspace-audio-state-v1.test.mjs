@@ -4,9 +4,9 @@ import { createHolodeckAudioControls,readSpatialAudioPreferences } from '../apps
 
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 const drain=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
-function mediaStream(){
+function mediaStream(deviceId='headset'){
   const listeners=new Set();
-  const track={readyState:'live',stops:0,stop(){this.stops++;this.readyState='ended';},
+  const track={readyState:'live',stops:0,getSettings(){return {deviceId};},stop(){this.stops++;this.readyState='ended';},
     addEventListener(event,listener){assert.equal(event,'ended');listeners.add(listener);},
     removeEventListener(event,listener){assert.equal(event,'ended');listeners.delete(listener);},
     end(){this.readyState='ended';for(const listener of [...listeners])listener();}};
@@ -68,6 +68,25 @@ test('microphone test uses the shared selection and owns exactly one pending or 
   h.audio.dispose();
 });
 
+test('an explicit Quest microphone grant must read back the selected physical device',async()=>{
+  for(const mode of ['wrong-device','missing-settings','unreadable-settings']){
+    const h=microphoneHarness();await h.audio.listDevices();
+    assert.equal(h.audio.setInput('headset'),true);
+    const opening=h.audio.testMicrophone(),stream=mediaStream('other-headset');
+    if(mode==='missing-settings')delete stream.track.getSettings;
+    if(mode==='unreadable-settings')stream.track.getSettings=()=>{throw Error('device unavailable');};
+    h.requests[0].resolve(stream);
+    const result=await opening;
+    assert.equal(result.ok,false,mode+' must never be treated as the selected headset');
+    assert.match(result.reason,/microphone identity could not be verified/i);
+    assert.equal(stream.track.stops,1,'unverified microphone grant must release its track once');
+    assert.equal(h.audio.getState().microphoneActive,false);
+    assert.equal(h.audio.getState().microphonePending,false);
+    assert.equal(h.audio.getState().inputId,'headset','no automatic device switching');
+    h.audio.dispose();assert.equal(stream.track.stops,1);
+  }
+});
+
 test('Stop and dispose settle pending microphone tests and close a later permission grant',async()=>{
   for(const operation of ['stopMicrophone','dispose']){
     const h=microphoneHarness(),opening=h.audio.testMicrophone();let result;
@@ -84,7 +103,7 @@ test('an old permission rejection cannot overwrite a fresh explicitly started mi
   const h=microphoneHarness();await h.audio.listDevices();
   const old=h.audio.testMicrophone();h.audio.stopMicrophone();
   assert.equal(h.audio.setInput('new-microphone'),true,'new test needs a fresh discovered selection');
-  const fresh=h.audio.testMicrophone(),stream=mediaStream();h.requests[1].resolve(stream);
+  const fresh=h.audio.testMicrophone(),stream=mediaStream('new-microphone');h.requests[1].resolve(stream);
   assert.equal((await fresh).ok,true);const accepted=h.audio.getState();
   h.requests[0].reject(Object.assign(new Error('old denied grant'),{name:'NotAllowedError'}));
   assert.equal((await old).cancelled,true);await drain();
@@ -96,7 +115,7 @@ test('changing the selected microphone revokes the old test without opening the 
   for(const phase of ['pending','active']){
     const h=microphoneHarness();await h.audio.listDevices();
     assert.equal(h.audio.setInput('old-microphone'),true);
-    const opening=h.audio.testMicrophone(),stream=mediaStream();
+    const opening=h.audio.testMicrophone(),stream=mediaStream('old-microphone');
     if(phase==='active'){h.requests[0].resolve(stream);assert.equal((await opening).ok,true);}
     assert.equal(h.audio.setInput('new-microphone'),true);
     const selected=h.audio.getState();
@@ -153,7 +172,7 @@ test('local audio tests cannot bypass explicitly selected headset routes',async(
   const permitted=h.audio.testMicrophone();
   assert.equal(h.requests.length,1);assert.deepEqual(h.requests[0].spec,
     {audio:{deviceId:{exact:'old-microphone'}},video:false});
-  const stream=mediaStream();h.requests[0].resolve(stream);
+  const stream=mediaStream('old-microphone');h.requests[0].resolve(stream);
   assert.equal((await permitted).ok,true);h.audio.stopMicrophone();
   assert.equal(stream.track.stops,1);h.audio.dispose();
 
