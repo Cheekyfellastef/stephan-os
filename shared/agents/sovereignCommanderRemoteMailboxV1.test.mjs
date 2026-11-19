@@ -2913,6 +2913,29 @@ test('controller publication binds statusId to the exact requested canonical con
   }
 });
 
+test('controller activity identities must be scalar strings before canonical publication (#2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'typed-identity', observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  assert.equal(check(activity).ok, true, 'valid canonical scalar identity must remain admitted');
+  for (const [field, malformed, blocker] of [
+    ['controllerId', [activity.controllerId], 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID'],
+    ['runId', [activity.runId], 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID'],
+    ['runId', 17, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID'],
+    ['executionState', [activity.executionState], 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID'],
+  ]) {
+    const result = check({ ...activity, [field]: malformed });
+    assert.equal(result.ok, false, field + ' admitted non-scalar ' + JSON.stringify(malformed));
+    assert.equal(result.blocker, blocker);
+  }
+});
+
 test('controller activity explicit counters reject coercion while legacy lane-count aliases remain numeric (original #2573)', () => {
   const activity = {
     schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',

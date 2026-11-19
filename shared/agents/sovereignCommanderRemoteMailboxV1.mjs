@@ -148,9 +148,15 @@ function validateRemoteControllerActivity(value) {
   if (value.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1') {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_SCHEMA_INVALID', { requested: true });
   }
+  if (typeof value.controllerId !== 'string') {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID', { requested: true });
+  }
   const controllerId = text(value.controllerId);
   if (!CANONICAL_CONTROLLER_IDS.has(controllerId)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID', { requested: true });
+  }
+  if (typeof value.runId !== 'string') {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID', { requested: true });
   }
   const runId = text(value.runId);
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(runId)) {
@@ -158,6 +164,9 @@ function validateRemoteControllerActivity(value) {
   }
   if (typeof value.observedEnabled !== 'boolean') {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ENABLEMENT_INVALID', { requested: true });
+  }
+  if (typeof value.executionState !== 'string') {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID', { requested: true });
   }
   const executionState = text(value.executionState).toUpperCase();
   if (!CONTROLLER_ACTIVITY_EXECUTION_STATES.has(executionState)) {
