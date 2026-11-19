@@ -125,3 +125,20 @@ test('native editable-target source refuses readonly documents, uncertain replay
   assert.doesNotMatch(source,/if\(FAILED\(changed\)\)return Reply\(L"editor-update-refused"\)/);
   assert.doesNotMatch(source,/\bSendInput\s*\(/,'no global synthetic input on the VR browser desktop');
 });
+
+test('desktop Disconnect and hidden/page-exit routes release room-local audio with the in-room owner',()=>{
+  const entry=readFileSync(new URL('../apps/spatial-bridge/quest-entry.html',import.meta.url),'utf8');
+  const screenSource=readFileSync(new URL('../apps/spatial-bridge/holodeck-screen-v1.mjs',import.meta.url),'utf8');
+  assert.match(entry,/getElementById\('disconnect-window'\)\.addEventListener\('click',\(\)=>screen\.action\('disconnect-window'\)\)/,
+    'desktop Disconnect must use the same revoking screen owner as the VR wall');
+  assert.doesNotMatch(entry,/getElementById\('disconnect-window'\)\.addEventListener\('click',\(\)=>client\.stop\(\)\)/,
+    'direct desktop client.stop would leave pending local microphone and speaker grants alive');
+  assert.match(screenSource,/if\(id==='disconnect-window'\)\{[\s\S]{0,130}return stopConnection\(\)/,
+    'screen Disconnect must call its synchronous session revocation');
+  assert.match(screenSource,/function stopConnection\(\)\{[\s\S]{0,1100}audio\?\.stopSpeakers\?\.\(\)/,
+    'the canonical owner must stop pending and active speaker tests');
+  assert.match(entry,/if \(document\.hidden\) \{[^}]*stopMicTest\(\);audio\.stopSpeakers\(\);cubeScene\.stop\(\)/,
+    'backgrounding must release the local audio test independently of ChatGPT Voice');
+  assert.match(entry,/window\.addEventListener\('pagehide', event => \{[^}]*stopMicTest\(\);audio\.stopSpeakers\(\);cubeScene\.stop\(\);void client\.pagehide\(event\)/,
+    'page exit must revoke local audio even with an in-flight speaker selection');
+});
