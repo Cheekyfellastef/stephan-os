@@ -282,9 +282,11 @@ export function createHolodeckAudioControls({
       const gain=testContext.createGain();owner.gain=gain;
       oscillator.frequency.value=440;gain.gain.value=0.07;
       oscillator.connect(gain);gain.connect(testContext.destination);
-      oscillator.onended=()=>{if(ownsSpeaker(owner))releaseSpeaker();};
+      oscillator.onended=()=>{if(ownsSpeaker(owner)){
+        releaseSpeaker();status('Local speaker test completed. Headset audibility and ChatGPT Voice are not verified.');
+      }};
       oscillator.start();oscillator.stop(testContext.currentTime+0.15);
-      const reason='Played a short local speaker test tone. ChatGPT app audio routing is separate.';
+      const reason='Local speaker test tone started. Listen for it; headset audibility and ChatGPT Voice are not verified.';
       if(ownsSpeaker(owner)&&intent===statusIntent)status(reason);
       return {ok:true,reason};
     }catch(error){
