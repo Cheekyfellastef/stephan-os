@@ -881,3 +881,58 @@ test('a second click during a native click response revokes text queued for the 
     assert.deepEqual(observed.map(body=>body.kind),['click','click','text']);
   }finally{await h.close();}
 });
+
+
+test('native stop refusal is not reported as a verified disconnect and blocks automatic reconnect',async()=>{
+  const key='stephanos.spatial-window.session.v1',saved=new Map([[key,'a'.repeat(64)]]);
+  const paths=[];let stopAllowed=false;
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},
+    sessionStore:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value),
+      removeItem:key=>saved.delete(key)},
+    setTimer:()=>1,clearTimer:()=>{},
+    fetchRef:async url=>{
+      const path=new URL(url).pathname;paths.push(path);
+      if(path==='/stop')return stopAllowed
+        ?{ok:true,status:200,json:async()=>({status:'stopped'})}
+        :{ok:false,status:403,json:async()=>({status:'refused'})};
+      if(path==='/session')return {ok:true,status:200,json:async()=>({token:'b'.repeat(64)})};
+      if(path==='/windows')return {ok:true,status:200,json:async()=>({windows:[]})};
+      throw Error('Unexpected native request '+path);
+    }
+  });
+  assert.equal(await client.stop(),false,'a refused native stop is not release proof');
+  assert.equal(client.getState().status,'unavailable');
+  assert.match(client.getState().message,/did not confirm capture release/);
+  assert.equal(saved.get(key),'a'.repeat(64),'retain the old token for a deliberate later stop attempt');
+  assert.equal(await client.discover(),false,'automatic discovery cannot proceed after unverified stop');
+  assert.deepEqual(paths,['/stop','/stop'],'no fresh session is allocated while prior capture may live');
+  stopAllowed=true;
+  await client.discover();
+  assert.equal(client.getState().status,'selecting');
+  assert.deepEqual(paths.slice(2),['/stop','/session','/windows']);
+  assert.equal(saved.get(key),'b'.repeat(64),'a verified stop permits fresh native consent');
+  await client.stop();
+});
+
+test('browser view-only fallback never adopts a capture after an unverified native stop',async()=>{
+  const key='stephanos.spatial-window.session.v1',saved=new Map([[key,'a'.repeat(64)]]);
+  let stops=0;
+  const track={readyState:'live',stop(){stops++;this.readyState='ended';},addEventListener(){}};
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},
+    sessionStore:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value),
+      removeItem:key=>saved.delete(key)},
+    navigatorRef:{mediaDevices:{getDisplayMedia:()=>Promise.resolve({
+      getVideoTracks:()=>[track],getTracks:()=>[track]})}},
+    fetchRef:async(url)=>{assert.equal(new URL(url).pathname,'/stop');
+      return {ok:false,status:503,json:async()=>({status:'unavailable'})};},
+    setTimer:()=>1,clearTimer:()=>{},
+  });
+  assert.equal(await client.shareScreen(),false);
+  assert.equal(track.readyState,'ended');assert.equal(stops,1);
+  assert.equal(client.getFrame(),null);assert.equal(client.getState().status,'unavailable');
+  assert.match(client.getState().message,/Native window release unverified/);
+  assert.equal(saved.get(key),'a'.repeat(64),'unverified native session must not be forgotten');
+  await client.stop();
+});
