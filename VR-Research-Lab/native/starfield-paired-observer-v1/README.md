@@ -164,11 +164,39 @@ out-of-bounds spans, duplicate anchors and hook collisions. The original
 controller's retained input pins and fresh-session checks remain prerequisites
 for any eventual execution; this offline function does not supply them.
 
-Actual private preparation authenticated the original closure, parsed the new
-loader and checked ordering of the three remote mutation calls without
-executing it. The candidate loader is 26,084 bytes, SHA-256
-`8bb4794f07a8a5bf3d7726f96e211035c2508fd0ec0bc82e81a42cabebff28fd`.
-This identity needs independent private source review; it is not an approval.
+The initial preparation candidate and completed build remain historical
+artifacts. The source repairs below require a new guarded native build and a
+matching, independently reviewed loader candidate before runtime admission.
+The loader preparation function remains pinned to the prior completed build
+until a new authenticated terminal receipt supplies its replacement identity.
+It cannot admit an arbitrary caller-supplied DLL or promote a source change
+into binary qualification.
+
+### Manifest and restoration evidence repairs
+
+The first transformation handled literal manifest filenames but missed the
+active view manifest selected through `native_manifest`. Manifest reads in
+`main` now use parsed expression spans, including that selected filename, so
+all such reads consume the authenticated snapshots. Unsupported name or read
+shapes fail preparation. A synthetic generated-main regression changes the
+disk file after snapshot creation and proves the authenticated view entries
+are still used before mutation.
+
+The native COM observer already distinguishes exact page flags from its
+accepted private copy-on-write page policy. The paired receipt now preserves
+`pagePolicyAccepted` and `residualPrivateCowPages` alongside
+`exactPageFlagsRestored`. The analyzer accepts only consistent, typed evidence
+within the existing 64-slot observer bound, while preserving the distinction
+between exact flags and accepted residual private pages. Missing, rejected,
+contradictory or out-of-bound evidence remains incomplete. This does not
+change the native hook or page-restoration policy.
+
+Both outcomes explicitly require normal process exit. Diagnostic completeness
+never proves process exit, retirement of retained pages, pixel capture or
+headset readiness. The session owner must separately verify normal game exit
+and proxy restoration. The reusable invariant is that the bytes checked must
+be the bytes consumed, and accepted restoration policy must never be reported
+as exact restoration or completed process cleanup.
 
 The original monitor attempt is consumed. Its November 16 capture passed the
 native-output analysis, but the saved outcome remains
