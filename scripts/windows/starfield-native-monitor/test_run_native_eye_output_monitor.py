@@ -3,6 +3,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -61,6 +62,8 @@ class FakeHost:
         self.on_start = None
         self.on_load = None
         self.on_verify = None
+        self.children = {}
+        self.guards = []
 
     def verify_artifacts(self):
         self.calls.append("verify")
@@ -108,7 +111,11 @@ class FakeHost:
 
     def open_guard(self, process):
         self.calls.append("open-guard")
+        self.guards.append(mock.Mock(process=copy.deepcopy(process), alive=lambda: self.alive))
         return copy.deepcopy(process)
+
+    _refresh_children = m.WindowsActions._refresh_children
+    retirement_observation = m.WindowsActions.retirement_observation
 
     def guard_alive(self, guard):
         return self.alive
@@ -587,6 +594,149 @@ class DurableAdapterTests(unittest.TestCase):
         for raw in ('{"pid":1,"pid":2}', '{"counter":NaN}', '{"counter":Infinity}'):
             with self.assertRaises(ValueError):
                 m.strict_json(raw)
+
+
+class RuntimeRetirementTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.journal = m.Journal(Path(self.temporary.name) / "run")
+        self.journal.acquire()
+        self.host = m.WindowsActions.__new__(m.WindowsActions)
+        self.host.journal, self.host.children, self.host.guards = self.journal, {}, []
+        self.host.pins = mock.Mock()
+
+    def observe(self, retired):
+        result = self.host.retirement_observation()
+        self.assertIs(result["retired"], retired, result)
+        self.assertTrue(result["noRuntimeActionPerformed"])
+        return result
+
+    def game(self, alive=False):
+        self.journal.state.update(process=copy.deepcopy(PROCESS), starterSessionId=SESSION_ID)
+        guard = mock.Mock(process=copy.deepcopy(PROCESS))
+        guard.alive.return_value = alive
+        self.host.guards.append(guard)
+        return guard
+
+    def child(self, state="UNRESOLVED", role="load"):
+        entry = {"id": "a" * 32, "role": role, "state": state, "pid": 12345}
+        self.journal.state["childCalls"] = [entry]
+        self.journal.state["activeChild"] = entry.copy() if state in {"RUNNING", "UNRESOLVED"} else None
+        child = mock.Mock(returncode=None)
+        child.poll.return_value = None
+        self.host.children[entry["id"]] = child
+        self.journal.save()
+        return child
+
+    def test_source_only_close_releases_pins(self):
+        self.observe(True)
+        self.host.close()
+        self.host.pins.close.assert_called_once()
+
+    @unittest.skipUnless(os.name == "nt", "Windows namespace/file sharing proof")
+    def test_live_game_hold_keeps_actual_file_and_directory_pins(self):
+        package = Path(self.temporary.name) / "package"
+        package.mkdir()
+        member = package / "reviewed-member.bin"
+        member.write_bytes(b"synthetic-reviewed-bytes")
+        pins = m.ReadPins()
+        self.addCleanup(pins.close)
+        pins.add_namespaces([package])
+        pins.add([member])
+        self.host.pins = pins
+        guard = self.game(alive=True)
+        with self.assertRaises(m.Blocked):
+            self.host.close()
+        with self.assertRaises(OSError):
+            member.write_bytes(b"replacement")
+        with self.assertRaises(OSError):
+            package.rename(package.with_name("moved-package"))
+        guard.alive.return_value = False
+        self.host.close()
+        member.write_bytes(b"retired-fixture")
+        self.assertEqual(member.read_bytes(), b"retired-fixture")
+
+    def test_all_child_and_game_liveness_combinations_require_both_retired(self):
+        guard = self.game()
+        child = self.child()
+        for child_live, game_live in ((True, True), (True, False), (False, True), (False, False)):
+            with self.subTest(child_live=child_live, game_live=game_live):
+                child.poll.return_value = None if child_live else 0
+                child.returncode = None if child_live else 0
+                guard.alive.return_value = game_live
+                self.observe(not child_live and not game_live)
+                if child_live or game_live:
+                    with self.assertRaises(m.Blocked):
+                        self.host.close()
+                    self.host.pins.close.assert_not_called()
+                    guard.close.assert_not_called()
+        self.host.close()
+        self.host.pins.close.assert_called_once()
+        self.assertEqual(m.strict_json(self.journal.path.read_bytes())["childCalls"][0]["state"], "RETURNED")
+
+    def test_unknown_game_observation_keeps_pins(self):
+        guard = self.game()
+        guard.alive.side_effect = OSError("WAIT_FAILED")
+        self.observe(False)
+        with self.assertRaises(m.Blocked):
+            self.host.close()
+        guard.close.assert_not_called()
+        self.host.pins.close.assert_not_called()
+
+    def test_falsey_or_missing_active_child_custody_never_becomes_retired(self):
+        for value in ({}, [], False, 0, ""):
+            self.journal.state["activeChild"] = value
+            self.observe(False)
+            self.assertEqual(self.journal.state["activeChild"], value)
+        del self.journal.state["activeChild"]
+        self.observe(False)
+
+    def test_unobserved_child_intent_and_unknown_handle_remain_held(self):
+        self.child("INTENT")
+        self.observe(False)
+        self.journal.state["childCalls"] = []
+        self.observe(False)
+
+    def test_returned_launcher_cannot_prove_no_delayed_game(self):
+        child = self.child(role="start")
+        child.poll.return_value = child.returncode = 0
+        self.journal.state["cleanupComplete"] = True
+        self.observe(False)
+
+    def test_closed_game_handle_does_not_upgrade_cleanup_or_normal_exit(self):
+        self.game()
+        self.journal.state.update(cleanupComplete=False, cleanupReceipt={"normalExitProven": False})
+        self.observe(True)
+        self.assertFalse(self.journal.state["cleanupComplete"])
+        self.assertFalse(self.journal.state["cleanupReceipt"]["normalExitProven"])
+
+    def test_reopened_cleanup_requires_exact_typed_terminal_receipt(self):
+        self.game()
+        self.host.guards = []
+        self.journal.state["cleanupComplete"] = True
+        receipt = {**starter_receipt(), "stage": "GAME_EXIT_OBSERVED_PROXY_RESTORED",
+                   "proxyRestored": True, "gameExitObserved": True, "normalExitProven": False}
+        self.journal.state["cleanupReceipt"] = receipt
+        self.observe(True)
+        for key, value in (("gameExitObserved", 1), ("proxyRestored", 1), ("sessionId", "wrong"),
+                           ("process", {**PROCESS, "createdFileTime": "134384778410182997"}),
+                           ("reviewedDllSha256", "wrong"), ("handoffSha256", "wrong"),
+                           ("stage", "NORMAL_EXIT_STILL_REQUIRED")):
+            with self.subTest(key=key):
+                self.journal.state["cleanupReceipt"] = {**receipt, key: value}
+                self.observe(False)
+
+    def test_write_uncertainty_and_completion_write_failure_retain_pins(self):
+        self.journal.write_uncertain = True
+        self.observe(False)
+        self.journal.write_uncertain = False
+        self.game()
+        child = self.child()
+        child.poll.return_value = child.returncode = 0
+        with mock.patch.object(self.journal, "save", side_effect=m.Blocked("write failed")):
+            self.observe(False)
+        self.host.pins.close.assert_not_called()
 
 
 class ResultBundleTests(unittest.TestCase):

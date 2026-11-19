@@ -28,7 +28,8 @@ import types
 SCHEMA = "stephanos.native-eye-output.splash.v1"
 CUSTODY_SCHEMA = "stephanos.native-eye-output.provider-custody.v1"
 CORE_NAME = "run_native_eye_output_monitor.py"
-CORE_SHA256 = "26cc78b3eb8b8eac551f305a028de3ec5c6f8f80d9e9809544f742ff47ec4c2c"
+CORE_SHA256 = "81a2e4ab5c97093c4f8d25d8d33ea455d06549ac249d68c2a508625c46c73dec"
+CUSTODY_SHA256 = "48e619bcf61538e8a336813d200ce46517171d16227c0c6fcb8b01946ba44836"
 MAX_COMMAND_BYTES = 8192
 MAX_EVENT_BYTES = 32768
 MODES = {"ready", "waiting", "existing", "done", "cleanup", "blocked"}
@@ -36,7 +37,7 @@ COMMANDS = {"prepare", "confirm", "finish", "cancel", "close"}
 HEX32 = re.compile(r"[0-9a-f]{32}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 DECIMAL = re.compile(r"[1-9][0-9]{0,19}\Z")
-REVIEWED_RUNNER_HASHES = {CORE_SHA256, "f40df00ff7378b8d3c62714bfb32702226746735f73d804a2c5f3e3727f7ba6c", "6e296ff22f3de9fc1ec0ef4a6751cc7cc85b315a2641a8d20c0e1d9bb6c1d4b3"}
+REVIEWED_RUNNER_HASHES = {CORE_SHA256, "26cc78b3eb8b8eac551f305a028de3ec5c6f8f80d9e9809544f742ff47ec4c2c", "f40df00ff7378b8d3c62714bfb32702226746735f73d804a2c5f3e3727f7ba6c", "6e296ff22f3de9fc1ec0ef4a6751cc7cc85b315a2641a8d20c0e1d9bb6c1d4b3"}
 
 
 class ProtocolError(RuntimeError):
@@ -196,6 +197,9 @@ class SplashSession:
         self.closed = False
         self.transport_broken = False
         self.release_failed = False
+        self.retirement_hold = None
+        self.runtime_retired = False
+        self.next_retirement_observation = 0.0
         self.exit_code = 0
         self.progress = queue.Queue(maxsize=64)
         self.completed = queue.Queue(maxsize=1)
@@ -230,9 +234,9 @@ class SplashSession:
             return None, None
         path = Path(value)
         match = re.fullmatch(r"Starfield-VR-monitor-result-([0-9a-f]{12})\.zip", path.name)
-        if not match or path.parent != self.result_root:
+        if not match or path.parent not in (self.result_root, self.result_root / "paired-source-v1"):
             return None, None
-        directory = self.result_root / ("result-" + match[1])
+        directory = path.parent / ("result-" + match[1])
         if len(str(directory)) > 1024:
             return None, None
         try:
@@ -265,8 +269,8 @@ class SplashSession:
         uncertain = self.monitor is not None and self.monitor.journal.write_uncertain is not False
         cleaned = state.get("cleanupComplete") is True
         custody_complete = "activeChild" in state and isinstance(state.get("childCalls"), list)
-        released = (not self.busy and not self.release_failed and not pending and not uncertain
-                    and (not self.prepare_dispatched or (cleaned and custody_complete)))
+        released = (not self.busy and not self.release_failed and self.retirement_hold is None and not pending and not uncertain
+                    and (not self.prepare_dispatched or (cleaned and custody_complete and self.runtime_retired)))
         analysis = state.get("analysis")
         analysis_ok = isinstance(analysis, dict) and analysis.get("monitorCaptureAccepted") is True
         cleanup = state.get("cleanupReceipt")
@@ -340,6 +344,7 @@ class SplashSession:
                 return {"mode": "blocked", "error": short_text(error, 800) + "; reporting: " + short_text(reporting_error, 350)}
 
     def start_operation(self, operation):
+        self.runtime_retired = False
         if self.busy:
             raise ProtocolError("A monitor operation is already active.")
         self.busy = True
@@ -415,6 +420,11 @@ class SplashSession:
                     and self.monitor.confirmation_available is True and not self.close_requested):
                 import uuid
                 self.confirmation_token = uuid.uuid4().hex
+            if self.monitor is not None:
+                try:
+                    self.runtime_retired = self.monitor.host.retirement_observation().get("retired") is True
+                except Exception:
+                    self.runtime_retired = False
             self.emit_state()
         self.advance_close()
 
@@ -428,17 +438,37 @@ class SplashSession:
             self.start_operation("finish")
             return
         if self.monitor is not None:
+            now = time.monotonic()
+            if now < self.next_retirement_observation:
+                return
+            self.next_retirement_observation = now + 1.0
+            try:
+                observation = self.monitor.host.retirement_observation()
+                if not isinstance(observation, dict) or observation.get("retired") is not True:
+                    self.runtime_retired = False
+                    reason = (observation.get("reason", "RETIREMENT_UNPROVEN")
+                              if isinstance(observation, dict) else "RETIREMENT_UNPROVEN")
+                    if self.retirement_hold != reason:
+                        self.retirement_hold = reason
+                        self.emit("progress", message="Keeping package protection until the game and helper have exited: " + short_text(reason, 120))
+                        self.emit_state()
+                    return
+                self.retirement_hold = None
+                # close independently rechecks retirement before releasing any
+                # pins. Keep the common owner lock if that recheck fails.
+                self.monitor.host.close()
+                self.runtime_retired = True
+            except Exception as error:
+                self.runtime_retired = False
+                self.last_error = short_text(error)
+                self.retirement_hold = "RETIREMENT_OR_PIN_RELEASE_UNPROVEN"
+                self.emit_state()
+                return
             try:
                 self.monitor.journal.release()
             except Exception as error:
                 self.last_error = short_text(error)
                 self.release_failed = True
-            finally:
-                try:
-                    self.monitor.host.close()
-                except Exception as error:
-                    self.last_error = short_text(error)
-                    self.release_failed = True
         if self.last_error or not self.projection()["safeToClose"]:
             self.exit_code = 2
         self.closed = True
@@ -523,152 +553,41 @@ def run_session(factory, stream_in, stream_out, channel, result_root, parent_ali
     return session.exit_code
 
 
+def custody_model():
+    path = Path(__file__).with_name("monitor_session_custody.py")
+    raw = plain_file(path)
+    if hashlib.sha256(raw).hexdigest() != CUSTODY_SHA256:
+        raise ProtocolError("The shared monitor custody model changed.")
+    module = types.ModuleType("_starfield_shared_monitor_custody")
+    module.__file__ = str(path)
+    exec(compile(raw, str(path), "exec"), module.__dict__)
+    return module
+
+
+def _custody_call(name, *args, **kwargs):
+    model = custody_model()
+    try:
+        return getattr(model, name)(*args, **kwargs)
+    except model.CustodyError as error:
+        raise ProtocolError(str(error)) from error
+
+
 def custody_paths(core, helper):
-    """Exactly the paths used by the splash's absence-only fast check."""
-    return {"outer": core.RUN_DIRECTORY / "session.json",
-            "outerLock": core.RUN_DIRECTORY / "operator.lock",
-            "stockMarker": core.RUN_DIRECTORY / "stock-child-consumed.json",
-            "loadMarker": core.RUN_DIRECTORY / "loader-child-consumed.json",
-            "starter": core.SOURCE / helper.SESSION_NAME,
-            "starterLock": (core.SOURCE / helper.SESSION_NAME).with_suffix(".lock"),
-            "heldProxy": helper.HELD}
+    return _custody_call("custody_paths", core, helper)
 
 
 def custody_snapshot(core, helper):
-    values = {}
-    for name, path in custody_paths(core, helper).items():
-        path = core.plain_path(path)
-        if not path.exists():
-            values[name] = None
-        elif name == "heldProxy":
-            # Any held-path presence is a hold; never inspect arbitrary bytes.
-            info = path.stat()
-            values[name] = (info.st_size, info.st_mtime_ns)
-        else:
-            values[name] = core.bounded_bytes(path, 1024 * 1024 if name in {"outer", "starter"} else 8192)
-    if values["outer"] is not None or values["starter"] is not None:
-        receipt = core.plain_path(core.SOURCE / "proxy-isolation-receipt.json")
-        values["restoreReceipt"] = core.bounded_bytes(receipt, 32768) if receipt.exists() else None
-    return values
+    return _custody_call("custody_snapshot", core, helper)
 
 
 def validate_released_custody(core, helper, outer, starter, restore):
-    """Consume typed terminal evidence, never a loose completed/true label."""
-    if outer is None and starter is None:
-        raise ProtocolError("MONITOR_CUSTODY_ORPHANED")
-    if outer is not None:
-        if (not isinstance(outer, dict) or outer.get("schema") != core.SCHEMA
-                or outer.get("workspace") != str(core.WORKSPACE)
-                or outer.get("handoffSha256") != core.HANDOFF_SHA256
-                or outer.get("reviewedDllSha256") != core.DLL_SHA256
-                or not isinstance(outer.get("runId"), str) or HEX32.fullmatch(outer["runId"]) is None
-                or outer.get("runnerSha256") not in REVIEWED_RUNNER_HASHES
-                or outer.get("stage") != "CLEANUP_COMPLETE"
-                or outer.get("cleanupComplete") is not True
-                or "activeChild" not in outer or outer["activeChild"] is not None
-                or type(outer.get("captureAttempted")) is not bool
-                or type(outer.get("saveLoadedConfirmed")) is not bool
-                or not isinstance(outer.get("childCalls"), list) or len(outer["childCalls"]) > 2048):
-            raise ProtocolError("MONITOR_OUTER_CLEANUP_UNPROVEN")
-        child_ids = set()
-        for child in outer["childCalls"]:
-            if (not isinstance(child, dict) or not isinstance(child.get("id"), str)
-                    or HEX32.fullmatch(child["id"]) is None or child["id"] in child_ids
-                    or child.get("role") not in {"start", "status", "finish", "modules", "scene", "stock", "load"}
-                    or child.get("state") not in {"RETURNED", "NOT_STARTED"}):
-                raise ProtocolError("MONITOR_CHILD_CUSTODY_UNRESOLVED")
-            child_ids.add(child["id"])
-        cleanup = outer.get("cleanupReceipt")
-        if not isinstance(cleanup, dict) or cleanup.get("proxyRestored") is not True:
-            raise ProtocolError("MONITOR_CLEANUP_RECEIPT_UNPROVEN")
-    else:
-        cleanup = None
-    if starter is None:
-        if (outer.get("starterSessionId") is not None or outer.get("process") is not None
-                or outer["captureAttempted"] is not False or outer["saveLoadedConfirmed"] is not False
-                or cleanup.get("stage") != "NO_STARTER_SESSION_NO_GAME_PROXY_RESTORED"
-                or any(child["role"] != "status" for child in outer["childCalls"])):
-            raise ProtocolError("MONITOR_STARTER_CUSTODY_MISSING")
-    else:
-        if (not isinstance(starter, dict) or starter.get("schema") != helper.SCHEMA
-                or starter.get("workspace") != str(core.WORKSPACE)
-                or starter.get("handoffSha256") != core.HANDOFF_SHA256
-                or starter.get("reviewedDllSha256") != core.DLL_SHA256
-                or starter.get("sourceArchiveSha256") != helper.ARCHIVE_HASH
-                or not isinstance(starter.get("sessionId"), str) or HEX32.fullmatch(starter["sessionId"]) is None
-                or starter.get("proxyRestored") is not True
-                or type(starter.get("launchRequested")) is not bool
-                or starter.get("injected") is not False or starter.get("captureAttempted") is not False
-                or starter.get("saveLoadedConfirmed") is not False):
-            raise ProtocolError("MONITOR_STARTER_CLEANUP_UNPROVEN")
-        if starter["launchRequested"]:
-            if (starter.get("stage") != "GAME_EXIT_OBSERVED_PROXY_RESTORED"
-                    or starter.get("gameExitObserved") is not True
-                    or not core.process_valid(starter.get("process"))):
-                raise ProtocolError("MONITOR_GAME_EXIT_UNPROVEN")
-        elif starter.get("stage") != "PRELAUNCH_ABORT_PROXY_RESTORED" or starter.get("process") is not None:
-            raise ProtocolError("MONITOR_PRELAUNCH_CLEANUP_UNPROVEN")
-        if outer is not None:
-            if (outer.get("starterSessionId") != starter["sessionId"]
-                    or cleanup.get("sessionId") != starter["sessionId"]
-                    or cleanup.get("stage") != starter["stage"]
-                    or core.json_bytes(cleanup.get("process")) != core.json_bytes(starter.get("process"))
-                    or core.json_bytes(outer.get("process")) != core.json_bytes(starter.get("process"))
-                    or (starter["launchRequested"] and cleanup.get("gameExitObserved") is not True)):
-                raise ProtocolError("MONITOR_CLEANUP_IDENTITY_MISMATCH")
-        if (not isinstance(restore, dict) or restore.get("stage") != "restored"
-                or restore.get("source") != str(helper.PROXY) or restore.get("held") != str(helper.HELD)
-                or restore.get("expectedSha256") != helper.PROXY_HASH
-                or restore.get("sourceSha256") != helper.PROXY_HASH
-                or "heldSha256" not in restore or restore["heldSha256"] is not None
-                or not isinstance(restore.get("utc"), str) or not restore["utc"]):
-            raise ProtocolError("MONITOR_PROXY_RESTORE_RECEIPT_UNPROVEN")
+    return _custody_call("validate_released_custody", core, helper, outer, starter, restore,
+                         runner_hashes=REVIEWED_RUNNER_HASHES)
 
 
 def provider_custody(core, helper, host_factory=None):
-    """Read existing custody twice around a fixed process observation; no writes."""
-    first = custody_snapshot(core, helper)
-    if all(value is None for value in first.values()):
-        if custody_snapshot(core, helper) != first:
-            raise ProtocolError("MONITOR_CUSTODY_CHANGED_DURING_OBSERVATION")
-        return {"allowed": True, "providerSlotReleased": True, "reason": "NO_MONITOR_CUSTODY",
-                "observationsCurrent": True, "noMutationPerformed": True}
-    if any(first[key] is not None for key in ("outerLock", "starterLock", "heldProxy")):
-        return {"allowed": False, "providerSlotReleased": False, "reason": "MONITOR_CUSTODY_HELD",
-                "observationsCurrent": True, "noMutationPerformed": True}
-    outer = core.strict_json(first["outer"]) if first["outer"] is not None else None
-    starter = core.strict_json(first["starter"]) if first["starter"] is not None else None
-    restore = core.strict_json(first["restoreReceipt"]) if first.get("restoreReceipt") is not None else None
-    validate_released_custody(core, helper, outer, starter, restore)
-    for name in ("stockMarker", "loadMarker"):
-        if first[name] is None:
-            if name == "loadMarker" and outer is not None and outer.get("probeLoadedProven") is True:
-                raise ProtocolError("MONITOR_LOAD_RECEIPT_UNPROVEN")
-            continue
-        marker = core.strict_json(first[name])
-        process = outer.get("process") if isinstance(outer, dict) else None
-        if (not isinstance(marker, dict) or not core.process_valid(process)
-                or marker.get("runId") != outer["runId"] or type(marker.get("pid")) is not int
-                or marker["pid"] != process["pid"] or marker.get("createdFileTime") != process["createdFileTime"]):
-            raise ProtocolError("MONITOR_INVOCATION_CUSTODY_MISMATCH")
-        if name == "loadMarker" and (outer.get("captureAttempted") is not True
-                or marker.get("attemptToken") != outer.get("captureAttemptToken")
-                or marker.get("starterSessionId") != outer.get("starterSessionId")
-                or marker.get("reviewedDllSha256") != core.DLL_SHA256
-                or marker.get("loaderSha256") != core.LOADER_SHA256):
-            raise ProtocolError("MONITOR_LOAD_CUSTODY_MISMATCH")
-    host = (host_factory or helper.WindowsHost)()
-    # A later legitimate VorpX/MutaR selection can change dxgi.dll. Completed
-    # monitor custody is proved by its terminal owner/restore records, absent
-    # locks and held path, and no live game; do not freeze the provider forever
-    # to the monitor's original proxy hash. Existing slot validation still runs.
-    games = host.games()
-    if not isinstance(games, list) or games:
-        raise ProtocolError("MONITOR_GAME_STILL_PRESENT_OR_UNOBSERVED")
-    if custody_snapshot(core, helper) != first:
-        raise ProtocolError("MONITOR_CUSTODY_CHANGED_DURING_OBSERVATION")
-    return {"allowed": True, "providerSlotReleased": True, "reason": "MONITOR_CUSTODY_RELEASED",
-            "observationsCurrent": True, "noMutationPerformed": True}
+    return _custody_call("provider_custody", core, helper, host_factory,
+                         runner_hashes=REVIEWED_RUNNER_HASHES)
 
 
 def custody_main():
@@ -682,7 +601,7 @@ def custody_main():
         verify_bridge_identity(Path(__file__), bridge_digest)
         core = load_core(Path(__file__).parent)
         pins = core.ReadPins()
-        pins.add([Path(__file__), Path(__file__).with_name(CORE_NAME), Path(__file__).with_name(core.HELPER_NAME)])
+        pins.add([Path(__file__), Path(__file__).with_name("monitor_session_custody.py"), Path(__file__).with_name(CORE_NAME), Path(__file__).with_name(core.HELPER_NAME)])
         verify_bridge_identity(Path(__file__), bridge_digest)
         if core.sha256(core.bounded_bytes(Path(__file__).with_name(CORE_NAME), 256 * 1024)) != CORE_SHA256:
             raise ProtocolError("MONITOR_CUSTODY_CORE_CHANGED")
@@ -730,14 +649,13 @@ def main(argv=None):
         parent = ParentGuard(args.parent_pid, args.parent_filetime)
         core = load_core(Path(__file__).parent)
         pins = core.ReadPins()
-        pins.add([Path(__file__), Path(__file__).with_name(CORE_NAME)])
+        pins.add([Path(__file__), Path(__file__).with_name("monitor_session_custody.py"), Path(__file__).with_name(CORE_NAME)])
         verify_bridge_identity(Path(__file__), bridge_digest)
         if core.sha256(core.bounded_bytes(Path(__file__).with_name(CORE_NAME), 256 * 1024)) != CORE_SHA256:
             raise ProtocolError("The monitor core changed before its read pin was acquired.")
 
         def factory(notify):
-            journal = core.Journal(core.RUN_DIRECTORY)
-            return core.Monitor(journal, core.WindowsActions(journal), notify)
+            return core.create_monitor(notify)
 
         session_started = True
         return run_session(factory, sys.stdin.buffer, sys.stdout, args.channel, core.RUN_DIRECTORY,
