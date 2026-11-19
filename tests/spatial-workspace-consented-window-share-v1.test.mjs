@@ -974,3 +974,28 @@ test('a cancelled delayed native session grant must be released before any next 
   assert.equal(sessions,2);
   await client.stop();
 });
+
+test('blocked sessionStorage property getter cannot prevent Spatial console bootstrap',async()=>{
+  // Some privacy modes throw while obtaining sessionStorage itself, before
+  // getItem is reached. Native consent must remain off and the room must load.
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'sessionStorage');
+  assert.ok(!previous||previous.configurable,'isolated test must be able to restore the global');
+  Object.defineProperty(globalThis,'sessionStorage',{configurable:true,
+    get(){throw new Error('SecurityError: storage access denied');}});
+  try {
+    let nativeRequests=0;
+    const client=createHolodeckWindowClient({
+      locationRef:{hostname:'localhost',port:'4173'},
+      fetchRef:async()=>{nativeRequests++;throw Error('no native request expected');},
+      setTimer:()=>1,clearTimer:()=>{},
+    });
+    assert.equal(client.getState().status,'idle');
+    assert.equal(client.getFrame(),null);
+    assert.equal(nativeRequests,0,'startup must not request a Windows grant');
+    assert.equal(await client.stop(),true);
+    assert.equal(nativeRequests,0,'inert disconnect must not contact the helper');
+  } finally {
+    if(previous)Object.defineProperty(globalThis,'sessionStorage',previous);
+    else delete globalThis.sessionStorage;
+  }
+});
