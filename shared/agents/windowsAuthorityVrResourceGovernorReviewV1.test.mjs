@@ -799,9 +799,7 @@ test('persisted reviewer prepare lease must have scalar, two-minute UTC custody'
   ]) assert.equal(permitted(candidate), false, JSON.stringify(candidate));
 });
 
-test('Windows PowerShell refuses malformed persisted reviewer leases with no filesystem side effects', {
-  skip: process.platform !== 'win32',
-}, () => {
+test('PowerShell engine checks valid reviewer and game leases plus malformed persisted leases without disk effects', () => {
   const reader = 'function Read-PrepareLease {' + (governor.split('function Read-PrepareLease {')[1]
     ?.split('function Get-ProfileOverride {')[0] || '');
   const now = Date.now();
@@ -812,10 +810,13 @@ test('Windows PowerShell refuses malformed persisted reviewer leases with no fil
     expiresAtUtc: new Date(now + 90000).toISOString(),
   };
   const cases = [
-    [good, true], [[good], false], [null, false], [{...good, schemaVersion:[good.schemaVersion]}, false],
+    [good, true], [{...good, processName:'Starfield', profileName:'vr-maximum'}, true],
+    [[good], false], [null, false], [{...good, schemaVersion:[good.schemaVersion]}, false],
     [{...good, active:[true]}, false], [{...good, active:'true'}, false],
+    [{...good, active:false}, false], [{...good, schemaVersion:'unknown'}, false],
     [{...good, processName:['SovereignReviewer']}, false],
     [{...good, profileName:['review-large-context']}, false],
+    [{...good, createdAtUtc:[good.createdAtUtc]}, false],
     [{...good, expiresAtUtc:[good.expiresAtUtc]}, false],
     [{...good, createdAtUtc:new Date(now+20000).toISOString()}, false],
     [{...good, expiresAtUtc:new Date(now+300000).toISOString()}, false],
@@ -840,7 +841,10 @@ test('Windows PowerShell refuses malformed persisted reviewer leases with no fil
     ].join('\n')),
     "'LEASE_MOCK_CASES_PASSED'",
   ].join('\n');
-  const result = spawnSync('powershell.exe', ['-NoProfile','-NonInteractive','-Command',script], {
+  // Linux hosted CI uses PowerShell 7; the Windows host uses native Windows PowerShell 5.1.
+  // Both must execute the *actual* isolated reader rather than a JavaScript surrogate.
+  const engine = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+  const result = spawnSync(engine, ['-NoProfile','-NonInteractive','-Command',script], {
     encoding:'utf8', timeout:30000, windowsHide:true,
   });
   assert.equal(result.status,0,String(result.stderr || result.error || 'Windows lease mock failed'));
