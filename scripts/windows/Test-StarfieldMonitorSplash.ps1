@@ -15,7 +15,8 @@ if ($parseErrors.Count -ne 0) { throw ($parseErrors | Out-String) }
 
 $functionNames = @('Enter-StarfieldSplashOwner', 'Exit-StarfieldSplashOwner', 'New-MonitorProcessStartInfo', 'Start-MonitorProcess',
     'Read-MonitorProbeResult', 'Find-MonitorPython', 'Get-MonitorCustodyPaths', 'Test-MonitorCustodyPathPresent',
-    'Read-MonitorCustodyReceipt', 'Test-MonitorProviderCustody', 'Add-MonitorDetail', 'Update-HybridButton',
+    'Read-MonitorCustodyReceipt', 'Test-MonitorProviderCustody', 'Add-MonitorDetail',
+    'Get-MonitorDiagnosticField', 'Get-MonitorCleanupDiagnostics', 'Update-HybridButton',
     'Set-MonitorProviderControls', 'Stop-MonitorTransport', 'Send-MonitorCommand',
     'Test-MonitorBooleanFields', 'Receive-MonitorEvent')
 $definitions = @{}
@@ -82,7 +83,8 @@ function Reset-MonitorFixture {
         ClosedReceived = $false; TransportFailed = $false; ProviderSlotReleased = $true; SafeToClose = $true
         DurableCustodyReleased = $true; DurableCustodyReason = 'fixture-no-custody'
         Busy = $false; Mode = 'ready'; AllowedActions = @('prepare', 'close'); ConfirmationToken = $null
-        RunId = $null; GameProcess = $null; Result = $null; DetailText = ''; StartedAtUtc = $null; ExitedAtUtc = $null
+        RunId = $null; GameProcess = $null; Result = $null; DetailText = ''; FocusAttemptedRunId = ''; LastCleanupDiagnosticKey = ''
+        StartedAtUtc = $null; ExitedAtUtc = $null
     }
     $script:vorpxProfileConfigured = $true
     $script:mutarProfileConfigured = $true
@@ -163,6 +165,7 @@ try {
         Assert-True ($parseErrors.Count -eq 0) 'PowerShell parse errors'
         Assert-True ([Stephanos.Starfield.MonitorPipe]::QuoteArgument('a"b') -ceq '"a\"b"') 'Embedded quote escaping changed'
         Assert-True ([Stephanos.Starfield.MonitorPipe]::QuoteArgument('C:\folder with spaces\') -ceq '"C:\folder with spaces\\"') 'Trailing slash escaping changed'
+        Assert-True ([Stephanos.Starfield.MonitorPipe]::FocusBoundGame(0, '') -ceq 'game-identity-missing') 'The native focus helper lost its fail-closed process identity check'
     }
     Invoke-Fixture 'ready handshake cannot synthesize preparation or confirmation' {
         Reset-MonitorFixture
@@ -198,6 +201,20 @@ try {
         $monitorState.Pipe.Permit = $false
         Assert-True (-not (Send-MonitorCommand -Command 'confirm')) 'Denied foreground still dispatched'
         Assert-True ($monitorState.RequestSequence -eq 0 -and $monitorState.ConfirmationToken -ceq ('2' * 32)) 'Rejected foreground consumed the confirmation'
+    }
+    Invoke-Fixture 'offline cleanup shows a safe reason without dispatching another operation' {
+        Reset-MonitorFixture
+        $frame = New-StateFrame 'cleanup'
+        $frame.allowedActions = @('finish', 'cancel', 'close')
+        $frame.safeToClose = $false
+        $frame.providerSlotReleased = $false
+        $frame.unresolvedChild = $true
+        $frame.stage = 'CLEANUP_REQUIRED'
+        Send-FixtureFrame $frame
+        Assert-True ($monitorState.Process.StandardInput.ToString().Length -eq 0) 'Diagnostic read dispatched a command'
+        Assert-True ($detailsBox.Visible -and $detailsBox.Text -match 'Local cleanup diagnostic') 'Offline diagnostic did not appear'
+        Assert-True ($statusHint.Text -match 'Cleanup held:') 'Cleanup reason was not presented'
+        Assert-True (-not $vorpxButton.Enabled -and -not $mutarButton.Enabled) 'A diagnostic read released provider custody'
     }
     Invoke-Fixture 'wrong channel, sequence and child identities are rejected' {
         foreach ($case in @('channel', 'sequence', 'child', 'bridge', 'runner')) {
