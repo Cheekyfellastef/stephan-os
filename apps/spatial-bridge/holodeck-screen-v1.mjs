@@ -84,7 +84,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     inputFeedback=null,shift=false,hover=null,voiceHelp=false,reloadConfirm=false;
   let lastKeyPress=null;
   let focusedPanel=restored.focusedPanel,leftPage=restored.leftPage,toolsPage='audio',furnitureTarget=restored.furnitureTarget,selectedWindow=null,windowPage=0;
-  let paintedLeftPage=null,paintedWindowPage=0,paintedWindowRows=[],paintedSelectedWindow=null;
+  let paintedLeftPage=null,paintedWindowPage=0,paintedWindowRows=[],paintedSelectedWindow=null,paintedFrame=null;
   let connectionPending=null,connectionMessage='',connectionEpoch=0,inputRevoked=false;
   const pressKeycap=id=>{if(SCREEN_KEYS.some(key=>key.id===id))lastKeyPress={id,at:now()};};
   const getKeycapMotion=()=>lastKeyPress?{id:lastKeyPress.id,ageMs:now()-lastKeyPress.at}:null;
@@ -130,7 +130,8 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     return 'Select a field in the connected app. Enter follows app behaviour and may send; use the app Send button for explicit Send.';
   }
   function appInputBlocker(state,viewPainted=false){
-    const reason=focusedPanel!=='chatgpt'?'local-panel':state.status==='view-only'?'view-only':inputRevoked?'stopped':state.status!=='live'||!client.getFrame()?'connection':voiceHelp?'audio-help':reloadConfirm?'reload':viewPending&&!viewPainted?'view-pending':null;
+    const currentFrame=client.getFrame();
+    const reason=focusedPanel!=='chatgpt'?'local-panel':state.status==='view-only'?'view-only':inputRevoked?'stopped':state.status!=='live'||!currentFrame?'connection':voiceHelp?'audio-help':reloadConfirm?'reload':!viewPainted&&(viewPending||currentFrame!==paintedFrame)?'view-pending':null;
     if(!reason)return null;
     const message=reason==='local-panel'?keyboardNotice(state):
       reason==='view-only'?'This window is view-only. Open Console on the left and connect the Windows helper to click or type.':
@@ -432,7 +433,10 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     const state=projectState(true),settings=state.comfort;
     const version=JSON.stringify([revision,state.revision,settings,state.furniture,state.audio,
       state.selectedWindowId,state.status,state.windows,state.message,state.leftPage,state.windowPage]);
-    if(drawn===version)return {screen,console:consoleCanvas,revision:drawn};
+    const currentFrame=client.getFrame();
+    // A newer native picture can arrive before any status callback is painted.
+    // Never reuse a cached crop/texture or allow input against the old picture.
+    if(drawn===version&&paintedFrame===currentFrame)return {screen,console:consoleCanvas,revision:drawn};
     // Any interrupted paint must retain the input fence and be retried.
     viewPending=true;
     ctx.clearRect(0,0,screen.width,screen.height);ctx.fillStyle='#03131ff5';ctx.fillRect(0,0,screen.width,screen.height);
@@ -451,7 +455,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     text(ctx,mode+' / '+zoom.toFixed(1)+'x',1750,154,27,state.status==='live'&&!inputRevoked?'#8ff7c1':'#ffd38a',530);
     drawSettings(state);drawTools(state);
     for(const panel of HOLODECK_PANELS)for(const button of panelButtons(panel.id,toolsPage,leftPage))drawButton(button,state);
-    const image=client.getFrame();
+    const image=currentFrame;
     if(image&&!voiceHelp&&!reloadConfirm) {
       const r=screenImageRect(image.naturalWidth,image.naturalHeight,zoom,panX,panY),crop=r.crop;
       ctx.drawImage(image.drawable??image,crop.x,crop.y,crop.w,crop.h,r.x,r.y,r.w,r.h);
@@ -496,6 +500,7 @@ export function createHolodeckScreen({client,comfort,furniture,audio,storage,doc
     paintedLeftPage=leftPage;paintedWindowPage=state.windowPage;
     paintedWindowRows=leftPage==='console'?state.windowRows.map(window=>({...window})):[];
     paintedSelectedWindow=selectedWindow?{...selectedWindow}:null;
+    paintedFrame=currentFrame;
     viewPending=false;
     drawn=version;
     return {screen,console:consoleCanvas,revision:drawn};

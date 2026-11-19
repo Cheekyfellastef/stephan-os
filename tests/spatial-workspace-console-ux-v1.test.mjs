@@ -155,6 +155,50 @@ test('painting a pending view retires its notice in the same rendered image and 
   assert.equal(h.screen.point(.5,.5,true),true);assert.equal(h.inputs.length,1);
 });
 
+
+test('a refreshed native frame cannot receive input until its actual picture has been painted',()=>{
+  const inputs=[],contexts=[];
+  let frame={naturalWidth:1920,naturalHeight:1080};
+  const state={status:'live',revision:1,message:'Synthetic only',inputStatus:''};
+  const documentRef={createElement(){
+    const context={pictures:[],clearRect(){},fillRect(){},strokeRect(){},fillText(){},
+      drawImage(...args){this.pictures.push(args);}};
+    contexts.push(context);return {getContext:()=>context};
+  }};
+  const screen=createHolodeckScreen({documentRef,client:{getState:()=>state,getFrame:()=>frame,
+    input:value=>{inputs.push(value);return true;}}});
+  screen.render();
+  assert.equal(screen.point(.5,.5,true),true);
+  assert.equal(inputs.length,1);
+  const before=contexts[0].pictures.length;
+  frame={naturalWidth:1080,naturalHeight:1920};
+  assert.equal(screen.getState().keyboardEnabled,false,'the new picture has not been painted');
+  assert.equal(screen.point(.5,.5,true),false,'pointer cannot target the newer unpainted image');
+  screen.action('scroll-down');screen.action('enter');screen.action('key:a');
+  assert.equal(inputs.length,1,'scroll, Enter and text must all wait for the painted frame');
+  assert.match(screen.getState().inputStatus,/updated view/);
+  screen.render();
+  assert.equal(contexts[0].pictures.length,before+1,'a new frame repaints even without a status revision');
+  assert.equal(contexts[0].pictures.at(-1)[0],frame);
+  assert.equal(screen.getState().keyboardEnabled,true);
+  screen.action('scroll-down');
+  assert.equal(inputs.at(-1).kind,'scroll');
+});
+
+test('a failed native-frame draw keeps input fenced until the same new frame is repainted',()=>{
+  const h=screenFixture();h.screen.render();
+  const before=h.inputs.length;
+  h.frame.naturalWidth=1080;h.frame.naturalHeight=1920;
+  h.screen.action('zoom-in');
+  const draw=h.contexts[0].drawImage;
+  h.contexts[0].drawImage=()=>{throw Error('transient canvas failure');};
+  assert.throws(()=>h.screen.render(),/transient canvas failure/);
+  h.screen.action('enter');assert.equal(h.inputs.length,before);
+  h.contexts[0].drawImage=draw;
+  h.screen.render();
+  h.screen.action('scroll-up');assert.equal(h.inputs.at(-1).kind,'scroll');
+});
+
 test('discovery publishes newly opened windows on the existing heartbeat without binding automatically',async()=>{
   let lists=0;
   const h=clientFixture(({path})=>path==='/session'?{token}:path==='/windows'?{windows:++lists===1?[]:[windowOne]}:{});
