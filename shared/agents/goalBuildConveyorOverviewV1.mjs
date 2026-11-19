@@ -36,7 +36,7 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     && ledger.diagnosticOnly === true && ledger.approvalAuthority === false && ledger.mergeAuthority === false
     && /^[a-f0-9]{40}$/.test(ledger.sourceHead || '')
     && ['EVIDENCE_AVAILABLE', 'STALE'].includes(ledger.observationStatus);
-  const ledgerLive = admittedLedger && ledger.observationStatus === 'EVIDENCE_AVAILABLE'
+  const ledgerFresh = admittedLedger && ledger.observationStatus === 'EVIDENCE_AVAILABLE'
     && fresh(ledger.observedAtUtc, nowMs, maxAgeMs);
   // Keep the existing logical handoff trace visible, but never elevate its
   // structural WORKER/CLAIM flags into signed physical execution proof.
@@ -63,6 +63,17 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     }
     return ambiguous ? undefined : latest;
   };
+  // A diagnostic stage is not current-source-qualified merely because its
+  // signed feed is recent. Bind it to an independent current Core observation,
+  // rejecting missing, future, inherited or conflicting source identities.
+  const core = latestStatus('stephanos-core-daemon-current');
+  const ownCore = key => core !== null && typeof core === 'object'
+    && Object.prototype.hasOwnProperty.call(core, key);
+  const coreKnown = ownCore('sourceHead') && ownCore('timestampUtc')
+    && /^[a-f0-9]{40}$/.test(core?.sourceHead || '');
+  const coreLive = coreKnown && fresh(core.timestampUtc, nowMs, maxAgeMs);
+  const ledgerSourceQualified = coreLive && ledger?.sourceHead === core.sourceHead;
+  const ledgerLive = ledgerFresh && ledgerSourceQualified;
   const heartbeat = latestStatus('autonomy-build-track-current');
   const track = statusRecords ? heartbeat?.autonomyTrack : projection.autonomyBuildTrack;
   const originalTimes = [time(heartbeat?.timestampUtc), time(track?.timestampUtc)];
@@ -158,7 +169,7 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     const passed = observations.length > 0
       && observations.every(gate => gateLive(gate) && ownGateValue(gate, 'status') === 'PASS')
       && causalClosure && (id !== 'pickup' || Boolean(signedPickup));
-    const stale = observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && proofRef(gate));
+    const stale = ledgerSourceQualified && observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && proofRef(gate));
     const waiting = ledgerLive && observations.some(gate => gate?.status === 'WAITING_FOR_PREREQUISITE');
     const state = failure ? 'BLOCKED' : passed ? 'PROVEN' : stale ? 'STALE' : waiting ? 'WAITING' : 'UNKNOWN';
     const historicalGate = trackKnown && Number.isFinite(time(trackAt)) && time(trackAt) <= nowMs
@@ -402,9 +413,6 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       ? build.state === 'IDLE_GREEN' ? 'IDLE' : build.state : 'UNKNOWN';
   const state = bottleneck ? 'BLOCKED' : buildLive ? buildState : trackLive
     ? ['FAIL', 'BLOCKED'].includes(track.currentState) ? 'BLOCKED' : 'WAITING' : buildState;
-  const core = latestStatus('stephanos-core-daemon-current');
-  const coreKnown = /^[a-f0-9]{40}$/.test(core?.sourceHead || '');
-  const coreLive = coreKnown && fresh(core.timestampUtc, nowMs, maxAgeMs);
   // Each service must have an independently timestamped health observation.
   // A stopped Core publisher cannot make a still-live worker/backend appear
   // stopped, and an HTTP read must never renew an old observation.

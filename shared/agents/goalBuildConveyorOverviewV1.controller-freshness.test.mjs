@@ -4,6 +4,9 @@ import { projectGoalBuildConveyorOverviewV1 as overview } from './goalBuildConve
 
 const NOW = Date.parse('2026-11-08T22:00:00Z');
 const at = offsetMs => new Date(NOW + offsetMs).toISOString();
+const sourceWitness = (sourceHead = 'a'.repeat(40), offsetMs = -1000) => ({
+  statusId: 'stephanos-core-daemon-current', sourceHead, timestampUtc: at(offsetMs),
+});
 const projection = controllers => ({ controllerFleet: { controllers } });
 const item = (id, extras = {}) => ({
   controllerId: id, title: id, activityState: 'BUILDING',
@@ -62,7 +65,7 @@ test('Goal #2002: a reusable gate-19 proof cannot certify controller BUILDING', 
       { id: 19, status: 'PASS', observedAtUtc: at(-1000), proofRef },
     ],
   };
-  const output = overview(input, { nowMs: NOW });
+  const output = overview(input, { nowMs: NOW, statusRecords: [sourceWitness()] });
   assert.deepEqual(output.controllers.map(c => c.trafficLight), ['AMBER', 'AMBER']);
   assert.equal(output.stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
 });
@@ -79,8 +82,38 @@ const physicalStage = signedGates => {
     sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000),
     observationStatus: 'EVIDENCE_AVAILABLE', gates: signedGates,
   };
-  return overview(input, { nowMs: NOW }).stages.find(stage => stage.id === 'pickup');
+  return overview(input, { nowMs: NOW, statusRecords: [sourceWitness()] }).stages.find(stage => stage.id === 'pickup');
 };
+
+test('Goal #2961: gate-19 signed diagnostic requires an independent current-head witness', () => {
+  const gates = [4, 5, 7, 6, 18, 19].map(id => signedGate(id));
+  const stage = (sourceHead, witnesses = []) => overview({
+    goalBuildGateObservatory: {
+      schemaVersion: 'stephanos.goal-build-gate-observatory.v1',
+      diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
+      sourceHead, observedAtUtc: at(-1000), observationStatus: 'EVIDENCE_AVAILABLE', gates,
+    },
+  }, { nowMs: NOW, statusRecords: witnesses }).stages.find(value => value.id === 'pickup');
+  const head = 'a'.repeat(40);
+  assert.equal(stage(head, [sourceWitness(head)]).trafficLight, 'GREEN',
+    'independent source-matched witness preserves a proven diagnostic');
+  for (const [label, ledgerHead, witnesses] of [
+    ['cross-head diagnostic one', head, [sourceWitness('b'.repeat(40))]],
+    ['cross-head diagnostic two', 'b'.repeat(40), [sourceWitness('c'.repeat(40))]],
+    ['no independent current-source witness', head, []],
+    ['invalid ledger source SHA', 'not-a-sha', [sourceWitness(head)]],
+    ['stale independent source witness', head, [sourceWitness(head, -700000)]],
+    ['future independent source witness', head, [sourceWitness(head, 1000)]],
+    ['inherited source identity', head, [Object.assign(Object.create({ sourceHead: head }), {
+      statusId: 'stephanos-core-daemon-current', timestampUtc: at(-1000),
+    })]],
+  ]) {
+    const pickup = stage(ledgerHead, witnesses);
+    assert.equal(pickup.state, 'UNKNOWN', label);
+    assert.equal(pickup.trafficLight, 'GREY', label);
+    assert.equal(pickup.expiresAtUtc, '', label);
+  }
+});
 
 test('Goal #2002: signed pickup requires admission, SELECT, CLAIM and pickup proofs', () => {
   const validIds = [4, 5, 7, 6, 18, 19];
@@ -146,7 +179,7 @@ const signedDisplayStages = gateRecords => overview({
     sourceHead: 'a'.repeat(40), observedAtUtc: at(-1000),
     observationStatus: 'EVIDENCE_AVAILABLE', gates: gateRecords,
   },
-}, { nowMs: NOW }).stages;
+}, { nowMs: NOW, statusRecords: [sourceWitness()] }).stages;
 
 test('Goal #2961: non-pickup signed stage cards require own nonblank string proof refs', () => {
   const all = [4, 5, 7, 6, 18, 19, 20, 21, 22].map(id => signedGate(id));
