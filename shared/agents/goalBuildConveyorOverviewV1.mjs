@@ -615,7 +615,7 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     };
     return {
       id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
-      state: coreLive && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
+      state: coreLive && ownCore(field) && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
       observedAtUtc: coreKnown ? core.timestampUtc : '',
       expiresAtUtc: coreLive ? new Date(time(core.timestampUtc) + maxAgeMs).toISOString() : '',
       evidenceSource: coreKnown ? 'CORE_DAEMON_AGGREGATE' : 'UNAVAILABLE',

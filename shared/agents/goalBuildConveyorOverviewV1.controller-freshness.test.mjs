@@ -744,3 +744,25 @@ test('Goal #2961: independent service report needs owned identity and health fie
     }
   }
 });
+
+test('Goal #2961: Core aggregate service flags must be producer-owned', () => {
+  const base = sourceWitness();
+  const health = record => overview({}, { nowMs: NOW, statusRecords: [record] }).health
+    .filter(item => ['missionWorkerHealthy', 'backendHealthy'].includes(item.id));
+  const check = (label, record, expected) => {
+    const statuses = health(record);
+    assert.deepEqual(statuses.map(item => item.state), [expected, expected], label);
+    assert.deepEqual(statuses.map(item => item.evidenceSource),
+      ['CORE_DAEMON_AGGREGATE', 'CORE_DAEMON_AGGREGATE'], label + ' provenance');
+  };
+  check('owned true remains healthy', { ...base, missionWorkerHealthy: true, backendHealthy: true }, 'HEALTHY');
+  check('owned false remains unhealthy', { ...base, missionWorkerHealthy: false, backendHealthy: false }, 'UNHEALTHY');
+  check('absent health remains unknown', { ...base }, 'UNKNOWN');
+  check('inherited true cannot claim healthy', Object.assign(
+    Object.create({ missionWorkerHealthy: true, backendHealthy: true }), base), 'UNKNOWN');
+  check('inherited false cannot claim unhealthy', Object.assign(
+    Object.create({ missionWorkerHealthy: false, backendHealthy: false }), base), 'UNKNOWN');
+  check('inherited true cannot override own daemon unhealthy', Object.assign(
+    Object.create({ missionWorkerHealthy: true, backendHealthy: true }),
+    { ...base, daemonHealthy: false }), 'UNKNOWN');
+});
