@@ -1,3 +1,4 @@
+import { types as nodeTypes } from 'node:util';
 export const CANONICAL_SYNC_CONTRACT = Object.freeze({
   repositoryIdentity: 'Cheekyfellastef/stephan-os',
   canonicalWindowsCheckout: '%USERPROFILE%\\Documents\\GitHub\\stephan-os',
@@ -336,6 +337,46 @@ export function projectPostSyncSovereignRelayProof(value, expectedHead) {
   } catch { return null; }
 }
 
+// Evidence comes only from the existing watchdog's observed lifecycle. This
+// bounded projection is a source-epoch receipt, not native loaded-byte attestation.
+export const POST_SYNC_GOVERNOR_PROOF_SCHEMA = 'stephanos.post-sync-governor-proof.v1';
+const GOVERNOR_PROOF_KEYS = Object.freeze(['schemaVersion', 'watchdogSucceeded', 'normalOperatorObserved',
+  'healthy', 'inventoryComplete', 'processCount', 'identityVerified', 'progressVerified',
+  'currentSourceVerified', 'sourceHead', 'sourceHeadMatchesLive', 'sourceSha256', 'blocker']);
+export function projectPostSyncGovernorProof(value, expectedHead) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || nodeTypes.isProxy(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+    const keys = Reflect.ownKeys(value), descriptors = Object.getOwnPropertyDescriptors(value);
+    if (keys.length !== GOVERNOR_PROOF_KEYS.length || keys.some(key => !GOVERNOR_PROOF_KEYS.includes(key)
+      || !Object.hasOwn(descriptors[key], 'value'))) return null;
+    const data = Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
+    if (data.schemaVersion !== POST_SYNC_GOVERNOR_PROOF_SCHEMA
+      || ['watchdogSucceeded', 'normalOperatorObserved', 'healthy', 'inventoryComplete', 'identityVerified',
+        'progressVerified', 'currentSourceVerified', 'sourceHeadMatchesLive'].some(key => data[key] !== true)
+      || data.processCount !== 1 || typeof expectedHead !== 'string' || !/^[a-f0-9]{40}$/.test(expectedHead)
+      || data.sourceHead !== expectedHead || typeof data.sourceSha256 !== 'string'
+      || !/^[a-f0-9]{64}$/.test(data.sourceSha256) || data.blocker !== '') return null;
+    return Object.freeze(Object.fromEntries(GOVERNOR_PROOF_KEYS.map(key => [key, data[key]])));
+  } catch { return null; }
+}
+
+// Unlike missing legacy Relay metadata, missing Governor metadata does not imply
+// a Governor obligation. Only its changed path or a retained scoped flag does.
+function governorRequirement(value, targetIds) {
+  if (value !== undefined && typeof value !== 'boolean') return null;
+  return value === true && !targetIds.includes('sovereign-commander') ? null : value === true;
+}
+function completionGovernorBinding(completion) {
+  const required = governorRequirement(completion.governorRefreshRequired, completion.targetIds);
+  const hasProof = Object.hasOwn(completion, 'governorProof');
+  const proof = hasProof ? projectPostSyncGovernorProof(completion.governorProof, completion.afterHead) : null;
+  if (required === null || (hasProof && (!proof || !completion.targetIds.includes('sovereign-commander')))
+    || (required && !proof)) return debtFailure('PENDING_POST_SYNC_GOVERNOR_COMPLETION_UNPROVEN');
+  return Object.freeze({ ok: true, ...(required ? { governorRefreshRequired: true } : {}),
+    ...(proof ? { governorProof: proof } : {}) });
+}
+
 const REFRESH_TARGETS = Object.freeze([
   'stephanos-ui-4173', 'vr-capability-atlas-browser-proof', 'stephanos-backend-8787',
   'mission-orchestrator-worker', 'github-command-mailbox', 'sovereign-commander', 'natural-reload',
@@ -379,18 +420,20 @@ function completionRelayBinding(completion) {
 }
 
 export function pendingPostSyncRefreshDebt(spans = [], requiredTargetIds = [], blocker = '', {
-  sovereignRelayRefreshRequired, spatialAdoptionRequired = false,
+  sovereignRelayRefreshRequired, governorRefreshRequired = false, spatialAdoptionRequired = false,
 } = {}) {
   const normalized = Array.isArray(spans) ? spans.map(refreshSpan) : [];
   const unique = [...new Map(normalized.filter(Boolean).map(span => [`${span.beforeHead}:${span.afterHead}`, span])).values()];
   const relayRequired = targetSetValid(requiredTargetIds) ? relayRequirement(sovereignRelayRefreshRequired, requiredTargetIds) : null;
-  if (!Array.isArray(spans) || normalized.some(span => !span) || unique.length > REFRESH_MAX_SPANS || !targetSetValid(requiredTargetIds) || relayRequired === null
+  const governorRequired = targetSetValid(requiredTargetIds) ? governorRequirement(governorRefreshRequired, requiredTargetIds) : null;
+  if (governorRequired === null || !Array.isArray(spans) || normalized.some(span => !span) || unique.length > REFRESH_MAX_SPANS || !targetSetValid(requiredTargetIds) || relayRequired === null
     || typeof spatialAdoptionRequired !== 'boolean' || (spatialAdoptionRequired && !unique.length)) {
     return Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'HELD', blocker: 'PENDING_POST_SYNC_DEBT_INVALID', spans: [], requiredTargetIds: [] });
   }
   if (blocker) return Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'HELD', blocker: 'PENDING_POST_SYNC_EVIDENCE_INVALID', spans: unique, requiredTargetIds: [...requiredTargetIds] });
   return unique.length ? Object.freeze({ schemaVersion: POST_SYNC_REFRESH_DEBT_SCHEMA, state: 'PENDING', spans: unique,
     requiredTargetIds: [...requiredTargetIds], sovereignRelayRefreshRequired: relayRequired,
+    ...(governorRequired ? { governorRefreshRequired: true } : {}),
     ...(spatialAdoptionRequired ? { spatialAdoptionRequired: true } : {}) }) : null;
 }
 
@@ -407,8 +450,10 @@ export function inspectPendingPostSyncRefreshDebt(retained) {
     || !targetSetValid(retained.requiredTargetIds)
     || (retained.spatialAdoptionRequired !== undefined && typeof retained.spatialAdoptionRequired !== 'boolean')) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
   const sovereignRelayRefreshRequired = relayRequirement(retained.sovereignRelayRefreshRequired, retained.requiredTargetIds);
-  if (sovereignRelayRefreshRequired === null) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  const governorRefreshRequired = governorRequirement(retained.governorRefreshRequired, retained.requiredTargetIds);
+  if (governorRefreshRequired === null || sovereignRelayRefreshRequired === null) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
   return Object.freeze({ ok: true, spans: retained.spans.map(refreshSpan), requiredTargetIds: [...retained.requiredTargetIds], sovereignRelayRefreshRequired,
+    ...(governorRefreshRequired ? { governorRefreshRequired: true } : {}),
     ...(retained.spatialAdoptionRequired === true ? { spatialAdoptionRequired: true } : {}) });
 }
 
@@ -432,23 +477,33 @@ export function inspectPostSyncRefreshCompletion(record) {
   const noRuntime = record.classification === 'NO_RUNTIME_REFRESH_REQUIRED' && !record.targetIds.length
     && record.changedPathCount === record.noRuntimePathCount;
   const refreshed = record.classification === 'REFRESH_COMPLETE' && record.targetIds.length > 0
-    && (record.changedPathCount > record.noRuntimePathCount || record.sovereignRelayRefreshRequired === true);
+    && (record.changedPathCount > record.noRuntimePathCount || record.sovereignRelayRefreshRequired === true || record.governorRefreshRequired === true);
   if (!noRuntime && !refreshed) return debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
   const commander = record.resultTargets.find(row => row.targetId === 'sovereign-commander');
   const binding = completionRelayBinding({ ...span, targetIds: record.targetIds,
     ...(Object.hasOwn(record, 'sovereignRelayRefreshRequired') ? { sovereignRelayRefreshRequired: record.sovereignRelayRefreshRequired } : {}),
     ...(commander && Object.hasOwn(commander, 'sovereignRelayProof') ? { sovereignRelayProof: commander.sovereignRelayProof } : {}),
   });
+  const governorBinding = completionGovernorBinding({ ...span, targetIds: record.targetIds,
+    ...(Object.hasOwn(record, 'governorRefreshRequired') ? { governorRefreshRequired: record.governorRefreshRequired } : {}),
+    ...(commander && Object.hasOwn(commander, 'governorProof') ? { governorProof: commander.governorProof } : {}),
+  });
+  if (!governorBinding.ok) return governorBinding;
   if (!binding.ok) return binding.legacyCommanderCompletion
-    ? Object.freeze({ ...binding, ...span, targetIds: [...record.targetIds] }) : binding;
+    ? Object.freeze({ ...binding, ...span, targetIds: [...record.targetIds],
+      ...(governorBinding.governorRefreshRequired ? { governorRefreshRequired: true } : {}),
+    }) : binding;
   return Object.freeze({ ok: true, ...span, targetIds: [...record.targetIds],
     sovereignRelayRefreshRequired: binding.sovereignRelayRefreshRequired,
+    ...(governorBinding.governorRefreshRequired ? { governorRefreshRequired: true } : {}),
+    ...(governorBinding.governorProof ? { governorProof: governorBinding.governorProof } : {}),
     ...(binding.sovereignRelayProof ? { sovereignRelayProof: binding.sovereignRelayProof } : {}) });
 }
 
 export function collectPostSyncRefreshDebt({ syncRecord = null, refreshRecord = null } = {}) {
   const spans = [], targets = new Set();
   let sovereignRelayRefreshRequired = false;
+  let governorRefreshRequired = false;
   let spatialAdoptionRequired = false;
   if (syncRecord !== null) {
     if (!recordOwner(syncRecord, 'battle-bridge-github-sync-current') || !Object.values(SYNC_CLASSIFICATIONS).includes(syncRecord.classification)) return debtFailure('PENDING_POST_SYNC_SYNC_RECORD_INVALID');
@@ -459,6 +514,7 @@ export function collectPostSyncRefreshDebt({ syncRecord = null, refreshRecord = 
       spans.push(...inspected.spans);
       inspected.requiredTargetIds.forEach(id => targets.add(id));
       sovereignRelayRefreshRequired ||= inspected.sovereignRelayRefreshRequired;
+      governorRefreshRequired ||= inspected.governorRefreshRequired === true;
       spatialAdoptionRequired ||= inspected.spatialAdoptionRequired === true;
     }
     if (syncRecord.classification === 'BLOCKED_POST_SYNC_REFRESH_REQUIRED') {
@@ -488,6 +544,7 @@ export function collectPostSyncRefreshDebt({ syncRecord = null, refreshRecord = 
         spans.push(refreshSpan(inspected));
         inspected.targetIds.forEach(id => targets.add(id));
         sovereignRelayRefreshRequired = true;
+        governorRefreshRequired ||= inspected.governorRefreshRequired === true;
       } else completion = inspected;
     } else {
       if (!['NO_RUNTIME_REFRESH_REQUIRED', 'REFRESH_READY', 'REFRESH_COMPLETE', 'APPROVAL_REQUIRED_OPENCLAW', 'BLOCKED_SPATIAL_ADOPTION_REQUIRED',
@@ -506,40 +563,50 @@ export function collectPostSyncRefreshDebt({ syncRecord = null, refreshRecord = 
       refreshRecord.targetIds.forEach(id => targets.add(id));
       const required = relayRequirement(refreshRecord.sovereignRelayRefreshRequired, refreshRecord.targetIds);
       if (required === null) return debtFailure('PENDING_POST_SYNC_RUNTIME_RECORD_INVALID');
+      const governorRequired = governorRequirement(refreshRecord.governorRefreshRequired, refreshRecord.targetIds);
+      if (governorRequired === null) return debtFailure('PENDING_POST_SYNC_RUNTIME_RECORD_INVALID');
+      governorRefreshRequired ||= governorRequired;
       sovereignRelayRefreshRequired ||= required;
       spatialAdoptionRequired ||= refreshRecord.spatialAdoptionRequired === true;
     }
   }
   const requiredTargetIds = REFRESH_TARGETS.filter(id => targets.has(id));
-  const pending = pendingPostSyncRefreshDebt(spans, requiredTargetIds, '', { sovereignRelayRefreshRequired, spatialAdoptionRequired });
+  const pending = pendingPostSyncRefreshDebt(spans, requiredTargetIds, '', { sovereignRelayRefreshRequired, governorRefreshRequired, spatialAdoptionRequired });
   if (pending?.state === 'HELD') return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
   return Object.freeze({ ok: true, spans: pending?.spans || [], requiredTargetIds, sovereignRelayRefreshRequired, completion,
+    ...(governorRefreshRequired ? { governorRefreshRequired: true } : {}),
     ...(spatialAdoptionRequired ? { spatialAdoptionRequired: true } : {}) });
 }
 
 export function resolvePostSyncRefreshDebt({ spans = [], requestedSpans = [], requiredTargetIds = [], completion = null,
-  sovereignRelayRefreshRequired, spatialAdoptionRequired = false, currentHead = '', requireCurrentCoverage = true, isAncestor } = {}) {
+  sovereignRelayRefreshRequired, governorRefreshRequired = false, spatialAdoptionRequired = false, currentHead = '', requireCurrentCoverage = true, isAncestor } = {}) {
   if (!Array.isArray(spans) || !Array.isArray(requestedSpans) || !targetSetValid(requiredTargetIds)) return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
   let relayRequired = relayRequirement(sovereignRelayRefreshRequired, requiredTargetIds);
-  if (relayRequired === null || typeof spatialAdoptionRequired !== 'boolean') return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
+  let governorRequired = governorRequirement(governorRefreshRequired, requiredTargetIds);
+  if (governorRequired === null || relayRequired === null || typeof spatialAdoptionRequired !== 'boolean') return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
   if (completion) {
     const span = refreshSpan(completion);
     if (!span || completion.ok !== true || !targetSetValid(completion.targetIds)
       || (completion.spatialAdoptionRequired !== undefined && completion.spatialAdoptionRequired !== false)
       || (completion.spatialAdoptionPathCount !== undefined && completion.spatialAdoptionPathCount !== 0)) return debtFailure('PENDING_POST_SYNC_COMPLETION_UNPROVEN');
     const binding = completionRelayBinding({ ...completion, ...span });
+    const governorBinding = completionGovernorBinding({ ...completion, ...span });
+    if (!governorBinding.ok) return governorBinding;
     if (!binding.ok && !binding.legacyCommanderCompletion) return binding;
     if (binding.legacyCommanderCompletion) {
       spans = [...spans, span];
       requiredTargetIds = REFRESH_TARGETS.filter(id => requiredTargetIds.includes(id) || completion.targetIds.includes(id));
       relayRequired = true;
+      governorRequired ||= governorBinding.governorRefreshRequired === true;
       completion = null;
     } else completion = Object.freeze({ ok: true, ...span, targetIds: [...completion.targetIds],
       sovereignRelayRefreshRequired: binding.sovereignRelayRefreshRequired,
+      ...(governorBinding.governorRefreshRequired ? { governorRefreshRequired: true } : {}),
+      ...(governorBinding.governorProof ? { governorProof: governorBinding.governorProof } : {}),
       ...(binding.sovereignRelayProof ? { sovereignRelayProof: binding.sovereignRelayProof } : {}) });
   }
   const pending = pendingPostSyncRefreshDebt([...spans, ...requestedSpans], requiredTargetIds, '', {
-    sovereignRelayRefreshRequired: relayRequired, spatialAdoptionRequired,
+    sovereignRelayRefreshRequired: relayRequired, governorRefreshRequired: governorRequired, spatialAdoptionRequired,
   });
   if (pending?.state === 'HELD') return debtFailure('PENDING_POST_SYNC_DEBT_INVALID');
   const uniqueSpans = pending?.spans || [];
@@ -577,18 +644,19 @@ export function resolvePostSyncRefreshDebt({ spans = [], requestedSpans = [], re
       || position(completion.afterHead) > position(current))) return debtFailure('PENDING_POST_SYNC_COMPLETION_HEAD_UNPROVEN');
     // No Spatial adoption verifier is admitted by this change. Generic target
     // success, a reverted net diff, or an older completion cannot pay this debt.
-    const covered = (span, targets, requiresRelay = false) => Boolean(!spatialAdoptionRequired && completion && position(completion.beforeHead) <= position(span.beforeHead)
+    const covered = (span, targets, requiresRelay = false, requiresGovernor = false) => Boolean(!spatialAdoptionRequired && completion && position(completion.beforeHead) <= position(span.beforeHead)
       && position(span.afterHead) <= position(completion.afterHead) && targets.every(id => completion.targetIds.includes(id))
-      && (!requiresRelay || (completion.sovereignRelayRefreshRequired === true && completion.sovereignRelayProof)));
+      && (!requiresRelay || (completion.sovereignRelayRefreshRequired === true && completion.sovereignRelayProof))
+      && (!requiresGovernor || (completion.governorRefreshRequired === true && completion.governorProof)));
     // Pay covered old spans before adding a newer source delta. Otherwise a
     // reverted file can disappear from the net old-before/new-after diff even
     // though a completed intermediate version is still loaded by its owner.
-    const retained = spans.map(refreshSpan).filter(span => !covered(span, requiredTargetIds, relayRequired));
+    const retained = spans.map(refreshSpan).filter(span => !covered(span, requiredTargetIds, relayRequired, governorRequired));
     // An unpaid relay obligation still needs the original owner at the newest
     // observed source. A generic or non-covering completion cannot trim a newer
     // requested span while leaving that owner pointed at an obsolete head.
     const retainedRelay = retained.length > 0 && relayRequired;
-    const retainedObligation = retainedRelay || (retained.length > 0 && spatialAdoptionRequired);
+    const retainedObligation = retainedRelay || (retained.length > 0 && governorRequired) || (retained.length > 0 && spatialAdoptionRequired);
     const requested = requestedSpans.map(refreshSpan).filter(span => retainedObligation || !covered(span, []));
     const remaining = [...retained, ...requested];
     if (!remaining.length) return Object.freeze({ ok: true, debt: null, discharged: uniqueSpans.length > 0 });
@@ -598,12 +666,15 @@ export function resolvePostSyncRefreshDebt({ spans = [], requestedSpans = [], re
     if (requireCurrentCoverage && position(afterHead) > position(current)) return debtFailure('PENDING_POST_SYNC_RETAINED_HEAD_NOT_CURRENT');
     const targets = new Set(retained.length ? requiredTargetIds : []);
     let nextRelayRequired = retained.length > 0 && relayRequired;
+    let nextGovernorRequired = retained.length > 0 && governorRequired;
     if (completion && position(beforeHead) < position(completion.afterHead) && position(completion.afterHead) <= position(afterHead)) {
       completion.targetIds.forEach(id => targets.add(id));
       nextRelayRequired ||= completion.sovereignRelayRefreshRequired;
+      nextGovernorRequired ||= completion.governorRefreshRequired === true;
     }
     return Object.freeze({ ok: true, debt: Object.freeze({ beforeHead, afterHead,
       requiredTargetIds: REFRESH_TARGETS.filter(id => targets.has(id)), sovereignRelayRefreshRequired: nextRelayRequired,
+      ...(nextGovernorRequired ? { governorRefreshRequired: true } : {}),
       ...(spatialAdoptionRequired ? { spatialAdoptionRequired: true } : {}) }), discharged: false });
   } catch (error) {
     return debtFailure(/^PENDING_POST_SYNC_[A-Z_]+$/.test(error?.message || '') ? error.message : 'PENDING_POST_SYNC_ANCESTRY_UNPROVEN');
