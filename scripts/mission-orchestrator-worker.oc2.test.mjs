@@ -7,6 +7,8 @@ import {
 } from './mission-orchestrator-worker.mjs';
 import {
   OPENCLAW_OC2_FIXED_PLAN,
+  OPENCLAW_OC2_PROVIDER,
+  OPENCLAW_OC2_PROVIDER_VERSION,
   OPENCLAW_OC2_OPERATION,
   OPENCLAW_OC2_TASK_CLASS,
 } from '../integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs';
@@ -22,6 +24,25 @@ const TASK = 'openclaw-oc2-worker-task-0001';
 const CLAIM_HASH = createHash('sha256')
   .update(JSON.stringify([MISSION, TASK, `grant-${TASK}`, HEAD]), 'utf8')
   .digest('hex').slice(0, 32);
+const EXACT_INPUT_IDENTITY = createHash('sha256').update(JSON.stringify({
+  missionId: MISSION,
+  goalId: '#1725',
+  taskId: TASK,
+  taskClass: OPENCLAW_OC2_TASK_CLASS,
+  repository: 'Cheekyfellastef/stephan-os',
+  requestedSourceHead: HEAD,
+  provider: OPENCLAW_OC2_PROVIDER,
+  providerVersion: OPENCLAW_OC2_PROVIDER_VERSION,
+  operation: OPENCLAW_OC2_OPERATION,
+  testPlanIds: OPENCLAW_OC2_FIXED_PLAN.map((entry) => entry.testId),
+  grantId: `grant-${TASK}`,
+  sourceMutationAuthority: false,
+  arbitraryShellAuthority: false,
+  arbitraryCommandAuthority: false,
+  mergeAuthority: false,
+  deploymentAuthority: false,
+  selfQualificationAuthority: false,
+}), 'utf8').digest('hex');
 const PROOF_REF = `proofs/openclaw-oc2/oc2-${CLAIM_HASH}.json`;
 const PROOF_RECEIPT_ID = `openclaw-oc2-proof-${createHash('sha256').update(PROOF_REF, 'utf8').digest('hex').slice(0, 20)}`;
 
@@ -78,7 +99,7 @@ function gatewayResult() {
       providerVersion: '1.0.0',
       operation: OPENCLAW_OC2_OPERATION,
       providerInstance: 'openclaw-gateway:4242',
-      exactInputIdentity: 'a'.repeat(64),
+      exactInputIdentity: EXACT_INPUT_IDENTITY,
       exactOutputIdentity: 'b'.repeat(64),
       receipt: {
         receiptId: `openclaw-oc2-result-${CLAIM_HASH.slice(0, 20)}`,
@@ -208,6 +229,7 @@ test('OC2 result-consumer rejects contradictory producer and receipt lineage', a
     ['inner provider absent', (value) => { delete value.result.providerInstance; }],
     ['input identity absent', (value) => { delete value.result.exactInputIdentity; }],
     ['input identity malformed', (value) => { value.result.exactInputIdentity = 'invalid'; }],
+    ['input identity well-formed but forged', (value) => { value.result.exactInputIdentity = 'd'.repeat(64); }],
     ['output identity absent', (value) => { delete value.result.exactOutputIdentity; }],
     ['output identity malformed', (value) => { value.result.exactOutputIdentity = 'invalid'; }],
     ['result source mismatch', (value) => { value.result.receipt.source = 'other-provider'; }],

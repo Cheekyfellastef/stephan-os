@@ -53,6 +53,7 @@ import {
   OPENCLAW_OC1_GATEWAY_RESULT_SCHEMA,
 } from '../integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs';
 import {
+  OPENCLAW_OC2_FIXED_PLAN,
   OPENCLAW_OC2_ISSUE,
   OPENCLAW_OC2_OPERATION,
   OPENCLAW_OC2_PROVIDER,
@@ -350,6 +351,27 @@ function validateOpenClawOc2GatewayPayload(payload, grant) {
   // trusted action-grant identity. A merely well-formed OC2 path is not
   // evidence for this exact grant, task and source revision.
   const grantId = text(grant?.grantId);
+  // The producer hashes its fixed, grant-bound task before execution.
+  // A caller-supplied 64-hex input digest is not proof of that task.
+  const expectedInputIdentity = createHash('sha256').update(JSON.stringify({
+    missionId,
+    goalId: `#${OPENCLAW_OC2_ISSUE}`,
+    taskId,
+    taskClass: OPENCLAW_OC2_TASK_CLASS,
+    repository: text(grant?.repository),
+    requestedSourceHead: sourceHead,
+    provider: OPENCLAW_OC2_PROVIDER,
+    providerVersion: OPENCLAW_OC2_PROVIDER_VERSION,
+    operation: OPENCLAW_OC2_OPERATION,
+    testPlanIds: OPENCLAW_OC2_FIXED_PLAN.map((entry) => entry.testId),
+    grantId,
+    sourceMutationAuthority: false,
+    arbitraryShellAuthority: false,
+    arbitraryCommandAuthority: false,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    selfQualificationAuthority: false,
+  }), 'utf8').digest('hex');
   const taskHash = createHash('sha256')
     .update(JSON.stringify([missionId, taskId, grantId, sourceHead]), 'utf8')
     .digest('hex').slice(0, 32);
@@ -389,6 +411,7 @@ function validateOpenClawOc2GatewayPayload(payload, grant) {
     && result.changedFiles.length === 0
     && text(result?.providerInstance) === providerInstance
     && /^[a-f0-9]{64}$/.test(text(result?.exactInputIdentity))
+    && text(result?.exactInputIdentity) === expectedInputIdentity
     && /^[a-f0-9]{64}$/.test(text(result?.exactOutputIdentity))
     && result?.receipt?.verified === true
     && text(result?.receipt?.receiptId) === resultReceiptId
