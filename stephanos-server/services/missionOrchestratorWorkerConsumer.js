@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { projectKnownMalformedPatchTerminalV1 } from '../../shared/agents/knownMalformedPatchRetryV1.mjs';
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { projectMissionWorkerSourceFailureV1 } from '../../shared/agents/missionOrchestratorWorker.mjs';
+import { lstat, mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { basename, resolve } from 'node:path';
 import { projectModelTransportFailureProofV1 } from '../../shared/agents/modelTransportFailureRetryV1.mjs';
@@ -16,9 +17,44 @@ import {
   OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA,
   OFFLINE_PUBLICATION_OUTBOX_STATE,
 } from '../../shared/agents/offlinePublicationOutboxV1.mjs';
-import { appendMissionEvent, readMissionRecord, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
-import { assertMissionWorkerPendingCapacityCurrent, collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
+import { appendMissionEvent, readMissionRecord, runWithMissionStatePrecondition,
+  assertSeedSourceContractAdmissionV1 } from './missionOrchestratorStore.js';
+import { classifyElasticMissionIdentityV1, projectMissionSeedSourcePlanShapeV1,
+  seedSourceEffectPhaseV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
+import { assertCanonicalMissionSourceEffectV1, assertMissionWorkerPendingCapacityCurrent,
+  collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import { createSharedWorkspaceProofRecord, resolveSharedWorkspacePath,
+  validateSharedWorkspaceWriteAncestors, writeAtomicJson } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+
+async function readProcessingObservationProof(root, proofId, options) {
+  const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot,
+    segments: ['proof', proofId + '.json'] });
+  const refuse = () => { throw new Error('EXECUTION_RECEIPT_QUEUE_OBSERVATION_FILE_UNPROVEN'); };
+  if (!resolved.ok || !(await validateSharedWorkspaceWriteAncestors(resolved)).ok) refuse();
+  const before = await lstat(resolved.path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (before === null) return null;
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > 64 * 1024) refuse();
+  const handle = await open(resolved.path, 'r');
+  try {
+    const captured = await handle.stat();
+    if (!captured.isFile() || captured.nlink !== 1 || captured.ino !== before.ino || captured.dev !== before.dev
+        || captured.size !== before.size || captured.mode !== before.mode) refuse();
+    const bytes = Buffer.alloc(64 * 1024 + 1);
+    let used = 0;
+    while (used < bytes.length) {
+      const read = await handle.read(bytes, used, bytes.length - used, null);
+      if (!read.bytesRead) break;
+      used += read.bytesRead;
+    }
+    const after = await handle.stat(), named = await lstat(resolved.path);
+    if (used !== captured.size || used > 64 * 1024 || [after, named].some(row => !row.isFile()
+        || row.isSymbolicLink() || row.nlink !== 1 || row.ino !== captured.ino || row.dev !== captured.dev
+        || row.size !== captured.size || row.mode !== captured.mode || row.mtimeMs !== captured.mtimeMs
+        || row.ctimeMs !== captured.ctimeMs) || !(await validateSharedWorkspaceWriteAncestors(resolved)).ok) refuse();
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, used)));
+  } finally { await handle.close(); }
+}
 
 function providerNeutralTerminalQueueReleaseProven(item, result, adapter) {
   const normalizedAdapter = normalizedText(adapter).toLowerCase();
@@ -261,6 +297,50 @@ export async function beginMissionWorkerExecutionReceiptChain(claim, options = {
     const { grant, binding } = persisted;
     const sourceHead = normalizedText(binding.headSha || binding.sourceRevision).toLowerCase();
     const adapter = normalizedText(grant.adapter).toLowerCase();
+    let queueProofRefs = grant.capacityProofRefs;
+    if (adapter === 'forge-publication' && grant.actionKind === 'forge-escrow-publication'
+        && Array.isArray(queueProofRefs) && queueProofRefs.length === 0) {
+      const observed = await assertCanonicalMissionSourceEffectV1(claim.item.payload, claim, options);
+      if (!/^[0-9a-f]{64}$/.test(observed?.processingEnvelopeSha256 || ''))
+        throw new Error('EXECUTION_RECEIPT_PROCESSING_QUEUE_OBSERVATION_REQUIRED');
+      // Evidence of this physically retained queue claim only. These references
+      // do not qualify capacity or prove the escrow contents/publication; the
+      // existing publisher independently verifies those exact source bytes.
+      const proofId = `queue-${observed.processingEnvelopeSha256}`;
+      const rootObservation = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: [proofId + '.json'] });
+      if (!rootObservation.ok || !(await validateSharedWorkspaceWriteAncestors(rootObservation)).ok)
+        throw new Error('EXECUTION_RECEIPT_QUEUE_OBSERVATION_ROOT_UNPROVEN');
+      await mkdir(resolve(root, 'proof')).catch(error => { if (error.code !== 'EEXIST') throw error; });
+      const payload = claim.item.payload;
+      const queueObservation = { schemaVersion: 'stephanos.mission-worker-processing-observation.v1',
+        missionId: claim.item.missionId, actionId: claim.item.actionId, adapter,
+        queueBytesSha256: observed.processingEnvelopeSha256,
+        sourcePlanFingerprint: grant.sourcePlanFingerprint,
+        sourcePlanKind: grant.sourcePlanKind,
+        artifactSha256: payload.artifactSha256, outboxId: payload.outboxId,
+        exactParentHead: payload.exactParentHead, exactResultTree: payload.exactResultTree,
+        capacityQualified: false, artifactContentsVerified: false, publicationVerified: false };
+      const existing = await readProcessingObservationProof(root, proofId, options);
+      if (existing !== null) {
+        const prior = existing;
+        if (prior.proofId !== proofId || JSON.stringify(prior.queueObservation) !== JSON.stringify(queueObservation))
+          throw new Error('EXECUTION_RECEIPT_QUEUE_OBSERVATION_CONFLICT');
+      } else {
+        const record = { ...createSharedWorkspaceProofRecord({ proofId, participantId: 'mission-worker',
+          correlationId: claim.item.actionId, relatedIssue: String(binding.issueNumber),
+          timestampUtc: new Date().toISOString(), status: 'OBSERVED',
+          proofRefs: [`queue-sha256-${observed.processingEnvelopeSha256}`],
+          summary: 'Retained processing envelope observed; capacity and publication remain independently gated.' }),
+          queueObservation };
+        const saved = await writeAtomicJson(root, ['proof', proofId + '.json'], record,
+          { ...executionReceiptOptions(options), durable: true });
+        if (saved.ok !== true) throw new Error('EXECUTION_RECEIPT_QUEUE_OBSERVATION_PERSISTENCE_FAILED:'
+          + (/^[A-Za-z0-9_-]{1,100}$/.test(saved.reason || '') ? saved.reason : 'UNKNOWN'));
+        if (JSON.stringify(await readProcessingObservationProof(root, proofId, options)) !== JSON.stringify(record))
+          throw new Error('EXECUTION_RECEIPT_QUEUE_OBSERVATION_PERSISTENCE_FAILED');
+      }
+      queueProofRefs = ['proof/' + proofId + '.json'];
+    }
     const queued = createExecutionReceipt({
       repository: binding.repository,
       issueNumber: binding.issueNumber,
@@ -275,7 +355,7 @@ export async function beginMissionWorkerExecutionReceiptChain(claim, options = {
       phase: 'worker-queue-admitted',
       sequence: 1,
       timestampUtc: claim?.item?.createdAt || (options.now instanceof Date ? options.now.toISOString() : new Date().toISOString()),
-      proofRefs: grant.capacityProofRefs,
+      proofRefs: queueProofRefs,
       expectedNextAction: `${adapter || 'mission'} worker may atomically claim this exact granted execution.`,
     });
     const appended = await appendExecutionReceipt(root, queued, executionReceiptOptions(options));
@@ -326,6 +406,10 @@ export async function beginMissionWorkerExecutionReceiptChain(claim, options = {
 }
 
 function pendingQueueItemIdentityValid(item, adapter, entryName) {
+  if ([[item?.missionId, item?.payload?.branch || item?.payload?.authorization?.claims?.branch],
+    [item?.payload?.missionId, item?.payload?.branch],
+    [item?.actionGrant?.missionId, item?.actionGrant?.branch]].some(([id, branch]) =>
+    classifyElasticMissionIdentityV1(id, branch).kind === 'NONCANONICAL_ELASTIC')) return false;
   const actionId = normalizedText(item?.actionId).toLowerCase();
   const missionId = normalizedText(item?.missionId).toLowerCase();
   return item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
@@ -393,6 +477,19 @@ async function quarantinePendingQueueItem(paths, adapter, entry, pendingPath, ob
   }));
 }
 
+async function assertClaimSourcePlan(state, item, options) {
+  if (projectMissionSeedSourcePlanShapeV1(state).applicable && seedSourceEffectPhaseV1(state)) {
+    if (!/^[0-9a-f]{64}$/.test(String(item.actionGrant?.sourcePlanFingerprint || ''))
+        || !['CURRENT_ORDINARY_SOURCE_PLAN', 'SEED_SELF'].includes(item.actionGrant?.sourcePlanKind))
+      throw new Error('SOURCE_SCOPE_RECONCILIATION_REQUIRED');
+    await assertSeedSourceContractAdmissionV1(state.missionId, { ...options,
+      expectedMissionRevision: state.revision,
+      expectedSourcePlanFingerprint: item.actionGrant?.sourcePlanFingerprint,
+      expectedSourcePlanKind: item.actionGrant?.sourcePlanKind,
+      runtimePolicyHead: item.actionGrant?.sourceRevision });
+  }
+}
+
 async function proveProcessingClaim(claim, options = {}) {
   const action = claim?.item?.payload;
   const missionId = normalizedText(claim?.item?.missionId).toLowerCase();
@@ -406,6 +503,7 @@ async function proveProcessingClaim(claim, options = {}) {
             || state.storeMetadata?.supervisedRecoveryMaintenance) {
           throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
         }
+        await assertClaimSourcePlan(state, claim.item, options);
         return Object.freeze({ proven: true, state: 'NON_AGENT_MISSION_FENCE_CHECKED' });
       }, options);
       return guarded.result;
@@ -421,6 +519,7 @@ async function proveProcessingClaim(claim, options = {}) {
     throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
   }
   const status = normalizedText(record?.state?.dispatch?.status).toLowerCase();
+  await assertClaimSourcePlan(record.state, claim.item, options);
   const currentAdapter = normalizedText(record?.state?.dispatch?.adapter).toLowerCase();
 
   // Backward compatibility for queue items published before this repair, where
@@ -534,6 +633,7 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
             || state?.storeMetadata?.supervisedRecoveryMaintenance) {
           throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
         }
+        if (state) await assertClaimSourcePlan(state, item, options);
         if (actionIsHandoff) {
           // Publication and pickup share the existing mission lock. Re-read
           // after acquiring it; never rename a refreshed envelope using stale
@@ -554,7 +654,7 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
         await rename(pendingPath, processingPath);
       };
       const actionIsHandoff = item.payload.actionKind === 'agent-handoff';
-      if (actionIsHandoff) {
+      if (actionIsHandoff || /^critical-[1-9]\d*-elastic-goal$/.test(item.missionId)) {
         await runWithMissionStatePrecondition(item.missionId, {}, acquirePending, options);
       } else await acquirePending();
       const claim = { adapter, item, processingPath, paths };
@@ -582,6 +682,13 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
       }
       return claim;
     } catch (error) {
+      if (error?.message === 'SOURCE_SCOPE_RECONCILIATION_REQUIRED') {
+        await publishPendingQueueDiagnostic(options, Object.freeze({
+          schemaVersion: 'stephanos.mission-worker-processing-claim.v1', adapter,
+          reason: error.message, reasonCode: error.reasonCode || error.message,
+        }));
+        continue;
+      }
       if (['ENOENT', 'EEXIST'].includes(error?.code)) continue;
       throw error;
     }
@@ -593,7 +700,7 @@ export async function finalizeMissionWorkerQueueClaim(claim, result, success) {
   const targetRoot = success ? claim.paths.completed : claim.paths.failed;
   const fileName = basename(claim.processingPath);
   const resultPath = resolve(targetRoot, fileName.replace(/\.json$/, '.result.json'));
-  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', flush: true });
   await rename(claim.processingPath, resolve(targetRoot, fileName));
   return resultPath;
 }
@@ -819,7 +926,9 @@ async function applyClaimResult(claim, action, execution, inspection, executionR
 }
 
 async function failClaim(claim, action, error) {
-  const result = { schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId, missionId: action.missionId, operation: action.operation, error: error?.message || 'unknown worker error', finalVerdict: 'MISSION_WORKER_ITEM_FAILED' };
+  const sourceFailure = projectMissionWorkerSourceFailureV1(error, action);
+  const result = { schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId, missionId: action.missionId, operation: action.operation, error: error?.message || 'unknown worker error',
+    ...(sourceFailure ? { sourceFailure } : {}), finalVerdict: 'MISSION_WORKER_ITEM_FAILED' };
   const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, false);
   return { processed: true, claim, error, result, resultPath };
 }
@@ -831,6 +940,8 @@ async function processAgentClaim(adapter, options, execute) {
   const action = claim.item.payload;
   let executionReceipt = null;
   try {
+    const currentSource = await readMissionRecord(action.missionId, options);
+    await assertClaimSourcePlan(currentSource.state, claim.item, options);
     executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
     let execution = await execute(action, claim);
     const changedFiles = Array.isArray(execution?.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
@@ -889,12 +1000,15 @@ async function processAgentClaim(adapter, options, execute) {
     const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, execution.success === true);
     return { processed: true, claim, applied, result, resultPath, executionReceipt };
   } catch (error) {
+    const sourceFailure = projectMissionWorkerSourceFailureV1(error, action);
     if (executionReceipt && !['completed', 'failed', 'cancelled'].includes(executionReceipt.state)) {
       try {
         executionReceipt = await appendMissionWorkerExecutionReceiptTransition(executionReceipt, 'failed', options, {
           phase: 'worker-execution-failed',
           blocker: error?.message || `${adapter} execution failed.`,
-          expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
+          expectedNextAction: sourceFailure
+            ? 'Retain the original owner and worktree; reconcile the source failure disposition before any bounded retry.'
+            : 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
         });
       } catch (receiptError) {
         error.executionReceiptFailure = receiptError;

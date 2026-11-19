@@ -24,6 +24,8 @@ import {
 } from '../../shared/agents/stephanosNativeCapacityReceiptV1.mjs';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { readSourceMutationLease } from './programmeAuthorityService.js';
+import { assertCanonicalMissionSourceEffectV1 } from './missionOrchestratorWorkerService.js';
+import { withOriginalSourceAttemptMutationGuard } from './originalSourceAttemptFenceService.js';
 
 import { resolveStephanosNativeFocusedSourceFile, parseStephanosNativeFocusedTestCommand,
   STEPHANOS_NATIVE_VERIFY_COMMAND, nativeVerifyPackageContractMatches } from '../../shared/agents/stephanosNativeFocusedTaskV1.mjs';
@@ -236,6 +238,15 @@ function missionEvidenceReceipts(action, testReceipts, timestampUtc) {
 
 export async function executeStephanosNativeAction(action, claim, options = {}) {
   if (action?.actionKind !== 'agent-handoff' || action?.adapter !== STEPHANOS_NATIVE_ADAPTER) throw new Error('STEPHANOS_NATIVE_ACTION_UNSUPPORTED');
+  const revalidateSource = async () => {
+    const observed = await assertCanonicalMissionSourceEffectV1(action, claim, options);
+    if (observed) { action = observed.action; claim = observed.claim; }
+  };
+  const guardedEffect = operation => withOriginalSourceAttemptMutationGuard(action.missionId, async () => {
+    await revalidateSource();
+    return operation();
+  }, { env: options.env, missionStoreOptions: { root: options.root } });
+  await revalidateSource();
   const identity = executionBinding(claim);
   if (!identity) throw new Error('STEPHANOS_NATIVE_EXECUTION_BINDING_INVALID');
   const worktreePath = resolve(text(action.worktreePath));
@@ -308,7 +319,9 @@ export async function executeStephanosNativeAction(action, claim, options = {}) 
     sourceSnapshots: frozen([{ path: allowedFile, content: before, sha256: sha256(before) }]),
   });
 
+  await revalidateSource();
   const modelCall = await callNativeModel(candidate, action, request, options);
+  await revalidateSource();
   const stage = await stageStephanosNativeModelResult(request, modelCall.result, {
     workspaceRoot,
     repoRoot,
@@ -338,20 +351,28 @@ export async function executeStephanosNativeAction(action, claim, options = {}) 
   const sourceTests = [];
   const testOutputs = [];
   let promoted = false;
+  let promotionAttempted = false;
+  let lastConfirmedSourceState = 'BASELINE_CAPTURED';
   try {
-    await writeFile(absoluteFile, replacement.content, 'utf8');
+    await guardedEffect(() => {
+      promotionAttempted = true;
+      return writeFile(absoluteFile, replacement.content, 'utf8');
+    });
     promoted = true;
+    lastConfirmedSourceState = 'CANDIDATE_WRITE_COMPLETED';
     if (sha256(await readFile(absoluteFile, 'utf8')) !== replacement.afterSha256) throw new Error('STEPHANOS_NATIVE_PROMOTION_READBACK_MISMATCH');
+    lastConfirmedSourceState = 'CANDIDATE_FILE_BYTES_OBSERVED';
     const changed = gitText(run, worktreePath, ['diff', '--name-only', 'HEAD', '--'], env, 'STEPHANOS_NATIVE_CHANGED_SCOPE')
       .split(/\r?\n/).map((item) => item.trim().replace(/\\/g, '/')).filter(Boolean);
     if (changed.length !== 1 || changed[0] !== allowedFile) throw new Error('STEPHANOS_NATIVE_PROMOTION_SCOPE_DRIFT');
 
     for (const parsedTest of tests) {
-      const result = run(process.execPath, parsedTest.args, { cwd: worktreePath, env });
+      const result = await guardedEffect(() => run(process.execPath, parsedTest.args, { cwd: worktreePath, env }));
       const output = `${result?.stdout || ''}\n${result?.stderr || ''}`;
       const outputSha256 = sha256(output);
       if (!successful(result)) throw new Error(`STEPHANOS_NATIVE_FOCUSED_TEST_FAILED:${parsedTest.testId}`);
       const testTimestamp = nowUtc(options);
+      await revalidateSource();
       const persisted = await persistNativeTestEvidence({
         request,
         plan: stage.plan,
@@ -389,6 +410,7 @@ export async function executeStephanosNativeAction(action, claim, options = {}) 
       throw new Error('STEPHANOS_NATIVE_STAGING_RECEIPT_BLOCKED');
     }
 
+    await revalidateSource();
     const completedAt = nowUtc(options);
     const evidenceReceipts = missionEvidenceReceipts(action, sourceTests, completedAt);
     const proofRefs = [stage.proofRef, ...testOutputs.map((item) => buildStephanosNativeTestProofRef(item.outputSha256))];
@@ -421,7 +443,44 @@ export async function executeStephanosNativeAction(action, claim, options = {}) 
       arbitraryCommandAllowed: false,
     });
   } catch (error) {
-    if (promoted) await writeFile(absoluteFile, before, 'utf8').catch(() => {});
+    if (promotionAttempted) {
+      let rollbackWriteStarted = false, rollbackWriteCompleted = false;
+      let rollbackDisposition = 'REFUSED', rollbackReasonCode = 'SOURCE_ROLLBACK_AUTHORITY_UNPROVEN';
+      let sourceState = 'UNKNOWN', observedSha256 = '';
+      try {
+        await guardedEffect(async () => {
+          rollbackWriteStarted = true;
+          await writeFile(absoluteFile, before, 'utf8');
+          rollbackWriteCompleted = true;
+          const observed = sha256(await readFile(absoluteFile, 'utf8'));
+          if (observed !== sha256(before)) throw new Error('SOURCE_ROLLBACK_READBACK_MISMATCH');
+          observedSha256 = observed;
+        });
+        rollbackDisposition = 'RESTORED'; rollbackReasonCode = 'SOURCE_ROLLBACK_COMPLETE';
+        sourceState = 'BASELINE_FILE_BYTES_OBSERVED';
+      } catch (rollbackError) {
+        observedSha256 = '';
+        if (rollbackWriteStarted) {
+          rollbackDisposition = 'FAILED';
+          rollbackReasonCode = !rollbackWriteCompleted ? 'SOURCE_ROLLBACK_WRITE_FAILED'
+            : rollbackError?.message === 'SOURCE_ROLLBACK_READBACK_MISMATCH'
+              ? 'SOURCE_ROLLBACK_READBACK_MISMATCH' : 'SOURCE_ROLLBACK_READBACK_FAILED';
+        } else if (['SOURCE_SCOPE_RECONCILIATION_REQUIRED', 'ORIGINAL_SOURCE_ATTEMPT_FENCED'].includes(rollbackError?.message)) {
+          rollbackReasonCode = rollbackError.message;
+        }
+      }
+      // A refused rollback cannot grant mutation merely to restore old bytes.
+      // Retain the last confirmed boundary and UNKNOWN current source instead.
+      error = new Error(typeof error?.message === 'string' ? error.message : String(error), { cause: error });
+      Object.defineProperty(error, 'sourceFailure', { enumerable: true, value: frozen({
+        schemaVersion: 'stephanos.source-mutation-failure.v1', missionId: action.missionId,
+        actionId: action.actionId, sourceFile: allowedFile,
+        promotionDisposition: promoted ? 'COMPLETED' : 'ATTEMPTED_UNPROVEN', lastConfirmedSourceState,
+        rollbackDisposition, rollbackReasonCode, sourceState,
+        baselineSha256: sha256(before), candidateSha256: replacement.afterSha256, observedSha256,
+        recoveryRequired: true, responsibilityRetained: true, mutationAuthority: false,
+      }) });
+    }
     throw error;
   }
 }

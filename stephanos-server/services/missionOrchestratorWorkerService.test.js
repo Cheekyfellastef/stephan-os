@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { admitCurrentOrdinaryFixtureV1, prepareOrdinaryGoalFixtureV1 } from './fixtures/currentOrdinarySourcePlanFixtureV1.mjs';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -18,6 +19,7 @@ import {
   publishNextMissionWorkerAction,
   readMissionWorkerQueue,
   resolveMissionWorkerQueueRoot,
+  assertCanonicalMissionSourceEffectV1,
 } from './missionOrchestratorWorkerService.js';
 import * as workerConsumer from './missionOrchestratorWorkerConsumer.js';
 import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
@@ -31,6 +33,7 @@ import { readMissionWorkerActiveClaim } from '../../scripts/mission-orchestrator
 import { resolveCanonicalMissionWorkerPaths, writeMissionWorkerHeartbeat } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { projectNarrowedMissionSourceScopeV1 } from '../../shared/agents/missionOrchestrator.mjs';
 import { CODEX_TASK_CLASS } from '../../shared/agents/codexCapacityGovernorV1.mjs';
+import { classifyElasticMissionIdentityV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import { appendExecutionReceipt, createExecutionReceipt } from '../../shared/agents/executionReceiptV1.mjs';
 import { BUILD_LANE_CAPACITY_RECEIPT_SCHEMA, FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE,
   projectMissionControllerTaskV1, forgeLifeboatAuthorityReceiptId,
@@ -805,17 +808,22 @@ async function pendingCapacityFixture(t, { firstProducer = 'elastic', engineerin
   options.repoRoot = join(dirname(options.root), 'repo');
   const missionId = 'critical-1557-elastic-goal';
   const worktreePath = join(dirname(options.root), 'bounded-worktree');
+  await prepareOrdinaryGoalFixtureV1(missionId, options);
   const created = await createMissionRecord({ ...intent, missionId,
     repositoryRoot: options.repoRoot, branch: 'openclaw/elastic-goal-1557', worktreePath,
-    allowedFiles: ['shared/agents/capacity-contract.mjs'],
+    allowedFiles: ['shared/agents/capacity-contract.mjs', 'shared/agents/capacity-contract.mjs/**'],
     requiredTests: ['node --test shared/agents/capacity-contract.test.mjs'],
   }, options);
   const ready = await appendMissionEvent(missionId, { eventId: 'capacity-refresh-worktree',
     eventType: 'WORKTREE_READY', worktreePath, clean: true,
     receipt: proof('isolated worktree', 'capacity-refresh-worktree-proof') }, options);
-  const state = ready.state;
-  const sourceHead = 'a'.repeat(40);
+  const admittedSource = await admitCurrentOrdinaryFixtureV1(t, missionId, options);
+  const state = admittedSource.state;
+  const sourceHead = admittedSource.sourceHead;
   const grant = (receiptId, producer = 'controller', projection = {}) => {
+    const sourceBoundLessons = (projection.engineeringLessonRecords || engineeringLessonRecords)
+      .map(row => ({ ...row, engineeringRecord: buildEngineeringIncidentMethodRecordV1({
+        ...row.engineeringRecord, sourceHead }) }));
     const candidate = { route: 'FOUNDRY_FORGE', adapter: 'foundry-forge',
       workerId: 'stephanos-forge-lifeboat-local', receiptId,
       proofRefs: [forgeLifeboatProofRef(sourceHead)] };
@@ -830,7 +838,7 @@ async function pendingCapacityFixture(t, { firstProducer = 'elastic', engineerin
     const result = producer === 'elastic'
       ? exactElasticExternalGrant(state, candidate, sourceHead, options.now)
       : createExactWorkerActionGrant({ observedAtUtc: options.now.toISOString(),
-        engineeringLessonRecords, ...projection,
+        ...projection, engineeringLessonRecords: sourceBoundLessons,
         criticalBacklog: { activeMission: state } }, sourceHead,
       { nowUtc: options.now.toISOString(), sourceHead, forgeLaneReceipt: receipt }, () => [candidate]);
     assert.ok(missionWorkerActionGrantsMatchV1(result, result), 'actual factory must emit a complete canonical grant');
@@ -930,8 +938,9 @@ test('the real worker tick carries the published grant to native preflight witho
       engineeringMemoryPack: f.firstGrant.engineeringMemoryPack,
       engineeringMemoryPackId: f.firstGrant.engineeringMemoryPackId });
     assert.equal(result.processed.processed, false);
-    // env:{} deliberately holds before qualification, claim, model or native execution.
-    assert.equal(result.processed.reason, 'native-capacity-gaming-workspace-unproved');
+    // The source child has no authenticated semantic self-context yet; no
+    // qualification, claim, model or native execution may substitute for it.
+    assert.equal(result.processed.reason, 'SOURCE_TASK_CHILD_SEMANTIC_CUSTODY_REQUIRED');
     assert.deepEqual(JSON.parse(await readFile(f.first.path)).actionGrant, result.actionGrant);
     assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision);
   });
@@ -959,7 +968,7 @@ test('real producer, supervisor, worker, claim and heartbeat retain the original
       canonicalWorkerScript: join(paths.repositoryRoot, 'scripts', 'mission-orchestrator-worker-supervised.mjs'),
       createdAtUtc: '2026-10-30T13:59:00.000Z',
     }));
-    const env = { STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: paths.repositoryRoot,
+    const env = { ...f.options.env, STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: paths.repositoryRoot,
       STEPHANOS_MISSION_WORKER_HEAD_SHA: controllerGrant.sourceRevision,
       STEPHANOS_MISSION_WORKER_BRANCH: 'main' };
     const readActive = input => readMissionWorkerActiveClaim({ ...input, queueRoot: f.options.queueRoot });
@@ -972,6 +981,7 @@ test('real producer, supervisor, worker, claim and heartbeat retain the original
       lstatSync: fs.lstatSync, openSync: fs.openSync, fstatSync: fs.fstatSync,
       readSync: fs.readSync, closeSync: fs.closeSync, readFileSync: fs.readFileSync,
       FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE, CODEX_TASK_CLASS,
+      classifyElasticMissionIdentityV1,
       projectMissionControllerTaskV1, projectNarrowedMissionSourceScopeV1,
       createSharedWorkspaceProofRecord, writeAtomicJson,
       selectGrantedMissionWorkerQueueItem, resolveCanonicalMissionWorkerPaths,
@@ -1034,12 +1044,12 @@ test('real producer, supervisor, worker, claim and heartbeat retain the original
       now: () => f.options.now.toISOString(),
     });
     assert.equal(exitCode, 1, 'an isolated held transport is not material source success');
-    assert.equal(nativeEntries, 1, JSON.stringify(tickResult));
-    assert.equal(tickResult.processed.reason, 'NATIVE_SOURCE_CUSTODY_UNPROVEN');
+    assert.equal(nativeEntries, 0, JSON.stringify(tickResult));
+    assert.equal(tickResult.processed.reason, 'SOURCE_TASK_CHILD_SEMANTIC_CUSTODY_REQUIRED');
     assert.deepEqual(tickResult.actionGrant, expected);
     assert.equal(JSON.stringify(controllerGrant), originalControllerJson);
     assert.equal(register(expected), false, 'a settled invocation cannot register another grant');
-    assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision + 1);
+    assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision);
   });
 });
 
@@ -1168,7 +1178,8 @@ test('capacity refresh cannot alter source, worker, route, intent, memory, scope
     { sourceRevision: 'b'.repeat(40) }, { workerId: 'another-worker' }, { capacityRoute: 'CHATGPT_GITHUB' },
     { providerRouteIntent: 'OPENCLAW_ONLY' }, { engineeringMemoryPack: { packId: 'foreign' }, engineeringMemoryPackId: 'foreign' },
     { mergeAuthority: true }, { leaseSeizureAllowed: true }, { capacityProofRefs: [] },
-    { newAuthority: true }, { capacityReceiptId: f.firstGrant.capacityReceiptId, capacityProofRefs: ['proofs/changed'] },
+    { newAuthority: true }, { sourcePlanFingerprint: 'f'.repeat(64) },
+    { capacityReceiptId: f.firstGrant.capacityReceiptId, capacityProofRefs: ['proofs/changed'] },
   ]) {
     const refused = await f.publish({ ...fresh, ...alteration });
     assert.equal(refused.published, false, JSON.stringify(alteration));
@@ -1178,7 +1189,7 @@ test('capacity refresh cannot alter source, worker, route, intent, memory, scope
   await writeFile(record.statePath, JSON.stringify({ ...record.state, allowedFiles: ['shared/agents/foreign-scope.mjs'] }));
   const changedScope = await f.publish(fresh);
   assert.equal(changedScope.published, false);
-  assert.deepEqual(changedScope.blockers, ['MISSION_WORKER_PENDING_CAPACITY_CONTRACT_CHANGED']);
+  assert.deepEqual(changedScope.blockers, ['CURRENT_SOURCE_PLAN_RETAINED_CONTRACT_MISMATCH']);
   assert.deepEqual(await readFile(f.first.path), f.originalBytes);
 });
 
@@ -1330,7 +1341,7 @@ test('locked refreshed pickup refuses changed source scope even when the stored 
   const pendingBytes = await readFile(f.first.path);
   const record = await readMissionRecord(f.state.missionId, f.options);
   await writeFile(record.statePath, JSON.stringify({ ...record.state, allowedFiles: ['shared/agents/foreign-scope.mjs'] }));
-  await assert.rejects(f.claim(fresh), /MISSION_WORKER_PENDING_CAPACITY_MISSION_CHANGED/);
+  assert.equal(await f.claim(fresh), null);
   assert.deepEqual(await readFile(f.first.path), pendingBytes);
   assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
 });
@@ -1463,4 +1474,131 @@ test('foreign selected grant cannot quarantine an unrelated original pending que
   });
   assert.equal(exact.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
   assert.deepEqual(exact.item.actionGrant, f.firstGrant);
+});
+
+test('actual original plan and physical claim bind every source action field independently of copied fingerprints', async t => {
+  const f = await pendingCapacityFixture(t);
+  const options = { ...f.options, actionGrant: f.firstGrant };
+  const claim = await f.claim(f.firstGrant);
+  const original = structuredClone(claim.item), bytes = await readFile(claim.processingPath);
+  const stateRecord = await readMissionRecord(f.state.missionId, options);
+  const originalState = structuredClone(stateRecord.state);
+  const observed = await assertCanonicalMissionSourceEffectV1(original.payload, claim, options);
+  assert.match(observed.processingEnvelopeSha256, /^[a-f0-9]{64}$/);
+  const actionChanges = {
+    allowedFiles: ['shared/agents/unapproved.mjs'], requiredTests: ['node --test unapproved.test.mjs'],
+    requiredEvidence: ['unapproved evidence'], operatorIntent: 'Different unauthorized intent.',
+    intendedOutcome: 'Different unauthorized result.', worktreePath: 'C:\\outside-original-worktree',
+    repository: 'another/repository', branch: 'openclaw/elastic-goal-9999', repairRound: 9,
+    capacityReceiptId: 'copied-capacity', capacityProofRefs: ['copied-proof'], owner: 'other-worker',
+    activeWriter: 'other-worker', adapter: 'stephanos-native', capacityRoute: 'STEPHANOS_NATIVE',
+    actionId: 'other-source-action', missionId: 'critical-9999-elastic-goal',
+    sourcePlanKind: 'SEED_SELF', sourcePlanFingerprint: 'f'.repeat(64), operation: 'unapproved-operation',
+    repositoryRoot: 'C:\\extra-unapproved-root',
+  };
+  for (const [field, value] of Object.entries(actionChanges)) {
+    const separate = { ...structuredClone(original.payload), [field]: value };
+    await assert.rejects(assertCanonicalMissionSourceEffectV1(separate, claim, options),
+      /SOURCE_SCOPE_RECONCILIATION_REQUIRED|NONCANONICAL_ELASTIC_MISSION_IDENTITY/, `separate ${field}`);
+    claim.item = structuredClone(original); claim.item.payload[field] = value;
+    await writeFile(claim.processingPath, JSON.stringify(claim.item));
+    await assert.rejects(assertCanonicalMissionSourceEffectV1(claim.item.payload, claim, options),
+      /SOURCE_SCOPE_RECONCILIATION_REQUIRED|NONCANONICAL_ELASTIC_MISSION_IDENTITY/, `physical payload ${field}`);
+    claim.item = structuredClone(original); await writeFile(claim.processingPath, bytes);
+  }
+  for (const [field, value] of Object.entries({ workerId: 'different-worker', capacityReceiptId: 'different-receipt',
+    capacityProofRefs: ['different-proof'], headSha: 'b'.repeat(40), sourceRevision: 'b'.repeat(40),
+    branch: 'openclaw/elastic-goal-9999', providerRouteIntent: 'STEPHANOS_NATIVE', operation: 'write-other-source' })) {
+    claim.item = structuredClone(original); claim.item.actionGrant[field] = value;
+    await writeFile(claim.processingPath, JSON.stringify(claim.item));
+    await assert.rejects(assertCanonicalMissionSourceEffectV1(claim.item.payload, claim, options),
+      /SOURCE_SCOPE_RECONCILIATION_REQUIRED|NONCANONICAL_ELASTIC_MISSION_IDENTITY/, `grant ${field}`);
+    claim.item = structuredClone(original); await writeFile(claim.processingPath, bytes);
+  }
+  for (const [field, value] of Object.entries({ repositoryRoot: 'C:\\different-policy-root',
+    providerRouteIntent: 'STEPHANOS_NATIVE', git: { ...originalState.git, worktreePath: 'C:\\different-worktree' } })) {
+    await writeFile(stateRecord.statePath, JSON.stringify({ ...originalState, [field]: value }));
+    await assert.rejects(assertCanonicalMissionSourceEffectV1(original.payload, claim, options),
+      /SOURCE_SCOPE_RECONCILIATION_REQUIRED/, `retained mission ${field}`);
+    await writeFile(stateRecord.statePath, JSON.stringify(originalState));
+  }
+  assert.match((await assertCanonicalMissionSourceEffectV1(original.payload, claim, options)).processingEnvelopeSha256,
+    /^[a-f0-9]{64}$/);
+  assert.deepEqual((await readMissionRecord(f.state.missionId, options)).state, originalState);
+  assert.deepEqual(await readFile(claim.processingPath), bytes);
+});
+
+test('elastic identity case aliases never become unrelated work before selection or effects', async t => {
+  const f = await pendingCapacityFixture(t);
+  for (const identity of ['CRITICAL-1557-ELASTIC-GOAL', 'critical-1557-Elastic-goal',
+    ' critical-1557-elastic-goal', 'critical-01557-elastic-goal', 'critical-1557-elastic-goal-copy']) {
+    const state = { ...f.state, missionId: identity };
+    assert.equal(classifyElasticMissionIdentityV1(identity, f.state.git.branch).kind, 'NONCANONICAL_ELASTIC');
+    const projected = buildMissionWorkerAction(state, { ...f.options, actionGrant: f.firstGrant });
+    assert.equal(projected.executable, false, identity);
+    assert.match(projected.blockers.join(' '), /NONCANONICAL_ELASTIC_MISSION_IDENTITY/, identity);
+    const action = { ...f.first.action, missionId: identity };
+    await assert.rejects(assertCanonicalMissionSourceEffectV1(action, { item: {
+      missionId: identity, payload: action, actionGrant: { ...f.firstGrant, missionId: identity },
+    } }, { ...f.options, actionGrant: f.firstGrant }), /NONCANONICAL_ELASTIC_MISSION_IDENTITY/);
+  }
+  assert.equal(classifyElasticMissionIdentityV1('unit-source-engine', 'openclaw/unit-source-engine').kind, 'OTHER');
+  assert.equal(classifyElasticMissionIdentityV1(f.state.missionId, f.state.git.branch).kind, 'CANONICAL_ELASTIC');
+  for (const missionId of ['critical-1557-elastic-goalcopy', 'critical-1557-elastic-goal:copy', 'critical_1557_elastic_goal']) {
+    const action = { missionId, branch: 'openclaw/unit-source-engine' };
+    await assert.rejects(assertCanonicalMissionSourceEffectV1(action, { item: { missionId, payload: action } }, {}),
+      /NONCANONICAL_ELASTIC_MISSION_IDENTITY/, missionId);
+  }
+});
+
+test('actual canonical noncapacity factory signs, publishes, claims and revalidates the retained ordinary worktree plan', async t => {
+  const options = { ...await runtime(), env: {}, now: new Date() };
+  t.after(() => rm(dirname(options.root), { recursive: true, force: true }));
+  options.repoRoot = join(dirname(options.root), 'repo');
+  const missionId = 'critical-1559-elastic-goal', branch = 'openclaw/elastic-goal-1559';
+  await prepareOrdinaryGoalFixtureV1(missionId, options);
+  await createMissionRecord({ ...intent, missionId, branch, repositoryRoot: options.repoRoot,
+    worktreePath: join(dirname(options.root), 'original-worktree'),
+    allowedFiles: ['shared/agents/example.mjs', 'shared/agents/example.mjs/**'],
+    requiredTests: ['node --test shared/agents/example.test.mjs'] }, options);
+  const actual = await admitCurrentOrdinaryFixtureV1(t, missionId, options);
+  const grant = createExactWorkerActionGrant({ observedAtUtc: options.now.toISOString(),
+    criticalBacklog: { activeMission: actual.state } }, actual.sourceHead);
+  assert.equal(grant.actionKind, 'signed-openclaw-operation');
+  assert.equal(grant.adapter, 'openclaw-signed');
+  assert.equal(grant.capacityRoute, '');
+  assert.equal(grant.capacityReceiptId, null);
+  assert.ok(missionWorkerActionGrantsMatchV1(grant, grant));
+  options.actionGrant = grant;
+  const published = await publishMissionWorkerAction(actual.state, options);
+  assert.equal(published.published, true, JSON.stringify(published));
+  const claim = await claimNextMissionWorkerItem('openclaw-signed', options);
+  assert.ok(claim);
+  const observed = await assertCanonicalMissionSourceEffectV1(claim.item.payload, claim, options);
+  assert.match(observed.processingEnvelopeSha256, /^[a-f0-9]{64}$/);
+  const original = structuredClone(claim.item), bytes = await readFile(claim.processingPath);
+  for (const change of [claims => { claims.worktreePath = 'C:\\unapproved-worktree'; },
+    claims => { claims.repositoryRoot = 'C:\\unapproved-root'; },
+    claims => { claims.allowedFiles = ['shared/agents/unapproved.mjs']; },
+    claims => { claims.expectedHeadSha = 'e'.repeat(40); }]) {
+    claim.item = structuredClone(original); change(claim.item.payload.authorization.claims);
+    await writeFile(claim.processingPath, JSON.stringify(claim.item));
+    await assert.rejects(assertCanonicalMissionSourceEffectV1(claim.item.payload, claim, options),
+      /SOURCE_SCOPE_RECONCILIATION_REQUIRED/);
+  }
+  claim.item = original; await writeFile(claim.processingPath, bytes);
+  assert.match((await assertCanonicalMissionSourceEffectV1(original.payload, claim, options)).processingEnvelopeSha256,
+    /^[a-f0-9]{64}$/);
+  assert.equal((await readMissionRecord(missionId, options)).state.currentPhase, 'CREATE_WORKTREE');
+});
+
+test('opaque model CLIs retain a typed semantic effect hold while unrelated engine routes stay eligible', async t => {
+  const f = await pendingCapacityFixture(t);
+  for (const [adapter, route] of [['codex', 'CODEX'], ['openclaw-local', 'OPENCLAW_LOCAL'],
+    ['openclaw-standalone', 'OPENCLAW_LOCAL']]) {
+    const grant = { ...f.firstGrant, adapter, capacityRoute: route, workerId: adapter };
+    const action = buildMissionWorkerAction(f.state, { ...f.options, actionGrant: grant });
+    assert.equal(action.executable, false, adapter);
+    assert.match(action.blockers.join(' '), /SOURCE_SEMANTIC_EFFECT_REVALIDATION_UNQUALIFIED/, adapter);
+  }
 });

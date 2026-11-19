@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, mkdir, rename, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -9,6 +9,7 @@ import {
   executeStephanosNativeAction,
   parseStephanosNativeFocusedTestCommand,
 } from './missionOrchestratorStephanosNativeExecutor.js';
+import { projectMissionWorkerSourceFailureV1 } from '../../shared/agents/missionOrchestratorWorker.mjs';
 
 const HEAD = 'a'.repeat(40);
 const BRANCH = 'openclaw/native-executor-test';
@@ -200,8 +201,57 @@ test('native executor rolls the source file back when the focused test fails', a
   const value = await fixture({ testStatus: 1 });
   await assert.rejects(
     () => executeStephanosNativeAction(value.action, value.claim, value.options),
-    /STEPHANOS_NATIVE_FOCUSED_TEST_FAILED/,
+    error => {
+      assert.match(error.message, /STEPHANOS_NATIVE_FOCUSED_TEST_FAILED/);
+      const failure = projectMissionWorkerSourceFailureV1(error, value.action);
+      assert.equal(failure.rollbackDisposition, 'RESTORED');
+      assert.equal(failure.sourceState, 'BASELINE_FILE_BYTES_OBSERVED');
+      assert.equal(failure.observedSha256, hash(value.before));
+      assert.equal(failure.recoveryRequired, true); assert.equal(failure.mutationAuthority, false);
+      return true;
+    },
   );
+  assert.equal(await readFile(value.sourceFile, 'utf8'), value.before);
+});
+
+test('Native rollback I/O failure retains the original failure and unknown source recovery state', async () => {
+  const value = await fixture(), originalRun = value.options.runCommand;
+  value.options.runCommand = (executable, args) => {
+    if (executable !== process.execPath || args[0] !== '--test') return originalRun(executable, args);
+    return (async () => {
+      await rename(value.sourceFile, value.sourceFile + '.external-replacement');
+      await mkdir(value.sourceFile);
+      return { status: 1, stdout: '', stderr: 'fixture test fails after external path replacement' };
+    })();
+  };
+  await assert.rejects(executeStephanosNativeAction(value.action, value.claim, value.options), error => {
+    assert.match(error.message, /STEPHANOS_NATIVE_FOCUSED_TEST_FAILED/);
+    const failure = projectMissionWorkerSourceFailureV1(error, value.action);
+    assert.equal(failure.rollbackDisposition, 'FAILED');
+    assert.equal(failure.rollbackReasonCode, 'SOURCE_ROLLBACK_WRITE_FAILED');
+    assert.equal(failure.sourceState, 'UNKNOWN'); assert.equal(failure.observedSha256, '');
+    assert.equal(failure.lastConfirmedSourceState, 'CANDIDATE_FILE_BYTES_OBSERVED');
+    assert.equal(failure.recoveryRequired, true); assert.equal(failure.responsibilityRetained, true);
+    assert.equal(failure.mutationAuthority, false);
+    return true;
+  });
+  assert.equal((await lstat(value.sourceFile)).isDirectory(), true);
+  assert.equal(await readFile(value.sourceFile + '.external-replacement', 'utf8'), value.after);
+});
+
+test('source failure accounting preserves an immutable original exception as its cause', async () => {
+  const value = await fixture(), originalRun = value.options.runCommand;
+  const originalError = Object.freeze(new Error('IMMUTABLE_SOURCE_TEST_FIXTURE_FAILURE'));
+  value.options.runCommand = (executable, args) => {
+    if (executable === process.execPath && args[0] === '--test') throw originalError;
+    return originalRun(executable, args);
+  };
+  await assert.rejects(executeStephanosNativeAction(value.action, value.claim, value.options), error => {
+    assert.equal(error.message, originalError.message); assert.equal(error.cause, originalError);
+    assert.equal(error.sourceFailure.rollbackDisposition, 'RESTORED');
+    assert.equal(error.sourceFailure.mutationAuthority, false);
+    return true;
+  });
   assert.equal(await readFile(value.sourceFile, 'utf8'), value.before);
 });
 

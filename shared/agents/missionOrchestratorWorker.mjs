@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual, types } from 'node:util';
+import { classifyElasticMissionIdentityV1, projectMissionSeedSourcePlanShapeV1, seedSourceEffectPhaseV1,
+  SOURCE_SCOPE_RECONCILIATION_REQUIRED } from '../runtime/seedGrowthWorkV1.mjs';
 import { validateEngineeringCodingMemoryPackV1 } from './engineeringIncidentMethodMemoryV1.mjs';
-import { issueOpenClawGitHubAuthorization } from './openClawGitHubAuthorization.mjs';
+import { authorizationClaimsSha256, issueOpenClawGitHubAuthorization } from './openClawGitHubAuthorization.mjs';
 import { buildOpenClawGitHubOperation } from './openClawGitHubOperator.mjs';
 import { applyMissionOrchestratorEvent } from './missionOrchestrator.mjs';
 import {
@@ -16,8 +19,56 @@ const WORKER_GRANT_KEYS_V1 = Object.freeze([
   'operation', 'providerRouteIntent', 'capacityRoute', 'capacityReceiptId',
   'capacityProofRefs', 'workerId', 'laneId', 'repository', 'issueNumber',
   'prNumber', 'branch', 'headSha', 'engineeringMemoryPack',
-  'engineeringMemoryPackId', 'boundedActionCount', 'mergeAuthority', 'leaseSeizureAllowed',
+  'engineeringMemoryPackId', 'sourcePlanFingerprint', 'sourcePlanKind', 'boundedActionCount', 'mergeAuthority', 'leaseSeizureAllowed',
 ]);
+
+// Failure observations retain recovery responsibility; they never authenticate
+// source state, renew a grant or authorize cleanup/retry. Inspect own data only.
+export function projectMissionWorkerSourceFailureV1(error, action = {}) {
+  if (!action || typeof action !== 'object' || types.isProxy(action)) return null;
+  const descriptor = error && typeof error === 'object' && !types.isProxy(error)
+    ? Object.getOwnPropertyDescriptor(error, 'sourceFailure') : undefined;
+  if (!descriptor) return null;
+  const actionData = Object.getOwnPropertyDescriptors(action);
+  const missionId = typeof actionData.missionId?.value === 'string' ? actionData.missionId.value : '';
+  const actionId = typeof actionData.actionId?.value === 'string' ? actionData.actionId.value : '';
+  const scope = actionData.allowedFiles?.value;
+  const allowed = Array.isArray(scope) && !types.isProxy(scope) && scope.length <= 64
+    ? Array.from({ length: scope.length }, (_, index) => Object.getOwnPropertyDescriptor(scope, String(index))?.value) : [];
+  const unknown = () => Object.freeze({ schemaVersion: 'stephanos.source-mutation-failure.v1',
+    missionId, actionId, sourceFile: '', promotionDisposition: 'UNKNOWN',
+    lastConfirmedSourceState: 'UNKNOWN', rollbackDisposition: 'UNPROVEN',
+    rollbackReasonCode: 'SOURCE_FAILURE_OBSERVATION_UNPROVEN', sourceState: 'UNKNOWN',
+    baselineSha256: '', candidateSha256: '', observedSha256: '',
+    recoveryRequired: true, responsibilityRetained: true, mutationAuthority: false });
+  if (!Object.hasOwn(descriptor, 'value')) return unknown();
+  const value = descriptor.value;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || types.isProxy(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return unknown();
+  const keys = Object.keys(unknown());
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(descriptors).length !== keys.length || keys.some(key =>
+    !Object.hasOwn(descriptors, key) || !Object.hasOwn(descriptors[key], 'value') || !descriptors[key].enumerable)) return unknown();
+  const row = Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
+  if (row.schemaVersion !== 'stephanos.source-mutation-failure.v1'
+      || row.missionId !== missionId || row.actionId !== actionId
+      || typeof row.sourceFile !== 'string' || row.sourceFile.length > 256
+      || /[\x00-\x1f\x7f]/.test(row.sourceFile) || !allowed.includes(row.sourceFile)
+      || !['COMPLETED', 'ATTEMPTED_UNPROVEN'].includes(row.promotionDisposition)
+      || !['BASELINE_CAPTURED', 'CANDIDATE_WRITE_COMPLETED', 'CANDIDATE_FILE_BYTES_OBSERVED'].includes(row.lastConfirmedSourceState)
+      || !['RESTORED', 'REFUSED', 'FAILED'].includes(row.rollbackDisposition)
+      || !['SOURCE_SCOPE_RECONCILIATION_REQUIRED', 'ORIGINAL_SOURCE_ATTEMPT_FENCED',
+        'SOURCE_ROLLBACK_AUTHORITY_UNPROVEN', 'SOURCE_ROLLBACK_WRITE_FAILED',
+        'SOURCE_ROLLBACK_READBACK_FAILED', 'SOURCE_ROLLBACK_READBACK_MISMATCH', 'SOURCE_ROLLBACK_COMPLETE'].includes(row.rollbackReasonCode)
+      || !['UNKNOWN', 'BASELINE_FILE_BYTES_OBSERVED'].includes(row.sourceState)
+      || ![row.baselineSha256, row.candidateSha256].every(hash => typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash))
+      || (row.sourceState === 'BASELINE_FILE_BYTES_OBSERVED'
+        ? row.observedSha256 !== row.baselineSha256 || row.rollbackDisposition !== 'RESTORED'
+          || row.rollbackReasonCode !== 'SOURCE_ROLLBACK_COMPLETE'
+        : row.observedSha256 !== '' || row.rollbackDisposition === 'RESTORED')
+      || row.recoveryRequired !== true || row.responsibilityRetained !== true || row.mutationAuthority !== false) return unknown();
+  return Object.freeze(row);
+}
 
 // Both producers use the same envelope. Only absent/null optional memory has
 // compatibility equivalence; provider intent and every authority field stay exact.
@@ -25,6 +76,8 @@ export function createMissionWorkerActionGrantV1(input) {
   return Object.freeze({ ...input,
     engineeringMemoryPack: input.engineeringMemoryPack ?? null,
     engineeringMemoryPackId: input.engineeringMemoryPackId ?? null,
+    sourcePlanFingerprint: input.sourcePlanFingerprint ?? null,
+    sourcePlanKind: input.sourcePlanKind ?? null,
   });
 }
 
@@ -33,7 +86,7 @@ export function missionWorkerActionGrantsMatchV1(left, right) {
     if (depth > 32) throw new Error('GRANT_JSON_DEPTH');
     if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
     if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (!value || typeof value !== 'object') throw new Error('GRANT_JSON_VALUE');
+    if (!value || typeof value !== 'object' || types.isProxy(value)) throw new Error('GRANT_JSON_VALUE');
     const array = Array.isArray(value), keys = Reflect.ownKeys(value);
     if (!array && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error('GRANT_JSON_PROTOTYPE');
     for (const key of keys) {
@@ -51,18 +104,38 @@ export function missionWorkerActionGrantsMatchV1(left, right) {
   const canonical = grant => {
     if (!grant || typeof grant !== 'object' || Array.isArray(grant)) return null;
     try { grant = normalize(grant); } catch { return null; }
+    if (classifyElasticMissionIdentityV1(grant.missionId, grant.branch).kind === 'NONCANONICAL_ELASTIC') return null;
     const descriptors = Object.getOwnPropertyDescriptors(grant);
     if (Object.values(descriptors).some(row => !Object.hasOwn(row, 'value'))
       || Reflect.ownKeys(grant).some(key => !WORKER_GRANT_KEYS_V1.includes(key))
-      || WORKER_GRANT_KEYS_V1.some(key => !key.startsWith('engineeringMemoryPack') && !Object.hasOwn(grant, key))
+      || WORKER_GRANT_KEYS_V1.some(key => !key.startsWith('engineeringMemoryPack')
+        && !['sourcePlanFingerprint', 'sourcePlanKind'].includes(key) && !Object.hasOwn(grant, key))
       || grant.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
       || typeof grant.providerRouteIntent !== 'string' || !grant.providerRouteIntent.trim()
       || grant.providerRouteIntent !== grant.providerRouteIntent.trim()) return null;
     const strings = ['grantId', 'controllerId', 'missionId', 'currentPhase', 'actionId',
-      'actionKind', 'adapter', 'capacityRoute', 'laneId', 'repository', 'branch'];
+      'actionKind', 'adapter', 'laneId', 'repository', 'branch'];
+    // The fixed signed Git/worktree adapter is not a provider-capacity grant.
+    // Preserve its producer's exact empty route without inventing a capacity
+    // receipt; source/model handoffs still require their admitted nonempty route.
+    const signedLifecycle = grant.actionKind === 'signed-openclaw-operation'
+      && grant.adapter === 'openclaw-signed';
+    const forgePublication = grant.actionKind === 'forge-escrow-publication'
+      && grant.adapter === 'forge-publication';
+    const nonCapacity = signedLifecycle || forgePublication;
     if (strings.some(key => typeof grant[key] !== 'string' || !grant[key]
       || grant[key] !== grant[key].trim() || grant[key].length > 256)
+      || typeof grant.capacityRoute !== 'string' || grant.capacityRoute.length > 256
+      || grant.capacityRoute !== grant.capacityRoute.trim() || (!nonCapacity && !grant.capacityRoute)
       || typeof grant.operation !== 'string' || grant.operation.length > 128
+      || (signedLifecycle && (SIGNED_OPERATION_PHASES.get(grant.currentPhase) !== grant.operation
+        || grant.capacityRoute !== '' || grant.capacityReceiptId !== null
+        || !Array.isArray(grant.capacityProofRefs) || grant.capacityProofRefs.length !== 0
+        || grant.workerId !== 'openclaw-standalone'))
+      || (forgePublication && (grant.currentPhase !== 'GITHUB_COMMIT' || grant.operation !== 'publish-forge-escrow'
+        || grant.capacityRoute !== '' || grant.capacityReceiptId !== null
+        || !Array.isArray(grant.capacityProofRefs) || grant.capacityProofRefs.length !== 0
+        || grant.workerId !== 'github-first'))
       || typeof grant.sourceRevision !== 'string' || !SHA40_PATTERN.test(grant.sourceRevision)
       || (grant.headSha !== null && (typeof grant.headSha !== 'string' || !SHA40_PATTERN.test(grant.headSha)))
       || !Number.isSafeInteger(grant.missionRevision) || grant.missionRevision < 0
@@ -73,6 +146,11 @@ export function missionWorkerActionGrantsMatchV1(left, right) {
       || !Array.isArray(grant.capacityProofRefs) || grant.capacityProofRefs.length > 64
       || grant.capacityProofRefs.some(value => typeof value !== 'string' || !value
         || value !== value.trim() || value.length > 512)
+      || (grant.sourcePlanFingerprint != null && (typeof grant.sourcePlanFingerprint !== 'string'
+        || !/^[0-9a-f]{64}$/.test(grant.sourcePlanFingerprint)))
+      || (grant.sourcePlanFingerprint != null
+        ? !['CURRENT_ORDINARY_SOURCE_PLAN', 'SEED_SELF'].includes(grant.sourcePlanKind)
+        : grant.sourcePlanKind != null)
       || grant.boundedActionCount !== 1 || grant.mergeAuthority !== false
       || grant.leaseSeizureAllowed !== false) return null;
     const normalized = createMissionWorkerActionGrantV1(grant);
@@ -199,6 +277,25 @@ export function projectMissionWorkerActionState(state, options = {}) {
 }
 
 export function buildMissionWorkerAction(state, options = {}) {
+  if (types.isProxy(state)) return blocked({ missionId: 'invalid', revision: 0, currentPhase: 'BLOCKED' },
+    SOURCE_SCOPE_RECONCILIATION_REQUIRED);
+  if (classifyElasticMissionIdentityV1(state?.missionId, state?.git?.branch || state?.branch).kind === 'NONCANONICAL_ELASTIC')
+    return blocked(state, 'NONCANONICAL_ELASTIC_MISSION_IDENTITY');
+  const semantic = projectMissionSeedSourcePlanShapeV1(state || {});
+  if (semantic.applicable && seedSourceEffectPhaseV1(state || {}) && !semantic.valid) {
+    return { ...blocked(state, SOURCE_SCOPE_RECONCILIATION_REQUIRED), reason: SOURCE_SCOPE_RECONCILIATION_REQUIRED };
+  }
+  const action = buildMissionWorkerActionData(state, options);
+  if (semantic.applicable && seedSourceEffectPhaseV1(state || {}) && semantic.valid
+      && action.actionKind === 'agent-handoff'
+      && ['codex', 'openclaw-local', 'openclaw-standalone'].includes(action.adapter))
+    return blocked(state, 'SOURCE_SEMANTIC_EFFECT_REVALIDATION_UNQUALIFIED');
+  return semantic.applicable && seedSourceEffectPhaseV1(state || {}) && action.executable
+    ? { ...action, sourcePlanFingerprint: semantic.authorityPlanFingerprint,
+      sourcePlanKind: semantic.sourcePlanKind } : action;
+}
+
+function buildMissionWorkerActionData(state, options = {}) {
   if (!state || typeof state !== 'object') return blocked({ missionId: 'invalid', revision: 0, currentPhase: 'BLOCKED' }, 'Mission state is required.');
   if (state.nextAction?.type === 'RECONCILE_GOAL_ACCEPTANCE') {
     return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'wait'),
@@ -298,9 +395,28 @@ export function buildMissionWorkerAction(state, options = {}) {
   return blocked(state, `Unsupported mission phase: ${text(state.currentPhase, 'unknown')}`);
 }
 
+function missionWorkerRequestData(action, authorization) {
+  return { schemaVersion: 'stephanos.mission-worker-request.v1', actionId: action.actionId, missionId: action.missionId, operation: action.operation, authorization, approvalToken: action.approvalToken || '', receiptRequirement: action.receiptRequirement, finalVerdict: 'MISSION_WORKER_REQUEST_ISSUED' };
+}
+
+// Semantic comparison only; the existing signed executor still verifies the
+// Ed25519 signature and current authorization lifetime before Git effects.
+export function missionWorkerSignedRequestMatchesActionV1(request, action) {
+  if (action?.actionKind !== 'signed-openclaw-operation' || action.executable !== true
+      || types.isProxy(request) || types.isProxy(request?.authorization)) return false;
+  const authorization = request?.authorization;
+  return authorization?.schemaVersion === 'stephanos.openclaw-github-authorization.v1'
+    && authorization.algorithm === 'Ed25519' && authorization.finalVerdict === 'STEPHANOS_AUTHORIZATION_ISSUED'
+    && Object.keys(authorization).sort().join(',') === 'algorithm,claims,claimsSha256,finalVerdict,schemaVersion,signature'
+    && typeof authorization.signature === 'string' && /^[A-Za-z0-9+/]{86}==$/.test(authorization.signature)
+    && isDeepStrictEqual(authorization.claims, action.claims)
+    && authorization.claimsSha256 === authorizationClaimsSha256(action.claims)
+    && isDeepStrictEqual(request, missionWorkerRequestData(action, authorization));
+}
+
 export function issueMissionWorkerAuthorization(action, privateKeyPem, options = {}) {
   if (action?.actionKind !== 'signed-openclaw-operation' || action.executable !== true) return { finalVerdict: 'BLOCKED', blockers: ['Worker action is not an executable signed OpenClaw operation.'] };
   const authorization = issueOpenClawGitHubAuthorization(action.claims, privateKeyPem, options);
   if (authorization.finalVerdict !== 'STEPHANOS_AUTHORIZATION_ISSUED') return authorization;
-  return { schemaVersion: 'stephanos.mission-worker-request.v1', actionId: action.actionId, missionId: action.missionId, operation: action.operation, authorization, approvalToken: action.approvalToken || '', receiptRequirement: action.receiptRequirement, finalVerdict: 'MISSION_WORKER_REQUEST_ISSUED' };
+  return missionWorkerRequestData(action, authorization);
 }

@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile, mkdir, readdir, link, rename, unlink, writeFile } from 'node:fs/promises';
+import { readFile, mkdir, readdir, link, rename, unlink, writeFile, lstat, open } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
+import { isDeepStrictEqual, types } from 'node:util';
 import {
   buildMissionWorkerAction,
   issueMissionWorkerAuthorization,
+  missionWorkerSignedRequestMatchesActionV1,
   missionWorkerActionGrantsMatchV1,
   projectMissionWorkerActionState,
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
@@ -15,7 +16,10 @@ import {
   readMissionRecord,
   resolveMissionOrchestratorRoot,
   runWithMissionStatePrecondition,
+  assertSeedSourceContractAdmissionV1,
 } from './missionOrchestratorStore.js';
+import { classifyElasticMissionIdentityV1, projectMissionSeedSourcePlanShapeV1,
+  seedSourceEffectPhaseV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import {
   createSharedWorkspaceHandoffRecord,
   writeAtomicJson,
@@ -38,6 +42,151 @@ export function resolveMissionWorkerQueueRoot(env = process.env) {
   if (configured) return resolve(configured);
   const orchestratorRoot = resolveMissionOrchestratorRoot(env);
   return orchestratorRoot ? resolve(orchestratorRoot, 'worker-queue') : '';
+}
+
+// Shared Node effect boundary for registered source adapters. Shape-only
+// controller projections never replace a real claim and current owner proof.
+export function isMissionWorkerPassiveDataV1(value, depth = 0, count = { value: 0 }) {
+  if (depth > 32 || ++count.value > 16384 || types.isProxy(value)) return false;
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (!value || typeof value !== 'object') return false;
+  const array = Array.isArray(value);
+  if (!array && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string') return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!Object.hasOwn(descriptor, 'value') || (!descriptor.enumerable && !(array && key === 'length'))
+        || (array && key !== 'length' && !/^(0|[1-9][0-9]*)$/.test(key))
+        || !isMissionWorkerPassiveDataV1(descriptor.value, depth + 1, count)) return false;
+  }
+  return !array || Reflect.ownKeys(value).length === value.length + 1;
+}
+
+export async function assertCanonicalMissionSourceEffectV1(action, claim, options = {}) {
+  const refuse = () => { throw new Error('SOURCE_SCOPE_RECONCILIATION_REQUIRED'); };
+  if (types.isProxy(claim) || !isMissionWorkerPassiveDataV1(action)) refuse();
+  const itemDescriptor = claim && Object.getOwnPropertyDescriptor(claim, 'item');
+  if (itemDescriptor && (!Object.hasOwn(itemDescriptor, 'value') || !isMissionWorkerPassiveDataV1(itemDescriptor.value))) refuse();
+  const pathDescriptor = claim && Object.getOwnPropertyDescriptor(claim, 'processingPath');
+  if (pathDescriptor && !Object.hasOwn(pathDescriptor, 'value')) refuse();
+  const suppliedAction = action, suppliedItem = itemDescriptor?.value;
+  action = structuredClone(action);
+  const item = suppliedItem ? structuredClone(suppliedItem) : undefined;
+  const identities = [claim?.item?.missionId, claim?.item?.actionGrant?.missionId, action?.missionId,
+    action?.authorization?.claims?.missionId].filter(value => value !== undefined);
+  const boundIdentities = [[claim?.item?.missionId, claim?.item?.payload?.branch || claim?.item?.payload?.authorization?.claims?.branch],
+    [claim?.item?.actionGrant?.missionId, claim?.item?.actionGrant?.branch],
+    [action?.missionId || action?.authorization?.claims?.missionId, action?.branch || action?.authorization?.claims?.branch]];
+  if (boundIdentities.some(([value, branch]) => classifyElasticMissionIdentityV1(value, branch).kind === 'NONCANONICAL_ELASTIC'))
+    throw new Error('NONCANONICAL_ELASTIC_MISSION_IDENTITY');
+  if (!identities.some(value => classifyElasticMissionIdentityV1(value).kind === 'CANONICAL_ELASTIC')) return;
+  const missionId = claim?.item?.missionId || action?.missionId || action?.authorization?.claims?.missionId;
+  if (classifyElasticMissionIdentityV1(missionId).kind !== 'CANONICAL_ELASTIC'
+      || identities.some(value => value !== missionId)) refuse();
+  const actionMission = action?.missionId || action?.authorization?.claims?.missionId;
+  const grant = item?.actionGrant;
+  if (actionMission !== missionId || !item || !grant
+      || item.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
+      || !/^[0-9a-f]{64}$/.test(text(grant.sourcePlanFingerprint))
+      || grant.missionId !== missionId || grant.actionId !== item.actionId
+      || !missionWorkerActionGrantsMatchV1(grant, grant)
+      || !missionWorkerActionGrantsMatchV1(grant, options.actionGrant)
+      || !isDeepStrictEqual(action, item.payload)
+      || !isDeepStrictEqual(item.executionBinding, durableQueueExecutionBinding(grant))) refuse();
+  const adapter = text(item.adapter);
+  if (!['codex', 'foundry-forge', 'stephanos-native', 'openclaw-local', 'openclaw-standalone',
+    'openclaw-signed', 'forge-publication', 'chatgpt-github', 'desktop-commander', 'sovereign-commander'].includes(adapter)) refuse();
+  if (['codex', 'openclaw-local', 'openclaw-standalone'].includes(adapter))
+    throw new Error('SOURCE_SEMANTIC_EFFECT_REVALIDATION_UNQUALIFIED');
+  const queueRoot = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
+  if (!queueRoot || !/^[a-z0-9][a-z0-9._:-]{2,160}$/.test(item.actionId)) refuse();
+  const actualPath = resolve(queuePaths(queueRoot, adapter).processing, item.actionId + '.json');
+  if (resolve(String(claim.processingPath || '')) !== actualPath) refuse();
+  const before = await lstat(actualPath);
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > 1024 * 1024) refuse();
+  const handle = await open(actualPath, 'r');
+  let bytes;
+  try {
+    const captured = await handle.stat();
+    if (!captured.isFile() || captured.nlink !== 1 || captured.dev !== before.dev
+        || captured.ino !== before.ino || captured.size !== before.size || captured.mode !== before.mode) refuse();
+    bytes = Buffer.alloc(captured.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (!read.bytesRead) refuse();
+      offset += read.bytesRead;
+    }
+    const after = await handle.stat(), named = await lstat(actualPath);
+    if ([after, named].some(row => !row.isFile() || row.isSymbolicLink() || row.nlink !== 1
+        || row.dev !== captured.dev || row.ino !== captured.ino || row.size !== captured.size
+        || row.mode !== captured.mode || row.mtimeMs !== captured.mtimeMs || row.ctimeMs !== captured.ctimeMs)) refuse();
+  if (!isDeepStrictEqual(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), item)) refuse();
+  const { state } = await readMissionRecord(missionId, options);
+  if (classifyElasticMissionIdentityV1(state.missionId).kind !== 'CANONICAL_ELASTIC'
+      || state.missionId !== missionId || state.cancelled === true
+      || state.currentPhase !== grant.currentPhase || state.storeMetadata?.originalSourceAttemptFence
+      || state.storeMetadata?.supervisedRecoveryMaintenance) refuse();
+  const claimedAgent = item.payload?.actionKind === 'agent-handoff';
+  if (claimedAgent) {
+    if (state.dispatch?.status !== 'running' || state.dispatch?.adapter !== adapter
+        || state.revision !== grant.missionRevision + 1
+        || state.storeMetadata?.lastEventId !== `pickup-${item.actionId}`.slice(0, 128)) refuse();
+  } else if (state.revision !== grant.missionRevision || state.currentPhase !== grant.currentPhase) refuse();
+  // Only the exact recorded pickup permits recovering the original revision.
+  // Every source semantic is then projected from the actual retained mission,
+  // not from rewritten queue payload fields or a copied plan fingerprint.
+  const actionState = claimedAgent ? { ...state, revision: grant.missionRevision } : state;
+  const at = item.payload?.actionKind === 'agent-handoff'
+    ? item.createdAt : item.payload?.authorization?.claims?.issuedAt || item.createdAt;
+  const projectionNow = new Date(at);
+  if (!Number.isFinite(projectionNow.getTime()) || projectionNow.toISOString() !== at) refuse();
+  const signedClaims = item.payload?.authorization?.claims;
+  const lifetime = signedClaims ? Date.parse(signedClaims.expiresAt) - projectionNow.getTime() : undefined;
+  if (signedClaims && (!Number.isSafeInteger(lifetime) || lifetime < 60_000 || lifetime > 86_400_000)) refuse();
+  const projectedAction = buildMissionWorkerAction(actionState, { ...options, actionGrant: grant,
+    now: projectionNow, ...(signedClaims ? { authorizationLifetimeMs: lifetime } : {}) });
+  if (!projectedAction.executable || !validateExactActionGrant(actionState, projectedAction, grant, options).valid
+      || grant.workerId !== (projectedAction.owner || null)
+      || grant.providerRouteIntent !== text(actionState.providerRouteIntent, 'AUTO').toUpperCase()
+      || (projectedAction.actionKind === 'signed-openclaw-operation'
+        ? !missionWorkerSignedRequestMatchesActionV1(item.payload, projectedAction)
+        : !isDeepStrictEqual(item.payload, projectedAction))) refuse();
+  if (item.payload?.actionKind === 'forge-escrow-publication') {
+    const source = state.sourcePublication, payload = item.payload;
+    if (adapter !== 'forge-publication' || grant.actionKind !== payload.actionKind
+        || grant.currentPhase !== 'GITHUB_COMMIT' || grant.operation !== 'publish-forge-escrow'
+        || !/^[0-9a-f]{64}$/.test(payload.artifactSha256 || '')
+        || !/^offline-publication-[0-9a-f]{24}$/.test(payload.outboxId || '')
+        || !source || payload.repository !== state.repository || payload.branch !== state.git?.branch
+        || payload.artifactSha256 !== source.artifactSha256 || payload.outboxId !== source.outboxId
+        || payload.exactParentHead !== source.exactParentHead || payload.exactResultTree !== source.exactResultTree
+        || payload.branch !== source.canonicalBranch) refuse();
+  }
+  await assertSeedSourceContractAdmissionV1(missionId, { ...options,
+    expectedMissionRevision: state.revision, expectedSourcePlanFingerprint: grant.sourcePlanFingerprint,
+    expectedSourcePlanKind: grant.sourcePlanKind,
+    runtimePolicyHead: grant.sourceRevision });
+  const final = await readMissionRecord(missionId, options);
+  if (!isDeepStrictEqual(final.state, state) || !isDeepStrictEqual(suppliedAction, action)
+      || !isDeepStrictEqual(suppliedItem, item) || claim.processingPath !== pathDescriptor?.value) refuse();
+  const finalBytes = Buffer.alloc(bytes.length);
+  let finalOffset = 0;
+  while (finalOffset < finalBytes.length) {
+    const read = await handle.read(finalBytes, finalOffset, finalBytes.length - finalOffset, finalOffset);
+    if (!read.bytesRead) refuse();
+    finalOffset += read.bytesRead;
+  }
+  const finalStats = await handle.stat(), finalNamed = await lstat(actualPath);
+  if (!finalBytes.equals(bytes) || [finalStats, finalNamed].some(row => !row.isFile()
+      || row.isSymbolicLink() || row.nlink !== 1 || row.dev !== captured.dev || row.ino !== captured.ino
+      || row.size !== captured.size || row.mode !== captured.mode || row.mtimeMs !== captured.mtimeMs
+      || row.ctimeMs !== captured.ctimeMs)) refuse();
+  return Object.freeze({ action: structuredClone(action),
+    claim: { adapter, item: structuredClone(item), processingPath: actualPath, paths: queuePaths(queueRoot, adapter) },
+    processingPath: actualPath, processingEnvelopeSha256: digest(bytes) });
+  } finally { await handle.close(); }
 }
 
 function queuePaths(root, adapter) {
@@ -192,6 +341,16 @@ async function readCapacityAdmissions(root, item) {
 // An admitted refresh interrupted before replacement must be recovered by the
 // publisher; the original receipt cannot be picked up in the meantime.
 export async function assertMissionWorkerPendingCapacityCurrent(item, bytes, options = {}, state) {
+  if (state && projectMissionSeedSourcePlanShapeV1(state).applicable && seedSourceEffectPhaseV1(state)) {
+    if (!/^[0-9a-f]{64}$/.test(String(item.actionGrant?.sourcePlanFingerprint || ''))
+        || !['CURRENT_ORDINARY_SOURCE_PLAN', 'SEED_SELF'].includes(item.actionGrant?.sourcePlanKind))
+      throw new Error('SOURCE_SCOPE_RECONCILIATION_REQUIRED');
+    await assertSeedSourceContractAdmissionV1(state.missionId, { ...options,
+      expectedMissionRevision: state.revision,
+      expectedSourcePlanFingerprint: item.actionGrant?.sourcePlanFingerprint,
+      expectedSourcePlanKind: item.actionGrant?.sourcePlanKind,
+      runtimePolicyHead: item.actionGrant?.sourceRevision });
+  }
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   const history = await readCapacityAdmissions(root, item);
   if (history.entries.length && history.entries.at(-1).record.admittedEnvelopeSha256 !== digest(bytes)) {
@@ -382,6 +541,8 @@ function durableQueueExecutionBinding(grant) {
     branch: text(grant.branch),
     headSha: text(grant.headSha).toLowerCase(),
     sourceRevision: text(grant.sourceRevision).toLowerCase(),
+    ...(grant.sourcePlanFingerprint ? { sourcePlanFingerprint: grant.sourcePlanFingerprint,
+      sourcePlanKind: grant.sourcePlanKind } : {}),
   });
 }
 
@@ -639,6 +800,10 @@ function validateExactActionGrant(state, action, grant, options = {}) {
   if (text(grant?.operation) !== text(action?.operation)) {
     errors.push('action-grant-operation-mismatch');
   }
+  if (action.sourcePlanFingerprint && (grant?.sourcePlanFingerprint !== action.sourcePlanFingerprint
+      || grant?.sourcePlanKind !== action.sourcePlanKind)) {
+    errors.push('action-grant-source-plan-mismatch');
+  }
   const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(action?.adapter);
   if (capacityScoped) {
     if (text(grant?.capacityRoute) !== text(action?.capacityRoute)) {
@@ -695,6 +860,22 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       action,
       path: '',
     };
+  }
+  if (projectMissionSeedSourcePlanShapeV1(state).applicable && seedSourceEffectPhaseV1(state)) {
+    if (!missionWorkerActionGrantsMatchV1(options.actionGrant, options.actionGrant)
+        || options.actionGrant.sourcePlanFingerprint !== action.sourcePlanFingerprint
+        || options.actionGrant.sourcePlanKind !== action.sourcePlanKind) {
+      return { published: false, reason: 'SOURCE_SCOPE_RECONCILIATION_REQUIRED', action, path: '' };
+    }
+    try {
+      await assertSeedSourceContractAdmissionV1(state.missionId, { ...options,
+        expectedMissionRevision: state.revision,
+        expectedSourcePlanFingerprint: action.sourcePlanFingerprint,
+        expectedSourcePlanKind: action.sourcePlanKind,
+        runtimePolicyHead: options.actionGrant.sourceRevision });
+    } catch (error) {
+      return { published: false, reason: error.message, blockers: [error.reasonCode || error.message], action, path: '' };
+    }
   }
   if (options.actionGrant) {
     const validation = validateExactActionGrant(

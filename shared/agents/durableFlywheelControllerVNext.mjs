@@ -276,7 +276,9 @@ function missionEngineeringComponentRefs(mission = {}) {
   const refs = [...new Set([
     ...list(mission?.allowedFiles),
     ...list(mission?.targetFiles),
-  ].map((value) => text(value).replace(/\\/g, '/')).filter(Boolean))];
+  // Component lookup consumes the canonical resource companion as its parent
+  // reference. Mutation scopes and their raw task-class counts stay unchanged.
+  ].map((value) => text(value).replace(/\\/g, '/').replace(/\/\*\*$/, '')).filter(Boolean))];
   return refs.slice(0, 24);
 }
 
@@ -396,6 +398,8 @@ export function createExactWorkerActionGrant(
     prNumber: identity.prNumber,
     branch: identity.branch,
     headSha: identity.headSha || null,
+    sourcePlanFingerprint: action.sourcePlanFingerprint || null,
+    sourcePlanKind: action.sourcePlanKind || null,
     engineeringMemoryPack,
     engineeringMemoryPackId: engineeringMemoryPack?.packId || null,
     boundedActionCount: 1,

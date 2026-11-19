@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import { createMissionRecord, appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
+import { admitCurrentOrdinaryFixtureV1, prepareOrdinaryGoalFixtureV1 } from './fixtures/currentOrdinarySourcePlanFixtureV1.mjs';
+import { exactElasticExternalGrant } from './criticalBacklogConveyorServiceCore.js';
+import { forgeLifeboatProofRef } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 
 import { DEFAULT_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import { projectElasticAdmissionGateV1 } from './criticalBacklogConveyorServiceCore.js';
@@ -278,6 +281,11 @@ function elasticImplementationMission(issueNumber = 91) {
     allowedFiles: [`shared/agents/elastic-goal-${issueNumber}.mjs`],
     requiredTests: [`node --test shared/agents/elastic-goal-${issueNumber}.test.mjs`],
     requiredEvidence: ['focused elastic-goal proof'],
+    // Pure mocked dispatcher projection only. The persisted retry integration
+    // below obtains its authority from the actual private producer instead.
+    currentOrdinarySourcePlan: { schemaVersion: 'stephanos.current-ordinary-source-plan.v1',
+      purpose: 'REAFFIRM_EXISTING_ORDINARY_SOURCE_PLAN', missionId: `critical-${issueNumber}-elastic-goal`,
+      branch: `openclaw/elastic-goal-${issueNumber}`, authorityPlanFingerprint: 'a'.repeat(64) },
     revision: 1,
     currentPhase: 'AGENT_IMPLEMENTATION',
     git: {
@@ -1711,7 +1719,7 @@ test('original-task budget exclusion is visible beyond bounded rows without eval
 });
 
 test('strengthened retry contract persists before actual queue publication and claim', async t => {
- for (const narrowing of [false, true]) await t.test(narrowing ? 'narrowed scope' : 'unchanged scope', async () => {
+ for (const narrowing of [false, true]) await t.test(narrowing ? 'narrowed scope' : 'unchanged scope', async t => {
   const paths = await roots();
   const options = {root: paths.orchestratorRoot, queueRoot: join(paths.orchestratorRoot, 'queue'), env: {},
     capacityRouting: {nowUtc: new Date().toISOString(), codexStatus: {
@@ -1719,9 +1727,12 @@ test('strengthened retry contract persists before actual queue publication and c
       meterTruthUsable: true, observedAtUtc: new Date(Date.now() - 1000).toISOString(), remainingPercent: 90,
       availability: 'AVAILABLE', confidence: 'high', naturalResetAtUtc: '',
     }}};
+  options.repoRoot = paths.repoRoot; options.sharedWorkspaceRoot = paths.workspaceRoot;
+  options.now = new Date();
+  await prepareOrdinaryGoalFixtureV1('critical-2964-elastic-goal', options);
   let {state} = await createMissionRecord({missionId: 'critical-2964-elastic-goal', title: 'Original bounded goal',
     operatorIntent: 'Real source and independent tests', intendedOutcome: 'Implemented behavior', missionKind: 'implementation',
-    repository: 'Cheekyfellastef/stephan-os', branch: 'openclaw/elastic-goal-2964',
+    repository: 'Cheekyfellastef/stephan-os', repositoryRoot: paths.repoRoot, branch: 'openclaw/elastic-goal-2964',
     worktreePath: join(paths.repoRoot, 'worker'),
     allowedFiles: narrowing ? ['**'] : ['stephanos-server/services/example.js', 'stephanos-server/services/example.js/**'],
     requiredEvidence: ['focused test'], requiredTests: ['npm run stephanos:verify']}, options);
@@ -1753,7 +1764,11 @@ test('strengthened retry contract persists before actual queue publication and c
   assert.deepEqual(persisted.allowedFiles, expectedScope);
   if (narrowing) assert.deepEqual(persisted.repair.history[0].previousAllowedFiles, ['**']);
   assert.deepEqual(persisted.repair.history[0].previousDispatch, original.dispatch);
-  const publication = await publishMissionWorkerAction(persisted, options);
+  const authorized = await admitCurrentOrdinaryFixtureV1(t, persisted.missionId, options);
+  options.actionGrant = exactElasticExternalGrant(authorized.state, { route: 'FOUNDRY_FORGE',
+    adapter: 'foundry-forge', workerId: 'stephanos-forge-lifeboat-local', receiptId: 'actual-retry-capacity',
+    proofRefs: [forgeLifeboatProofRef(authorized.sourceHead)] }, authorized.sourceHead, options.now);
+  const publication = await publishMissionWorkerAction(authorized.state, options);
   assert.equal(publication.published, true, JSON.stringify(publication));
   const queued = JSON.parse(await readFile(publication.path, 'utf8'));
   assert.deepEqual(queued.payload.requiredTests, expected);
