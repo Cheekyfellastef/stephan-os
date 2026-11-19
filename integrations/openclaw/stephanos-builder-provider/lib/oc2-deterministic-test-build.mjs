@@ -424,6 +424,9 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
     qualificationEligible: true,
     providerInstance,
     exactInputIdentity: task.exactInputIdentity,
+    // Carry the canonical hashed core so the Mission Worker can independently
+    // check every fixed-plan result and digest, not just three self-equal hashes.
+    outputProofCore: resultCore,
     exactOutputIdentity,
     receipt: Object.freeze({
       receiptId: `openclaw-oc2-result-${taskHash.slice(0, 20)}`,

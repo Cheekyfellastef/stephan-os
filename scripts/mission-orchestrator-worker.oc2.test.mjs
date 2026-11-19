@@ -9,6 +9,7 @@ import {
   OPENCLAW_OC2_FIXED_PLAN,
   OPENCLAW_OC2_PROVIDER,
   OPENCLAW_OC2_PROVIDER_VERSION,
+  OPENCLAW_OC2_RESULT_SCHEMA,
   OPENCLAW_OC2_OPERATION,
   OPENCLAW_OC2_TASK_CLASS,
 } from '../integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs';
@@ -66,6 +67,34 @@ function grant(overrides = {}) {
 }
 
 function gatewayResult() {
+  const outputProofCore = {
+    schemaVersion: OPENCLAW_OC2_RESULT_SCHEMA,
+    missionId: MISSION,
+    goalId: '#1725',
+    taskId: TASK,
+    taskClass: OPENCLAW_OC2_TASK_CLASS,
+    repository: 'Cheekyfellastef/stephan-os',
+    requestedSourceHead: HEAD,
+    observedSourceHead: HEAD,
+    exactInputIdentity: EXACT_INPUT_IDENTITY,
+    provider: OPENCLAW_OC2_PROVIDER,
+    providerInstance: 'openclaw-gateway:4242',
+    providerVersion: OPENCLAW_OC2_PROVIDER_VERSION,
+    operation: OPENCLAW_OC2_OPERATION,
+    testResults: OPENCLAW_OC2_FIXED_PLAN.map((item) => ({
+      testId: item.testId, status: 0, outputSha256: 'a'.repeat(64),
+    })),
+    changedFiles: [],
+    sourceMutationPerformed: false,
+    arbitraryShellAllowed: false,
+    arbitraryCommandAllowed: false,
+    mergeAllowed: false,
+    deploymentAllowed: false,
+    selfQualificationAllowed: false,
+    finalVerdict: 'OPENCLAW_OC2_PROVIDER_TASK_COMPLETED',
+    completedAtUtc: '2026-08-21T00:00:00.000Z',
+  };
+  const outputIdentity = createHash('sha256').update(JSON.stringify(outputProofCore), 'utf8').digest('hex');
   return {
     schemaVersion: OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA,
     success: true,
@@ -100,19 +129,20 @@ function gatewayResult() {
       operation: OPENCLAW_OC2_OPERATION,
       providerInstance: 'openclaw-gateway:4242',
       exactInputIdentity: EXACT_INPUT_IDENTITY,
-      exactOutputIdentity: 'b'.repeat(64),
+      outputProofCore,
+      exactOutputIdentity: outputIdentity,
       receipt: {
         receiptId: `openclaw-oc2-result-${CLAIM_HASH.slice(0, 20)}`,
         source: 'openclaw-standalone-oc2',
         evidenceType: 'provider-neutral-task-result',
-        commandOutputHash: 'b'.repeat(64),
+        commandOutputHash: outputIdentity,
         verified: true,
       },
       evidenceReceipts: [{
         receiptId: PROOF_RECEIPT_ID,
         source: 'openclaw-standalone-oc2',
         evidenceType: 'shared-workspace-proof',
-        sha256: 'b'.repeat(64),
+        sha256: outputIdentity,
         receiptPath: PROOF_REF,
         verified: true,
       }],
@@ -211,6 +241,12 @@ test('OC2 refuses contradictory queue action and grant before Gateway invocation
 });
 
 test('OC2 result-consumer rejects contradictory producer and receipt lineage', async (t) => {
+  const rehash = (value) => {
+    const h = createHash('sha256').update(JSON.stringify(value.result.outputProofCore), 'utf8').digest('hex');
+    value.result.exactOutputIdentity = h;
+    value.result.receipt.commandOutputHash = h;
+    value.result.evidenceReceipts[0].sha256 = h;
+  };
   const corruptions = [
     ['inner mission mismatch', (value) => { value.result.missionId = 'other-mission'; }],
     ['inner mission absent', (value) => { delete value.result.missionId; }],
@@ -232,6 +268,19 @@ test('OC2 result-consumer rejects contradictory producer and receipt lineage', a
     ['input identity well-formed but forged', (value) => { value.result.exactInputIdentity = 'd'.repeat(64); }],
     ['output identity absent', (value) => { delete value.result.exactOutputIdentity; }],
     ['output identity malformed', (value) => { value.result.exactOutputIdentity = 'invalid'; }],
+    ['three matching but invented output hashes', (value) => {
+      value.result.exactOutputIdentity = 'd'.repeat(64);
+      value.result.receipt.commandOutputHash = 'd'.repeat(64);
+      value.result.evidenceReceipts[0].sha256 = 'd'.repeat(64);
+    }],
+    ['output proof core missing', (value) => { delete value.result.outputProofCore; }],
+    ['output proof core another mission', (value) => { value.result.outputProofCore.missionId = 'other-mission'; rehash(value); }],
+    ['output proof core omitted fixed test', (value) => { value.result.outputProofCore.testResults.pop(); rehash(value); }],
+    ['output proof core failed test', (value) => { value.result.outputProofCore.testResults[0].status = 1; rehash(value); }],
+    ['output proof core invented test digest', (value) => { value.result.outputProofCore.testResults[0].outputSha256 = 'invalid'; rehash(value); }],
+    ['output proof core source mutation', (value) => { value.result.outputProofCore.sourceMutationPerformed = true; rehash(value); }],
+    ['output proof core arbitrary shell', (value) => { value.result.outputProofCore.arbitraryShellAllowed = true; rehash(value); }],
+    ['output proof core extra field', (value) => { value.result.outputProofCore.unexpected = true; rehash(value); }],
     ['result source mismatch', (value) => { value.result.receipt.source = 'other-provider'; }],
     ['result evidence type mismatch', (value) => { value.result.receipt.evidenceType = 'other-type'; }],
     ['result digest mismatch', (value) => { value.result.receipt.commandOutputHash = 'd'.repeat(64); }],

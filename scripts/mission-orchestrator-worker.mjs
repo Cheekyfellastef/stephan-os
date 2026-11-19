@@ -58,6 +58,7 @@ import {
   OPENCLAW_OC2_OPERATION,
   OPENCLAW_OC2_PROVIDER,
   OPENCLAW_OC2_PROVIDER_VERSION,
+  OPENCLAW_OC2_RESULT_SCHEMA,
   OPENCLAW_OC2_TASK_CLASS,
 } from '../integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs';
 import {
@@ -378,6 +379,44 @@ function validateOpenClawOc2GatewayPayload(payload, grant) {
   const proofRef = `proofs/openclaw-oc2/oc2-${taskHash}.json`;
   const resultReceiptId = `openclaw-oc2-result-${taskHash.slice(0, 20)}`;
   const proofReceiptId = `openclaw-oc2-proof-${createHash('sha256').update(proofRef, 'utf8').digest('hex').slice(0, 20)}`;
+  const core = result?.outputProofCore;
+  const testResults = core?.testResults;
+  // A well-formed digest copied into the result, receipt and proof fields is
+  // not enough: prove it is the hash of the fixed, grant-bound test record.
+  const outputCoreValid = core && typeof core === 'object' && !Array.isArray(core)
+    && Object.keys(core).length === 23
+    && core.schemaVersion === OPENCLAW_OC2_RESULT_SCHEMA
+    && text(core.missionId).toLowerCase() === missionId
+    && core.goalId === `#${OPENCLAW_OC2_ISSUE}`
+    && text(core.taskId).toLowerCase() === taskId
+    && core.taskClass === OPENCLAW_OC2_TASK_CLASS
+    && core.repository === text(grant?.repository)
+    && text(core.requestedSourceHead).toLowerCase() === sourceHead
+    && text(core.observedSourceHead).toLowerCase() === sourceHead
+    && core.exactInputIdentity === expectedInputIdentity
+    && core.provider === OPENCLAW_OC2_PROVIDER
+    && core.providerInstance === providerInstance
+    && core.providerVersion === OPENCLAW_OC2_PROVIDER_VERSION
+    && core.operation === OPENCLAW_OC2_OPERATION
+    && Array.isArray(testResults)
+    && testResults.length === OPENCLAW_OC2_FIXED_PLAN.length
+    && testResults.every((entry, i) => entry && typeof entry === 'object'
+      && !Array.isArray(entry) && Object.keys(entry).length === 3
+      && entry.testId === OPENCLAW_OC2_FIXED_PLAN[i].testId
+      && entry.status === 0
+      && /^[a-f0-9]{64}$/.test(text(entry.outputSha256)))
+    && Array.isArray(core.changedFiles) && core.changedFiles.length === 0
+    && core.sourceMutationPerformed === false
+    && core.arbitraryShellAllowed === false
+    && core.arbitraryCommandAllowed === false
+    && core.mergeAllowed === false
+    && core.deploymentAllowed === false
+    && core.selfQualificationAllowed === false
+    && core.finalVerdict === 'OPENCLAW_OC2_PROVIDER_TASK_COMPLETED'
+    && typeof core.completedAtUtc === 'string'
+    && core.completedAtUtc === result?.completedAt;
+  const expectedOutputIdentity = outputCoreValid
+    ? createHash('sha256').update(JSON.stringify(core), 'utf8').digest('hex') : '';
   return Boolean(grantId)
     && payload?.schemaVersion === OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA
     && payload?.success === true
@@ -413,6 +452,8 @@ function validateOpenClawOc2GatewayPayload(payload, grant) {
     && /^[a-f0-9]{64}$/.test(text(result?.exactInputIdentity))
     && text(result?.exactInputIdentity) === expectedInputIdentity
     && /^[a-f0-9]{64}$/.test(text(result?.exactOutputIdentity))
+    && outputCoreValid === true
+    && result?.exactOutputIdentity === expectedOutputIdentity
     && result?.receipt?.verified === true
     && text(result?.receipt?.receiptId) === resultReceiptId
     && result?.receipt?.source === 'openclaw-standalone-oc2'
