@@ -88,6 +88,10 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     try{
       const response=await fetchRef(endpoint+'/stop',{method:'POST',headers:{'Content-Type':'application/json','X-Spatial-Session':old},body:'{}',keepalive:true,signal:AbortSignal.timeout(10000)});
       if(!response.ok)return false; // 403 and timeouts cannot prove native capture was released.
+      // A 200 response alone cannot establish that the exact helper revoked this
+      // session. Require its fixed terminal acknowledgement before reconnecting.
+      const receipt=await response.json();
+      if(receipt?.status!=='stopped')return false;
       try{if(sessionStore?.getItem(storageKey)===old)sessionStore.removeItem(storageKey);}catch{}
       return true;
     }catch{return false;}
