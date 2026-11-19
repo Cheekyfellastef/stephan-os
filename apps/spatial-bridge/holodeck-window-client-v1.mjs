@@ -321,7 +321,12 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       publish({inputStatus:'Select the editor in the original app on the holographic image first. No key was sent.'});return false;
     }
     // A new pointer action invalidates the last editor acknowledgement immediately, before queuing.
-    if(value?.kind==='click')editorClickConfirmed=false;
+    if(value?.kind==='click'){
+      // New deliberate target supersedes unsent text/keys for an older click.
+      // Never replay an already attempted native input; only clear the queue.
+      queue=[];
+      editorClickConfirmed=false;
+    }
     queue.push({...value,generation});publish({inputStatus:'Sending input to the selected app.'});return true;
   }
   return {discover,connect,shareScreen,stop,input,probeHelper,getState:()=>({...state}),
