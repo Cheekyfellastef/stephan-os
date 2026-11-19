@@ -174,6 +174,8 @@ export function createHolodeckAudioControls({
     // A remembered headset that vanished must not quietly become the system
     // default when Test is pressed. Only a fresh explicit choice clears it.
     if(!state.inputId&&preferences.inputId)return {ok:false,reason:status('Previous microphone unavailable. Re-select the intended device or explicitly choose system default before testing.')};
+    // Test cannot choose a different discovered device: only setInput is a deliberate selection.
+    if(deviceId!==state.inputId)return {ok:false,reason:status('Microphone test refused: select the intended microphone before requesting permission.')};
     if(deviceId&&!state.inputs.some(device=>device.id===deviceId))return {ok:false,reason:status('Microphone is not in the current device list. Refresh and re-select it before testing.')};
     if(microphone)return {ok:false,reason:status(state.microphonePending
       ?'A microphone test is already waiting for permission. Stop it before starting another.'
@@ -263,6 +265,8 @@ export function createHolodeckAudioControls({
     deviceId=selection(deviceId);
     if(deviceId===null)return {ok:false,reason:status('Select a valid speaker device.')};
     if(!state.outputId&&preferences.outputId)return {ok:false,reason:status('Previous speaker unavailable. Re-select the intended output or explicitly choose system default before testing.')};
+    // Test is not a device selector; never silently route a tone to an unchosen headset.
+    if(deviceId!==state.outputId)return {ok:false,reason:status('Speaker test refused: select the intended output before testing.')};
     if(deviceId&&!state.outputs.some(device=>device.id===deviceId))return {ok:false,reason:status('Speaker is not in the current device list. Refresh and re-select it before testing.')};
     if(speaker)return {ok:false,reason:status('A speaker test is already active.')};
     if(typeof AudioContextCtor!=='function')
