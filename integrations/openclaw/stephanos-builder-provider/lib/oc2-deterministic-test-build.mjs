@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -15,6 +15,9 @@ import {
   createSharedWorkspaceMessageRecord,
   ensureSharedWorkspaceLayout,
   writeAtomicJson,
+  resolveSharedWorkspacePath,
+  validateSharedWorkspaceRecord,
+  validateSharedWorkspaceWriteAncestors,
 } from '../../../../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 export const OPENCLAW_OC2_TASK_CLASS = 'OC2_DETERMINISTIC_TEST_BUILD';
@@ -216,6 +219,36 @@ export async function validateOpenClawOc2QualificationContext(context = {}, { re
   });
 }
 
+// The initial OC2 STARTED receipt is an exclusive, per-grant replay fence.
+// Read-before-write alone is racy across independent Gateway processes.
+export async function writeExclusiveOpenClawOc2StartedReceipt(root, segments, record, options = {}) {
+  if (!Array.isArray(segments)
+    || segments.length !== 2
+    || segments[0] !== 'receipts'
+    || !/^oc2-receipt-[a-f0-9]{32}\.json$/.test(segments[1])
+    || record?.receiptId !== segments[1].slice(0, -5)
+    || record?.executionReceipt?.state !== 'started') {
+    return { ok: false, reason: 'OPENCLAW_OC2_EXCLUSIVE_RECEIPT_SCOPE_INVALID' };
+  }
+  const validation = validateSharedWorkspaceRecord(record, options);
+  if (!validation.valid) return { ok: false, reason: validation.refusalReason, validation };
+  const resolved = resolveSharedWorkspacePath({ root, segments, repoRoot: options.repoRoot });
+  if (!resolved.ok) return { ok: false, reason: resolved.reason };
+  const ancestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!ancestors.ok) return { ok: false, reason: ancestors.reason };
+
+  // O_EXCL prevents a second writer from replacing the first STARTED receipt.
+  // Retain even partial failed writes as UNKNOWN custody; never seize or replay.
+  const handle = await open(resolved.path, 'wx', 0o600);
+  try {
+    await handle.writeFile(JSON.stringify(record, null, 2) + '\n', 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  return { ok: true, reason: 'OPENCLAW_OC2_EXCLUSIVE_STARTED_RECEIPT_CREATED' };
+}
+
 export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options = {}) {
   const platform = options.platform || process.platform;
   const env = options.env || process.env;
@@ -371,6 +404,10 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
     if (error?.code !== 'ENOENT') return blocker('OPENCLAW_OC2_RECEIPT_PRESENCE_UNPROVEN');
   }
   const writeJson = options.writeAtomicJsonFn || writeAtomicJson;
+  // Explicit test-harness writers preserve existing regression instrumentation.
+  // Actual Gateway requests cannot provide function-valued writer overrides.
+  const writeStartedReceipt = options.writeExclusiveStartedReceiptFn
+    || (options.writeAtomicJsonFn || writeExclusiveOpenClawOc2StartedReceipt);
   const workerId = `openclaw-${sha256(providerInstance).slice(0, 24)}`;
   const receiptBase = {
     receiptId,
@@ -401,9 +438,10 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
   }));
   if (!pendingReceipt.ok) return blocker('OPENCLAW_OC2_EXECUTION_RECEIPT_INVALID');
   try {
-    const pendingWrite = await writeJson(workspaceRoot, ['receipts', `${receiptId}.json`], pendingReceipt.record, { repoRoot });
+    const pendingWrite = await writeStartedReceipt(workspaceRoot, ['receipts', `${receiptId}.json`], pendingReceipt.record, { repoRoot });
     if (!pendingWrite?.ok) return blocker('OPENCLAW_OC2_EXECUTION_RECEIPT_PREPARE_FAILED');
-  } catch {
+  } catch (error) {
+    if (error?.code === 'EEXIST') return blocker('OPENCLAW_OC2_EXISTING_RECEIPT_UNRECONCILED');
     return blocker('OPENCLAW_OC2_EXECUTION_RECEIPT_PREPARE_FAILED');
   }
   let proofWrite;
