@@ -103,8 +103,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), '80cecb2a3621ec4180943f15aa3388468c99c636');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 61768);
+  assert.equal(blobSha(governor), '3804c153495a5f6be89eba33790b73f28854b15b');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 62477);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -378,6 +378,57 @@ test('virtual Air Link reviewer fixture requires a fresh UTC timestamp, not stal
     ['2026-11-14T15:39:59.000z', false],
     ['2026-11-14T15:39:59.1234567Z', true],
   ]) assert.equal(valid(value), expected, String(value));
+});
+
+test('PowerShell engine preserves explicit UTC synthetic Air Link readiness with mocked filesystem', () => {
+  const reader = 'function Test-VirtualAirLinkTestActive {' + (governor.split('function Test-VirtualAirLinkTestActive {')[1]
+    ?.split('function Get-AirLinkSignal {')[0] || '');
+  assert.match(reader, /\$timestamps\.Count -ne 1/);
+  assert.match(reader, /\$state\.updatedAtUtc -isnot \[datetime\]/);
+  const now = Date.now();
+  const good = {
+    schemaVersion:'stephanos.starfield-vr-sim-air-link.v1', enabled:true,
+    purpose:'readiness-only', updatedAtUtc:new Date(now - 60000).toISOString(),
+  };
+  const wire = value => typeof value === 'string' ? value : JSON.stringify(value);
+  const cases = [
+    [good,true], [{...good, updatedAtUtc:new Date(now - 1500000).toISOString()},true],
+    [{...good, updatedAtUtc:new Date(now - 1860000).toISOString()},false],
+    [{...good, updatedAtUtc:new Date(now + 120000).toISOString()},false],
+    [{...good, updatedAtUtc:good.updatedAtUtc.replace('Z','+00:00')},false],
+    [{...good, updatedAtUtc:good.updatedAtUtc.toLowerCase()},false],
+    [{...good, updatedAtUtc:[good.updatedAtUtc]},false],
+    [{...good, schemaVersion:[good.schemaVersion]},false],
+    [{...good, enabled:[true]},false],
+    [{...good, purpose:['readiness-only']},false],
+    [{...good, enabled:'true'},false],
+    [[good],false],
+    ['{"schemaVersion":"stephanos.starfield-vr-sim-air-link.v1","enabled":true,"purpose":"readiness-only","updatedAtUtc":"'
+      + good.updatedAtUtc + '","updatedAtUtc":"' + good.updatedAtUtc + '"}',false],
+    [null,false],
+  ];
+  const quote = value => "'" + String(value).replaceAll("'","''") + "'";
+  const script = [
+    'Set-StrictMode -Version Latest',
+    'function Test-Path { param([string]$LiteralPath,[string]$PathType) return $script:mockExists }',
+    'function Get-Content { param([string]$LiteralPath,[switch]$Raw) return $script:mockContent }',
+    "$simAirLinkStatePath = 'mock-no-filesystem'",
+    reader,
+    ...cases.map(([obj,expected],n) => [
+      '$script:mockExists = $true',
+      '$script:mockContent = ' + quote(wire(obj)),
+      '$actual = Test-VirtualAirLinkTestActive',
+      'if ($actual -ne ' + (expected ? '$true' : '$false') + ') { throw '
+        + quote('AIRLINK_MOCK_CASE_' + n) + ' }',
+    ].join('\n')),
+    "'AIRLINK_MOCK_CASES_PASSED'",
+  ].join('\n');
+  const engine = process.platform === 'win32' ? 'powershell.exe' : 'pwsh';
+  const result = spawnSync(engine,['-NoProfile','-NonInteractive','-Command',script],{
+    encoding:'utf8',timeout:30000,windowsHide:true,
+  });
+  assert.equal(result.status,0,String(result.stderr || result.error || 'Air Link mocked reader failed'));
+  assert.match(result.stdout,/AIRLINK_MOCK_CASES_PASSED/);
 });
 
 test('reviewer cooldown gate protects the prior phase before any reviewer lease or REVIEWING projection', () => {

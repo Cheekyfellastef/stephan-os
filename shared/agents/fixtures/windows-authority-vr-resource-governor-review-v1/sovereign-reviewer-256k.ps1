@@ -171,16 +171,27 @@ function Test-RealAirLinkActive {
 function Test-VirtualAirLinkTestActive {
     if (-not (Test-Path -LiteralPath $simAirLinkStatePath -PathType Leaf)) { return $false }
     try {
-        $state = Get-Content -LiteralPath $simAirLinkStatePath -Raw | ConvertFrom-Json
+        $raw = Get-Content -LiteralPath $simAirLinkStatePath -Raw
+        # Check the original wire timestamp, not ConvertFrom-Json's culture-formatted DateTime.
+        # Require a single literal UTC Z field even on PowerShell 7, which parses ISO dates.
+        if ($raw -notmatch '^\s*\{') { return $false }
+        $timestamps = [regex]::Matches($raw, '"updatedAtUtc"\s*:\s*"([^"]*)"')
+        if ($timestamps.Count -ne 1) { return $false }
+        $state = $raw | ConvertFrom-Json
         if (
+            $state -isnot [pscustomobject] -or
+            $state.schemaVersion -isnot [string] -or
             $state.schemaVersion -ne 'stephanos.starfield-vr-sim-air-link.v1' -or
+            $state.enabled -isnot [bool] -or
             $state.enabled -ne $true -or
-            $state.purpose -ne 'readiness-only'
+            $state.purpose -isnot [string] -or
+            $state.purpose -ne 'readiness-only' -or
+            ($state.updatedAtUtc -isnot [string] -and $state.updatedAtUtc -isnot [datetime])
         ) {
             return $false
         }
-        # Synthetic Air Link proof requires a fresh explicit UTC timestamp.
-        $updatedAtUtc = [string]$state.updatedAtUtc
+        # Only the exact original JSON spelling proves a fresh explicit UTC timestamp.
+        $updatedAtUtc = [string]$timestamps[0].Groups[1].Value
         if ($updatedAtUtc -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$') {
             return $false
         }
