@@ -836,7 +836,7 @@ test('PowerShell engine checks valid reviewer and game leases plus malformed per
       "$script:leaseError = ''",
       '$observed = Read-PrepareLease',
       'if ($observed.active -ne ' + (expected ? '$true' : '$false')
-        + ') { throw (' + quote('ACTIVE_CASE_' + n) + " + ': ' + $script:leaseError) }',
+        + ') { throw (' + quote('ACTIVE_CASE_' + n) + " + ': ' + $script:leaseError) }",
       'if ($script:cleared -ne ' + (expected ? '$false' : '$true')
         + ') { throw ' + quote('CLEAR_CASE_' + n) + ' }',
     ].join('\n')),
