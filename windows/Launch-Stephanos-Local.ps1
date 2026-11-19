@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
   [switch]$AutoOpen,
+  [switch]$Unattended,
   [ValidateSet('launcher-root','vite-dev')]
   [string]$Mode = 'launcher-root',
   [ValidateSet('launcher','runtime','cockpit')]
@@ -46,6 +47,7 @@ $launcherRuntimeStatusUrl = 'http://127.0.0.1:4173/apps/stephanos/runtime-status
 $openClawControlUrl = 'http://127.0.0.1:18789/'
 $viteDevUrl = 'http://localhost:5173/'
 $launcherRootCommand = 'powershell.exe -ExecutionPolicy Bypass -File .\windows\Invoke-Stephanos-Ignite-With-Approval.ps1 -RepositoryRoot .'
+if ($Unattended.IsPresent) { $launcherRootCommand += ' -Unattended' }
 $launcherRootCanonicalCommand = 'npm run stephanos:ignite'
 $visiblePowerShellRequired = $false
 $canonicalSharedWorkspaceRoot = if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $SharedWorkspace.Trim() } elseif ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
@@ -190,6 +192,7 @@ function Get-LatestOpenClawStartupStatus {
       $lines = @(Get-Content -LiteralPath $logFile.FullName -Encoding UTF8 -ErrorAction Stop)
       for ($index = $lines.Count - 1; $index -ge 0; $index--) {
         $line = [string]$lines[$index]
+
         $packetMatch = [regex]::Match($line, '^\[IGNITION\]\s+openclaw-autostart-status=(\{.*\})\s*$')
         if ($packetMatch.Success) {
           try {
@@ -374,6 +377,7 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
     lastCompletedAction = if ($Extra.ContainsKey('lastCompletedAction')) { $Extra.lastCompletedAction } else { '' }
     proofSummary = if ($supervisorStatus) { $supervisorStatus.proofSummary } else { [ordered]@{ build = 'pending'; verify = 'pending'; pull = 'pending'; restart = 'pending'; servedRuntime = 'pending'; moduleMime = 'pending' } }
     enterStephanosEnabled = $Phase -eq 'ready'
+    executionMode = if ([bool]$Unattended) { 'unattended' } else { 'interactive' }
     updatedAt = (Get-Date).ToUniversalTime().ToString('o')
     visiblePowerShellRequired = $visiblePowerShellRequired
     primaryUi = 'splash-status-browser'
@@ -403,7 +407,13 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
     destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs'); transcriptPath = $ignitionTranscriptPath; supportSnapshotPath = $ignitionSupportSnapshotPath }
   }
   foreach ($key in $Extra.Keys) {
-    if ($key -notin @('phase','message','trafficLight','progressPercentage','enterStephanosEnabled','currentStage','blocker','nextOperatorAction','proofSummary','battleBridgeSupervisor','battleBridgeSupervisorCurrentPath','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','currentBrowserObservation','optionalBrowserSurfaces')) { $payload[$key] = $Extra[$key] }
+    if ($key -notin @('phase','message','trafficLight','progressPercentage','enterStephanosEnabled','currentStage','blocker','nextOperatorAction','proofSummary','battleBridgeSupervisor','battleBridgeSupervisorCurrentPath','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','currentBrowserObservation','optionalBrowserSurfaces','executionMode','optionalPreparations')) { $payload[$key] = $Extra[$key] }
+  }
+  if ([bool]$Unattended) {
+    $payload.optionalPreparations = [ordered]@{
+      fixedRuntimeCommissioning = [ordered]@{ preparation = 'DEFERRED'; observedState = 'UNKNOWN'; qualificationProven = $false }
+      retainedCustodyPreparation = [ordered]@{ preparation = 'DEFERRED'; observedState = 'UNKNOWN'; custodyReleased = $false }
+    }
   }
   return $payload
 }
@@ -862,6 +872,19 @@ function Get-LauncherChildBlocker {
       for ($index = $lines.Count - 1; $index -ge 0; $index--) {
         $line = [string]$lines[$index]
 
+        $attendedPrefix = 'STEPHANOS_IGNITION_ATTENDED_ACTION_REQUIRED='
+        if ($logIndex -eq 0 -and $line.StartsWith($attendedPrefix, [System.StringComparison]::Ordinal)) {
+          try { $attended = $line.Substring($attendedPrefix.Length) | ConvertFrom-Json } catch { return $null }
+          if ($attended.schemaVersion -cne 'stephanos.ignition-attended-action-required.v1' -or
+              $attended.blocker -cne 'ATTENDED_ACTION_REQUIRED' -or
+              [string]$attended.sourceHead -cnotmatch '^[a-f0-9]{40}$' -or
+              [string]$attended.requiredAction -cnotin @('OPENCLAW_SERVICE_RESTART','SOURCE_DIVERGENCE_RECOVERY','SOURCE_MERGE_COMPLETION')) { return $null }
+          return [ordered]@{ message = "ATTENDED_ACTION_REQUIRED: $($attended.requiredAction)"; reason = 'ATTENDED_ACTION_REQUIRED';
+            nextOperatorAction = 'Resume the same canonical Ignition with an attended operator for the required recovery decision.';
+            requiredAction = [string]$attended.requiredAction; sourceHead = [string]$attended.sourceHead;
+            packetType = 'ignition-attended-action-required'; sourceLog = $logFile.FullName }
+        }
+
         $preflightPrefix = 'BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT='
         if ($logIndex -eq 0 -and
             $line.StartsWith($preflightPrefix, [System.StringComparison]::Ordinal)) {
@@ -939,7 +962,9 @@ function Get-LauncherChildBlocker {
 function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord, [System.Collections.IDictionary]$Outcome = $null) {
   $childBlocker = Get-LauncherChildBlocker
   if (-not $Outcome) {
-    $Outcome = Get-IgnitionStatusProjection -Phase 'blocked' -Message $Step -Extra @{ currentStage = 'blocked'; nextOperatorAction = 'Review the current failure and bounded ignition logs before retrying.'; blocker = $Step; parentFailure = $Step; childIgnitionBlocker = $childBlocker }
+    $blocker = if ($childBlocker -and $childBlocker.packetType -ceq 'ignition-attended-action-required') { 'ATTENDED_ACTION_REQUIRED' } else { $Step }
+    $nextAction = if ($blocker -ceq 'ATTENDED_ACTION_REQUIRED') { $childBlocker.nextOperatorAction } else { 'Review the current failure and bounded ignition logs before retrying.' }
+    $Outcome = Get-IgnitionStatusProjection -Phase 'blocked' -Message $Step -Extra @{ currentStage = 'blocked'; nextOperatorAction = $nextAction; blocker = $blocker; parentFailure = $Step; childIgnitionBlocker = $childBlocker }
   }
   Publish-IgnitionTerminalOutcome -Outcome $Outcome
   $surfacedBlocker = $Outcome.blocker
@@ -948,7 +973,7 @@ function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$Err
     Write-Host ($ErrorRecord | Out-String).Trim() -ForegroundColor Red
   }
   Write-Host ''
-  Read-Host 'Launcher failed. Press Enter to keep this window open and review the error'
+  if (-not [bool]$Unattended) { Read-Host 'Launcher failed. Press Enter to keep this window open and review the error' }
   exit 1
 }
 
@@ -962,7 +987,8 @@ function Start-DevWindow([string]$Title, [string]$Command, [switch]$ReturnProces
   $stderrLog = Join-Path $ignitionProofRoot ("logs/{0}.stderr.log" -f $safeLogName)
   $psCommand = "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'; Set-Location '$escapedRepoRoot'; & $escapedCommand"
   Write-IgnitionStatus -Phase 'starting-process' -Message "Starting $Title in minimized/background PowerShell with bounded log capture." -Extra @{ processTitle = $Title; stdoutLog = $stdoutLog; stderrLog = $stderrLog }
-  $process = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
+  $childWindowStyle = if ([bool]$Unattended) { 'Hidden' } else { 'Minimized' }
+  $process = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle $childWindowStyle -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-Command', $psCommand
@@ -1080,7 +1106,7 @@ function Wait-ForBattleBridgeSupervisorReady([int]$TimeoutSeconds = 300) {
     }
     if ($helperHasExited) {
       $childBlocker = Get-LauncherChildBlocker
-      if ($childBlocker -and $childBlocker.packetType -eq 'ignition-sync-preflight') {
+      if ($childBlocker -and $childBlocker.packetType -in @('ignition-sync-preflight','ignition-attended-action-required')) {
         throw ([string]$childBlocker.message)
       }
     }
@@ -1213,6 +1239,16 @@ function Stop-ProcessOnTcpPort([int]$Port) {
   }
 
   return $killedProcessIds
+}
+
+function Assert-UnattendedVitePortVacant {
+  try {
+    # A successful zero-row fixed CIM query proves vacancy. Query failure is
+    # distinct from vacancy; no process identity or termination is authorized.
+    $listeners = @(Get-CimInstance -Namespace 'root/StandardCimv2' -Query 'SELECT LocalPort FROM MSFT_NetTCPConnection WHERE LocalPort = 5173 AND State = 2' -ErrorAction Stop)
+  }
+  catch { throw 'UNATTENDED_VITE_PORT_CENSUS_UNPROVEN' }
+  if ($listeners.Count -ne 0) { throw 'UNATTENDED_VITE_PORT_OCCUPIED' }
 }
 
 function Get-PortListenerSnapshot([int]$Port) {
@@ -1350,6 +1386,10 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
 
 function Invoke-SovereignCommanderRetainedCustodyPreparation {
   if ($Mode -ne 'launcher-root') { return $false }
+  if ([bool]$Unattended) {
+    Write-LiveLog 'Unattended ordinary startup defers optional retained-custody preparation; custody state remains UNKNOWN and no release is granted.'
+    return $false
+  }
   $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
   $recoveryScript = Join-Path $repoRoot 'scripts/sovereign-maintenance-custody-recovery.mjs'
   $sourceTruthScript = Join-Path $repoRoot 'scripts/battle-bridge-ignition-supervisor.mjs'
@@ -1452,6 +1492,10 @@ Prepare Sovereign Commander custody for the next boot?
 
 function Invoke-SovereignFixedRuntimeCommissioning {
   if ($Mode -ne 'launcher-root') { return $false }
+  if ([bool]$Unattended) {
+    Write-LiveLog 'Unattended ordinary startup defers optional fixed-runtime commissioning; Native qualification remains UNKNOWN and no installation is prepared.'
+    return $false
+  }
 
   $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
   $adapterScript = Join-Path $repoRoot 'scripts\sovereign-fixed-runtime-install-current-v1.mjs'
@@ -1746,7 +1790,12 @@ try {
   }
   else {
     Write-LiveLog 'launcher-root selected; ensuring port 5173 is not used by vite-dev'
-    $stopped = Stop-ProcessOnTcpPort -Port 5173
+    if ([bool]$Unattended) {
+      Assert-UnattendedVitePortVacant
+      $stopped = @()
+    } else {
+      $stopped = Stop-ProcessOnTcpPort -Port 5173
+    }
     if ($stopped.Count -gt 0) {
       Write-LiveLog "stopped 5173 listener process ids: $([string]::Join(',', $stopped))"
     }
