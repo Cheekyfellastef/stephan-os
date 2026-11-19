@@ -143,6 +143,16 @@ test('direct governor specialist refuses contradictory or noncanonical upstream 
       ...baseline,
       counts: Object.assign(Object.create({ P0: 1, P1: 0, P2: 0 }), { x: 0, y: 0, z: 0 }),
     }],
+    ['inherited full review envelope', Object.create(baseline)],
+    ['inherited findings and verdict', Object.assign(Object.create({
+      findings: baseline.findings, verdict: 'findings',
+    }), { counts: { ...baseline.counts } })],
+    ['inherited counts and verdict', Object.assign(Object.create({
+      counts: baseline.counts, verdict: 'findings',
+    }), { findings: baseline.findings })],
+    ['inherited verdict only', Object.assign(Object.create({ verdict: 'findings' }), {
+      findings: baseline.findings, counts: { ...baseline.counts },
+    })],
     ['contradictory clean verdict', { ...baseline, verdict: 'clean' }],
   ]) {
     const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(

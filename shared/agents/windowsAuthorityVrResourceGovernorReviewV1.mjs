@@ -43,6 +43,9 @@ function blobSha(source) {
 }
 
 function exactEscalation(analysis = {}) {
+  // Review findings, counts and verdict must be explicit, not inherited P0 claims.
+  if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis)
+    || !['findings', 'counts', 'verdict'].every((key) => Object.hasOwn(analysis, key))) return false;
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
   const counts = analysis?.counts;
   return findings.length === 1

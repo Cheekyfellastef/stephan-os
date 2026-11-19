@@ -88,8 +88,8 @@ function input(overrides = {}) {
 test('router preserves exact governor specialist source pin after metadata fail-closed correction', async () => {
   const reviewerSource = await readFile(new URL('./windowsAuthorityVrResourceGovernorReviewV1.mjs', import.meta.url), 'utf8');
   const routerSource = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.equal(gitBlobSha(reviewerSource), 'ff8b7faa8634944d7f4d0a08de81dcdc1f6b5cfa');
-  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = 'ff8b7faa8634944d7f4d0a08de81dcdc1f6b5cfa';"));
+  assert.equal(gitBlobSha(reviewerSource), '966426add62fe80074644ad8e7721bae754c7c34');
+  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = '966426add62fe80074644ad8e7721bae754c7c34';"));
   assert.ok(reviewerSource.includes('counts.P0 === 1'));
   assert.ok(reviewerSource.includes("analysis?.verdict === 'findings'"));
 });
@@ -150,7 +150,7 @@ test('registry source pins the current bounded mailbox recovery blobs and grants
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
   assert.match(source, /f66cc26ef865bb840522b16cbb53f830f9499838/);
-  assert.match(source, /ff8b7faa8634944d7f4d0a08de81dcdc1f6b5cfa/);
+  assert.match(source, /966426add62fe80074644ad8e7721bae754c7c34/);
   assert.match(source, /1b103fda85c371a218f38f20fe5163ca3f5042bf/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
@@ -497,6 +497,27 @@ test('composite review refuses contradictory typed counts and verdict before del
       analysis: { ...analysis, ...overrides }, sources,
     });
     assert.equal(review().clean, true, 'baseline confirms registered positive proof paths');
+    for (const [reason, forged] of [
+      ['inherited full analysis', Object.create(analysis)],
+      ['inherited findings', Object.assign(Object.create({ findings: analysis.findings }), {
+        counts: analysis.counts, verdict: 'findings',
+      })],
+      ['inherited counts', Object.assign(Object.create({ counts: analysis.counts }), {
+        findings: analysis.findings, verdict: 'findings',
+      })],
+      ['inherited verdict', Object.assign(Object.create({ verdict: 'findings' }), {
+        findings: analysis.findings, counts: analysis.counts,
+      })],
+    ]) {
+      const denied = analyzeWindowsAuthoritySpecialistReview({
+        repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+        analysis: forged, sources,
+      });
+      assert.equal(denied.eligible, true, reason);
+      assert.equal(denied.clean, false, reason);
+      assert.deepEqual(denied.proofRefs, [], reason);
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID', reason);
+    }
     for (const [reason, override] of [
       // Both composite routes must reject one-element-array coercion before child review.
       ...[0, 1].flatMap((index) => ['severity', 'code', 'path'].map((field) => [
