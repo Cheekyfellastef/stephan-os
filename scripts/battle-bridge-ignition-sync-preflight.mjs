@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import process from 'node:process';
-import { projectPostSyncRemainingIgnitionObligationsV1, projectIgnitionSettledRefreshEvidenceV1 }
+import { projectPostSyncRemainingIgnitionObligationsV1, projectIgnitionSettledRefreshEvidenceV1, projectIgnitionPreflightResultV1 }
   from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ const SAFE_SYNC_FAILURE_REASONS = new Set(['SYNC_ALREADY_RUNNING', 'LOCK_ACQUISI
 const CURRENT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function text(value) {
-  return String(value ?? '').trim();
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function safeHead(value) {
@@ -178,7 +178,8 @@ export async function runBattleBridgeIgnitionSyncPreflight({
     });
   }
 
-  const result = await syncAndRefreshFn({ platform });
+  const result = projectIgnitionPreflightResultV1(await syncAndRefreshFn({ platform }))
+    || Object.freeze({ ok: false, blocker: 'IGNITION_SYNC_AND_REFRESH_PROOF_INVALID' });
   const projection = projectSyncAndRefreshResult(result);
 
   if (result?.ok !== true) {

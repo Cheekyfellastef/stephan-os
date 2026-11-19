@@ -138,3 +138,33 @@ and exercise canonical witness production, stale/malformed records, source
 advance, missing publication, and positive optional-only cases. Spatial resident
 adoption remains explicitly unimplemented and held; its existing operator
 launcher and guarded preparation profile retain their separate scopes.
+# Transitive startup evidence and Git identity
+
+The ignition obligation boundary snapshots every consumed nested proof graph before
+canonical completion inspection, debt collection/resolution, optional-hold checks
+or output projection. It uses proxy-first refusal, own data descriptors, bounded
+null-prototype records, dense rebuilt arrays and finite JSON values. All copied
+fields are enumerable, including hidden own fields; cycles, accessors, sparse
+arrays and resource-bound violations remain typed holds. Consumers use the same
+inert graph throughout and never resume the original caller's arrays, methods,
+iterators or nested proof references after validation. This is a boundary for the
+affected startup evidence path, not a claim about every legacy repository API.
+
+The wrapper snapshots initial/polled pending evidence and fresh child results.
+Only a genuine null pending-reader result denotes absent history; an invalid
+non-null graph cannot become empty debt. Settled evidence is re-derived from the
+normalized canonical sync and completion records, rather than trusting a supplied
+debt summary. Closed outer frames exclude irrelevant child stdout and execution
+payloads while preserving every consumed authority field. These observations grant
+no source, native, custody, process, refresh or loaded-byte authority.
+
+One private fixed-Git executable/config/minimal-environment context and one bound
+repository argument set serve both current-HEAD and ancestry observations. An
+adapter cannot switch repositories, inherit GIT_DIR/config/PATH authority, reset
+the five-second ancestry allowance or exceed the one-second call/remaining-parent
+budget. Failed, signalled or timed-out observations remain unproven.
+
+The convergence lesson is transitive: validating a shallow copy and later using
+original nested references leaves the same authority defect open. Property tests
+therefore cover nested arrays, records, proofs and outer frames across the real
+producer, wrapper and preflight composition, plus actual isolated Git repositories.
