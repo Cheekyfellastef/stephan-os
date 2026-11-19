@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
+  parseNativePublisherInstallerReceiptV1,
   executeStephanosNativeCapacityPublisherInstallOnBattleBridge,
   proveNativePublisherSignedReadbackV1,
   validateStephanosNativeCapacityPublisherInstallCommandShape,
@@ -90,6 +91,21 @@ function installerReceipt() {
     leaseSeizureAllowed: false,
   })}\n`;
 }
+
+test('fixed publisher installer parser accepts exactly one bounded receipt, never stray success lines', () => {
+  const valid = installerReceipt();
+  assert.equal(parseNativePublisherInstallerReceiptV1(valid)?.finalVerdict,
+    'STEPHANOS_NATIVE_CAPACITY_PUBLISHER_TASK_INSTALLED');
+  const hostile = [
+    '', 'not-json', '{}\n{}', 'banner\n' + valid, valid + 'noise',
+    valid + '{}\n', valid + valid, '[{}]',
+    'x'.repeat(33 * 1024) + valid,
+  ];
+  for (const raw of hostile) {
+    assert.equal(parseNativePublisherInstallerReceiptV1(raw), null,
+      'ambiguous fixed-task stdout cannot prove native publisher installation');
+  }
+});
 
 test('native publisher mailbox operation is exact-head control work with no caller-shaped fields', () => {
   const shaped = validateStephanosNativeCapacityPublisherInstallCommandShape(command());

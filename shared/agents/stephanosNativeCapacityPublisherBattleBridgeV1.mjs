@@ -89,15 +89,20 @@ function run(spawnSyncFn, executable, args, options = {}) {
   });
 }
 
-function lastJsonObject(stdout = '') {
-  const lines = String(stdout).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    try {
-      const parsed = JSON.parse(lines[index]);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-    } catch {}
+// The fixed installer and one-task reconciler emit a single compact receipt.
+// Never search backwards for plausible JSON: a trailing message or a second
+// object makes the result ambiguous and cannot prove installation or restart.
+export function parseNativePublisherInstallerReceiptV1(stdout = '') {
+  if (typeof stdout !== 'string' || Buffer.byteLength(stdout, 'utf8') > 32 * 1024) return null;
+  const raw = stdout.trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export async function proveNativePublisherSignedReadbackV1({
@@ -243,7 +248,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
       stderr: text(install.stderr).slice(0, 500),
     });
   }
-  const receipt = lastJsonObject(install.stdout);
+  const receipt = parseNativePublisherInstallerReceiptV1(install.stdout);
   if (
     !receipt
     || receipt.finalVerdict !== 'STEPHANOS_NATIVE_CAPACITY_PUBLISHER_TASK_INSTALLED'
@@ -278,7 +283,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
       '-ExpectedHead', shape.expectedHead,
       '-RequestId', text(command.requestId),
     ]);
-    recoveryReceipt = lastJsonObject(recovery.stdout);
+    recoveryReceipt = parseNativePublisherInstallerReceiptV1(recovery.stdout);
     if (!recovery.ok
       || recoveryReceipt?.finalVerdict !== 'NATIVE_PUBLISHER_FIXED_TASK_RESTART_REQUESTED'
       || recoveryReceipt.expectedHead !== shape.expectedHead
