@@ -97,6 +97,11 @@ test('proof freshness is tracked independently from open-goal state', () => {
 const NOW = Date.parse('2026-10-26T15:00:00Z');
 const at = offset => new Date(NOW + offset).toISOString();
 const options = { nowMs: NOW };
+// Source-qualified signed-stage fixtures use an independent, timestamped Core
+// witness. Do not re-age this witness from a fresh HTTP/dashboard request.
+const signedOptions = { ...options, statusRecords: [{
+  statusId: 'stephanos-core-daemon-current', timestampUtc: at(-1000), sourceHead: 'a'.repeat(40),
+}] };
 function input() {
   return {
     goalBuildGateObservatory: { schemaVersion: 'stephanos.goal-build-gate-observatory.v1',
@@ -118,7 +123,7 @@ function input() {
   };
 }
 test('keeps unsigned goal-to-worker attribution separate from generic signed stage gates', () => {
-  const original = input(), snapshot = structuredClone(original), result = project(original, options);
+  const original = input(), snapshot = structuredClone(original), result = project(original, signedOptions);
   assert.equal(result.state, 'UNKNOWN');
   assert.equal(result.workers.length, 0);
   assert.equal(result.buildingGoalCount, 0);
@@ -144,7 +149,7 @@ test('fresh HTTP/build observation cannot renew expired material proof or signed
   const data = input();
   data.stephanosBuildTruth.goals.forEach(g => g.lastMaterialProgressAtUtc = at(-600001));
   data.goalBuildGateObservatory.gates.find(g => g.id === 19).observedAtUtc = at(-600001);
-  const result = project(data, options);
+  const result = project(data, signedOptions);
   assert.equal(result.workers.length, 0);
   assert.equal(result.state, 'UNKNOWN');
   assert.equal(result.stages.find(s => s.id === 'pickup').state, 'STALE');
@@ -207,7 +212,7 @@ test('Goal #2002: one diagnostic pickup cannot be replayed across goals, workers
   data.controllerFleet.controllers[0].trafficLight = 'GREEN';
   data.controllerFleet.controllers[0].proofRefs = [ref];
   data.controllerFleet.controllers[0].materialActionsSucceeded = 9;
-  const duplicated = project(data, options);
+  const duplicated = project(data, signedOptions);
   assert.equal(duplicated.stages.find(stage => stage.id === 'pickup').state, 'PROVEN',
     'the separately signed diagnostic stage stays visible');
   assert.equal(duplicated.state, 'UNKNOWN');
@@ -220,32 +225,32 @@ test('Goal #2002: one diagnostic pickup cannot be replayed across goals, workers
   // A lone matching worker is still unsigned as an *identity*: a string match
   // is not a proof of which goal/claim/execution produced gate 19.
   data.stephanosBuildTruth.goals = [data.stephanosBuildTruth.goals[0]];
-  assert.equal(project(data, options).buildingGoalCount, 0);
+  assert.equal(project(data, signedOptions).buildingGoalCount, 0);
   data.stephanosBuildTruth.goals[0].sourceHead = '';
-  assert.equal(project(data, options).buildingGoalCount, 0);
+  assert.equal(project(data, signedOptions).buildingGoalCount, 0);
   assert.equal(original.goalBuildGateObservatory.gates.length, 9, 'fixture was not altered');
 });
 test('Goal #2002: pickup stage requires a current, successful claim without any gate veto', () => {
   const valid = input();
-  assert.equal(project(valid, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  assert.equal(project(valid, signedOptions).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
   const noClaim = structuredClone(valid);
   noClaim.goalBuildGateObservatory.gates = noClaim.goalBuildGateObservatory.gates.filter(gate => gate.id !== 18);
-  assert.notEqual(project(noClaim, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  assert.notEqual(project(noClaim, signedOptions).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
   const failedClaim = structuredClone(valid);
   failedClaim.goalBuildGateObservatory.gates.find(gate => gate.id === 18).status = 'FAIL';
-  assert.equal(project(failedClaim, options).state, 'BLOCKED');
-  assert.equal(project(failedClaim, options).buildingGoalCount, 0);
-  assert.notEqual(project(failedClaim, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  assert.equal(project(failedClaim, signedOptions).state, 'BLOCKED');
+  assert.equal(project(failedClaim, signedOptions).buildingGoalCount, 0);
+  assert.notEqual(project(failedClaim, signedOptions).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
   const staleClaim = structuredClone(valid);
   staleClaim.goalBuildGateObservatory.gates.find(gate => gate.id === 18).observedAtUtc = at(-600001);
-  assert.notEqual(project(staleClaim, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  assert.notEqual(project(staleClaim, signedOptions).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
   const separateVeto = structuredClone(valid);
   separateVeto.goalBuildGateObservatory.gates.push({
     id: 8, status: 'FAIL', observedAtUtc: at(-1000), proofRef: 'workspace:proof/veto',
     title: 'Original source custody', owner: 'Existing original owner', typedBlocker: 'CUSTODY_UNPROVEN',
   });
-  assert.equal(project(separateVeto, options).state, 'BLOCKED');
-  assert.notEqual(project(separateVeto, options).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  assert.equal(project(separateVeto, signedOptions).state, 'BLOCKED');
+  assert.notEqual(project(separateVeto, signedOptions).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
 });
 test('Goal #2002: global BLOCKED worker vetoes reported BUILDING and Octopus green', () => {
   const data = input();
@@ -262,11 +267,11 @@ test('first real veto retains owner and proof even outside the nine display stag
   const data = input();
   data.goalBuildGateObservatory.gates.unshift({ id: 8, title: 'Source custody', status: 'FAIL',
     owner: 'Original lease owner', typedBlocker: 'CUSTODY_UNPROVEN', observedAtUtc: at(-2000), proofRef: 'workspace:proof/custody' });
-  let result = project(data, options);
+  let result = project(data, signedOptions);
   assert.equal(result.state, 'BLOCKED');assert.equal(result.bottleneck.owner, 'Original lease owner');
   assert.equal(result.bottleneck.proofRef, 'workspace:proof/custody');
   data.goalBuildGateObservatory.gates[0].observedAtUtc = at(-600001);
-  result = project(data, options);assert.equal(result.bottleneck, null);
+  result = project(data, signedOptions);assert.equal(result.bottleneck, null);
 });
 test('zero is a known empty estate and future heartbeat is never last material movement', () => {
   const data = input();data.goalEstate.totalOpenGoals = 0;
@@ -325,7 +330,11 @@ test('Goal #2961: signed checkpoint stays independently green while a logical PA
   data.autonomyBuildTrack = { schemaVersion: 'stephanos.autonomy-build-track.v1',
     sourceHead: 'a'.repeat(40), missionId: 'mission-42', issueNumber: 42,
     timestampUtc: at(-1000), gates: [{ id: 'SELECT', state: 'PASS' }] };
-  const stage = project(data, options).stages.find(s => s.id === 'select');
+  const stage = project(data, { ...signedOptions, statusRecords: [
+    ...signedOptions.statusRecords,
+    { statusId: 'autonomy-build-track-current', timestampUtc: at(-1000),
+      autonomyTrack: data.autonomyBuildTrack },
+  ] }).stages.find(s => s.id === 'select');
   assert.equal(stage.state, 'PROVEN');
   assert.equal(stage.trafficLight, 'GREEN', 'separate signed gate proof retains green');
   assert.equal(stage.operational.trafficLight, 'AMBER', 'the logical report does not self-approve');
