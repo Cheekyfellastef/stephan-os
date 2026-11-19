@@ -336,7 +336,7 @@
     screen=createHolodeckScreen({client,comfort,furniture,audio,onStatus:state=>{
       refreshKeyboardLabels(state);if(!immersiveActive)drawPreview();refreshInputStatus(screen?.getState()??state);
     },onReload:async()=>{
-      workspaceEntry.stop();comfort.flush();cubeScene.stop();await client.stop();location.reload();
+      workspaceEntry.stop();comfort.flush();cubeScene.stop();stopMicTest();audio.stopSpeakers();await client.stop();location.reload();
     }});
     for(const id of ['settings','chatgpt','tools'])document.getElementById('focus-'+id).addEventListener('click',()=>screen.action('focus-'+id));
     refreshInputStatus(screen.getState());
