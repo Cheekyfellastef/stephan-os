@@ -347,3 +347,30 @@ test('a lost native reply cannot replay a potentially applied draft or a pending
   assert.deepEqual(delivered.map(item=>item.sequence),[1,2]);
   await h.client.stop();
 });
+
+test('native helper probe requires affirmative interactive identity before advertising readiness',async()=>{
+  const buildId='a'.repeat(64);
+  const schema='stephanos.spatial-window-health.v1';
+  const samples=[
+    ['actual installed interactive helper',{schema,buildId,readinessOnly:false},true],
+    ['readiness-only helper',{schema,buildId,readinessOnly:true},false],
+    ['missing interaction claim',{schema,buildId},false],
+    ['string interaction claim',{schema,buildId,readinessOnly:'false'},false],
+    ['null interaction claim',{schema,buildId,readinessOnly:null},false],
+    ['unverified installed build',{schema,buildId:'invalid',readinessOnly:false},false],
+    ['wrong helper schema',{schema:'unexpected',buildId,readinessOnly:false},false],
+  ];
+  for(const [name,payload,ready] of samples){
+    let count=0;
+    const client=createHolodeckWindowClient({locationRef:{port:'4173'},sessionStore:null,
+      fetchRef:async(url,request)=>{
+        count++;assert.equal(new URL(url).pathname,'/health');
+        assert.equal(request.method,'GET');
+        return {ok:true,status:200,json:async()=>payload};
+      }});
+    const result=await client.probeHelper();
+    assert.equal(result.ok,ready,name);
+    assert.equal(count,1,name);
+    assert.equal(client.getState().status,'idle',name+' must not claim a bound native session');
+  }
+});
