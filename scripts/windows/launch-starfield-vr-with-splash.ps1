@@ -583,6 +583,14 @@ function Get-MonitorCleanupDiagnostics {
             $file = Get-Item -LiteralPath $entry.Path -Force -ErrorAction Stop
             if ($file.PSIsContainer -or $file.Length -gt 1048576) { throw 'journal-not-regular-or-bounded' }
             $journal = Get-Content -LiteralPath $entry.Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            # A consumed legacy journal can coexist with the active paired run.
+            # Never present a different run's historical cleanup failure as today's blocker.
+            $journalRun = Get-MonitorDiagnosticField -Record $journal -Name 'runId'
+            $activeRun = Get-MonitorDiagnosticField -Record $Event -Name 'runId'
+            if (-not $activeRun -or $journalRun -cne $activeRun) {
+                $lines.Add(($entry.Label + ' journal belongs to another run; not used as the current cleanup reason.'))
+                continue
+            }
             $stage = Get-MonitorDiagnosticField -Record $journal -Name 'stage'
             $cleanupError = Get-MonitorDiagnosticField -Record $journal -Name 'cleanupError'
             $lines.Add(($entry.Label + ' journal stage: ' + $stage))
