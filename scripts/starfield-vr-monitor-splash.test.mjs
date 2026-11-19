@@ -205,7 +205,8 @@ test('Hybrid brings only the exact game window forward after the verified waitin
   assert.match(event, /\$monitorState\.FocusAttemptedRunId -cne \$event\.runId/);
   assert.match(source, /game\.StartTime\.ToUniversalTime\(\)\.ToFileTimeUtc\(\)/);
   assert.match(source, /String\.Equals\(birth, createdFileTime, StringComparison\.Ordinal\)/);
-  assert.match(source, /game\.MainModule\.FileName/);
+  assert.match(source, /game\.ProcessName, "Starfield", StringComparison\.OrdinalIgnoreCase/);
+  assert.doesNotMatch(source, /Starfield\.exe/i);
   assert.match(source, /windows\.Count != 1\) return "game-window-ambiguous"/);
   assert.match(source, /GetForegroundWindow\(\) == target/);
   assert.match(source, /return "windows-denied-foreground"/);
