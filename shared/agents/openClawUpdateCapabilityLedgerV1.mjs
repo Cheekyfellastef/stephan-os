@@ -198,9 +198,17 @@ function normalizeCapability(rawInput, blockers) {
   }
 
   if (requiresCandidateProof(updateDisposition)) {
+    // Protected implementation changes must retain the prior qualification
+    // identity until independently verified replay qualifies the candidate.
+    if (protectedCapability && qualificationRefs.length === 0) {
+      blockers.push(`PROTECTED_CANDIDATE_QUALIFICATION_REFS_REQUIRED:${capabilityId || 'unknown'}`);
+    }
     if (!candidateImplementation) blockers.push(`CANDIDATE_IMPLEMENTATION_REQUIRED:${capabilityId || 'unknown'}`);
     if (tests.length === 0) blockers.push(`CANDIDATE_TEST_PROOF_REQUIRED:${capabilityId || 'unknown'}`);
     if (evidenceRefs.length === 0) blockers.push(`CANDIDATE_EVIDENCE_REQUIRED:${capabilityId || 'unknown'}`);
+    if (protectedCapability && affectedTaskClasses.length === 0) {
+      blockers.push(`CANDIDATE_TASK_CLASSES_REQUIRED:${capabilityId || 'unknown'}`);
+    }
   }
 
   if (updateDisposition === OPENCLAW_UPDATE_DISPOSITION.PRESERVE) {
@@ -298,7 +306,28 @@ export function buildOpenClawUpdateCapabilityLedgerV1(input = {}) {
 
   const replay = new Set();
   for (const capability of protectedCapabilities) {
-    if (requiresCandidateProof(capability.updateDisposition)) {
+    if (currentVersion && capability.lastQualifiedVersion && capability.lastQualifiedVersion !== currentVersion) {
+      blockers.push(`PROTECTED_CAPABILITY_QUALIFICATION_VERSION_MISMATCH:${capability.capabilityId}`);
+    }
+    // A matching source identity does not prove the target package loaded the old hook.
+    const preservedAcrossVersion = capability.updateDisposition === OPENCLAW_UPDATE_DISPOSITION.PRESERVE
+      && currentVersion !== targetVersion;
+    // A same-version no-op is not qualification evidence. Every protected
+    // PRESERVE must retain its existing qualification, test and proof refs.
+    // Cross-version PRESERVE additionally needs task classes to replay.
+    if (capability.updateDisposition === OPENCLAW_UPDATE_DISPOSITION.PRESERVE) {
+      for (const [field, refs] of [
+        ['QUALIFICATION_REFS', capability.qualificationRefs],
+        ['TESTS', capability.tests],
+        ['EVIDENCE_REFS', capability.evidenceRefs],
+      ]) {
+        if (refs.length === 0) blockers.push(`PRESERVE_${field}_REQUIRED:${capability.capabilityId}`);
+      }
+      if (preservedAcrossVersion && capability.affectedTaskClasses.length === 0) {
+        blockers.push(`PRESERVE_TASK_CLASSES_REQUIRED:${capability.capabilityId}`);
+      }
+    }
+    if (requiresCandidateProof(capability.updateDisposition) || preservedAcrossVersion) {
       capability.affectedTaskClasses.forEach((taskClass) => replay.add(taskClass));
     }
   }
