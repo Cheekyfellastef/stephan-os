@@ -58,7 +58,7 @@ def main():
             parent_pid=int(sys.argv[5]), parent_birth_filetime=sys.argv[6])
         publish(witness + ".terminal.json", result)
         return 0 if result["operation_ok"] else 2
-    if mode not in {"normal", "failed", "sleep", "descendant", "orphan", "tree", "overflow", "parent"}:
+    if mode not in {"normal", "failed", "sleep", "descendant", "orphan", "orphan-failed", "two-orphans", "tree", "overflow", "parent"}:
         raise ValueError("FIXTURE_MODE_INVALID")
     publish(witness, identity())
     if mode == "normal":
@@ -67,7 +67,7 @@ def main():
     if mode == "failed":
         print("owned-job-failed", flush=True)
         return 37
-    if mode in {"orphan", "tree"}:
+    if mode in {"orphan", "orphan-failed", "two-orphans", "tree"}:
         # The child inherits this Job and the output pipe, even though it is
         # detached from the console. No breakaway flag is requested or allowed.
         child = subprocess.Popen(
@@ -76,9 +76,15 @@ def main():
             creationflags=0x8, close_fds=False, stdin=subprocess.DEVNULL,
             stdout=sys.stdout, stderr=sys.stderr)
         wait_for(descendant)
-        if mode == "orphan":
+        if mode == "two-orphans":
+            second = descendant + ".second"
+            subprocess.Popen([sys.executable, "-I", "-S", "-B", str(Path(__file__).resolve()),
+                "descendant", second, ack, second], creationflags=0x8, close_fds=False,
+                stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr)
+            wait_for(second)
+        if mode in {"orphan", "orphan-failed", "two-orphans"}:
             wait_for(ack)
-            return 0
+            return 37 if mode == "orphan-failed" else 0
         # Keep both the root and its child alive for launcher-death proof.
         time.sleep(30)
         return child.poll() if child.poll() is not None else 0

@@ -666,6 +666,9 @@ def fixed_environment(compiler, staging):
     temporary.mkdir()
     env.update({"PATH": r"C:\Windows\System32;C:\Windows", "PATHEXT": ".COM;.EXE;.BAT;.CMD",
                 "COMSPEC": r"C:\Windows\System32\cmd.exe", "TEMP": str(temporary), "TMP": str(temporary),
+                # VsDevCmd otherwise starts detached PowerShell telemetry. It
+                # is not build work and can outlive the fixed recipe's root.
+                "VSCMD_SKIP_SENDTELEMETRY": "1",
                 "STEPH_OBSERVER_EXPECTED_CL": str(compiler)})
     return env
 
@@ -740,6 +743,15 @@ def run_build(packet, verified):
         verify_originals(original, records, pins)
         receipt["originalSourceVerified"] = True
         compiler, observed_tools = toolchain(pins)
+        # Optional toolchain work has a separate, source-qualified lifetime.
+        # Canonical pins protect its binary and ancestors until Job zero.
+        if compiler.parent != Path(job.COMPLETED_HELPER_IMAGE).parent:
+            raise BuildBlocked("TOOLCHAIN_HELPER_PROFILE_UNQUALIFIED")
+        try:
+            completed_helper = job.pin_completed_toolchain_helper(pins)
+        except (OSError, ValueError) as error:
+            raise BuildBlocked("TOOLCHAIN_HELPER_PROFILE_UNQUALIFIED") from error
+        observed_tools["vctip.exe"] = completed_helper.sha256
         receipt["toolchainObserved"] = True
         overlay = {path[len(PACKAGE):]: raw for path, raw in verified.items()
                    if path.startswith(PACKAGE) and path != RECIPE}
@@ -792,7 +804,7 @@ def run_build(packet, verified):
             cwd=str(staged), env=environment, deadline_monotonic=deadline, output_limit=256 * 1024,
             parent_pid=packet["parentPid"], parent_birth_filetime=packet["parentBirthFileTime"],
             cancel_requested=cancelled, running_cancel_requested=lambda: cancelled(allow_continuation=True),
-            on_suspended=active.bind)
+            on_suspended=active.bind, completed_helper=completed_helper)
         receipt["allJobsEmpty"] = stage_result.get("zero_active_processes_observed") is True
         receipt["executionCustodyReleased"] = stage_result.get("custody_released") is True and receipt["allJobsEmpty"]
         receipt["outputComplete"] = stage_result.get("output_complete") is True
@@ -816,6 +828,8 @@ def run_build(packet, verified):
             raise BuildBlocked("NATIVE_BUILD_DEADLINE_EXCEEDED")
         if stage_result.get("cancelled") is True:
             raise BuildBlocked("NATIVE_BUILD_CANCELLED")
+        if stage_result.get("reason") == "ROOT_EXITED_WITH_LIVE_DESCENDANTS":
+            raise BuildBlocked("NATIVE_BUILD_CHILD_EXIT_UNPROVEN")
         if (stage_result.get("operation_ok") is not True
                 or type(stage_result.get("root_exit_code")) is not int or stage_result["root_exit_code"] != 0
                 or stage_result.get("root_exited") is not True or not receipt["outputComplete"]
