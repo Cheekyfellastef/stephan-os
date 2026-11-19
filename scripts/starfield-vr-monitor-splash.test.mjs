@@ -201,7 +201,15 @@ test('actual bootstrap refuses changed bridge bytes without executing them', asy
 
 test('Hybrid brings only the exact game window forward after the verified waiting state', () => {
   const event = functionSource('Receive-MonitorEvent');
-  assert.match(event, /\$event\.mode -ceq 'waiting'[\s\S]*?FocusBoundGame\(\[int\]\$event\.process\.pid, \[string\]\$event\.process\.createdFileTime\)/);
+  const handoff = functionSource('Invoke-MonitorWaitingGameFocus');
+  assert.match(event, /\$event\.mode -ceq 'waiting'[\s\S]*?Invoke-MonitorWaitingGameFocus/);
+  assert.match(handoff, /FocusBoundGame\(/);
+  assert.match(handoff, /\$monitorState\.FocusAttemptCount -ge 8/);
+  assert.match(handoff, /game-window-not-visible[\s\S]*?\$monitorState\.FocusAttemptCount -lt 8/);
+  assert.match(handoff, /\$focusRetryTimer\.Start\(\)/);
+  assert.match(source, /\$focusRetryTimer\.Interval = 1200/);
+  assert.match(source, /\$focusRetryTimer\.Add_Tick\(\{[\s\S]*?Invoke-MonitorWaitingGameFocus/);
+  assert.match(source, /\$monitorState\.Mode -cne 'waiting' -or \$monitorState\.Busy\) \{ \$focusRetryTimer\.Stop\(\) \}/);
   assert.match(event, /\$monitorState\.FocusAttemptedRunId -cne \$event\.runId/);
   assert.match(source, /game\.StartTime\.ToUniversalTime\(\)\.ToFileTimeUtc\(\)/);
   assert.match(source, /String\.Equals\(birth, createdFileTime, StringComparison\.Ordinal\)/);
@@ -210,8 +218,20 @@ test('Hybrid brings only the exact game window forward after the verified waitin
   assert.match(source, /windows\.Count != 1\) return "game-window-ambiguous"/);
   assert.match(source, /GetForegroundWindow\(\) == target/);
   assert.match(source, /return "windows-denied-foreground"/);
-  assert.match(event, /Select Starfield from the taskbar, load your save, then return here to confirm/);
+  assert.match(handoff, /Select the game from the taskbar, load your save, then return here to confirm/);
+  assert.doesNotMatch(handoff, /Send-MonitorCommand|\.Kill\(|Start-Process/);
   assert.doesNotMatch(event.match(/\} elseif \(\$event\.mode -ceq 'waiting'\)([\s\S]*?)\} elseif \(\$event\.mode -cin/)?.[1] || '', /Send-MonitorCommand -Command 'confirm'/);
+});
+
+test('waiting-window retry is time-bounded, never relaunches game or replays save confirmation', () => {
+  const handoff = functionSource('Invoke-MonitorWaitingGameFocus');
+  const receiver = functionSource('Receive-MonitorEvent');
+  assert.match(handoff, /\$processState\.CloseRequested -or \$monitorState\.FocusAttemptCount -ge 8/);
+  assert.match(handoff, /\$monitorState\.FocusAttemptedRunId -cne \$monitorState\.RunId/);
+  assert.match(handoff, /\$result -ceq 'game-window-not-visible' -and \$monitorState\.FocusAttemptCount -lt 8/);
+  assert.match(handoff, /\$focusRetryTimer\.Stop\(\)/);
+  assert.match(receiver, /\$monitorState\.FocusAttemptCount = 0[\s\S]*?Invoke-MonitorWaitingGameFocus/);
+  assert.doesNotMatch(handoff, /Send-MonitorCommand|Start-StarfieldVrLauncherProcess|Start-MonitorFromHybridCard/);
 });
 
 test('the splash exposes local meter-free cleanup reasons without touching the custody decision', () => {
