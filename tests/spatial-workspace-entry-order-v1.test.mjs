@@ -138,15 +138,18 @@ test('actual pagehide invalidates a pending request and closes a late grant with
   const grant = deferred();
   const h = fixture({ request: () => grant.promise });
   const result = h.entry.enter();
-  let pagehide;
+  let pagehide, microphoneStops = 0, speakerStops = 0;
   const source = html.split('\n').find(line => line.includes("window.addEventListener('pagehide'"));
   assert.ok(source);
   vm.runInNewContext(source, {
     workspaceEntry: h.entry, comfort: { flush() {} }, furniture: { flush() {} },
-    stopMicTest() {}, cubeScene: { stop() {} }, client: { pagehide() {} },
+    stopMicTest() { microphoneStops++; }, audio: { stopSpeakers() { speakerStops++; } },
+    cubeScene: { stop() {} }, client: { pagehide() {} },
     window: { addEventListener: (_name, callback) => { pagehide = callback; } },
   });
   pagehide({ persisted: true });
+  assert.equal(microphoneStops, 1, 'pagehide synchronously revokes any local microphone test');
+  assert.equal(speakerStops, 1, 'pagehide synchronously revokes any pending or active speaker test');
   assert.equal(h.entry.isBusy(), true);
   assert.equal((await h.entry.enter()).busy, true);
   grant.resolve(h.session);
