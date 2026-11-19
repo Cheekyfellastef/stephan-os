@@ -42,14 +42,15 @@ test('exact invocation-only recovery source uses only the established natural-ad
 });
 
 test('natural helper adoption cannot discharge resident Governor, Spatial or desktop-plugin debt', async () => {
-  const forbidden = () => assert.fail('unclassified Governor path reached an adapter');
-  const governor = await executePostSyncRefreshPlan({ beforeHead: 'a'.repeat(40), afterHead: 'b'.repeat(40),
+  const governor = classifyPostSyncRefresh([...invocationOnlyRecoveryPaths, 'scripts/windows/run-vr-resource-governor.ps1']);
+  assert.equal(governor.governorRefreshRequired, true);
+  assert.deepEqual(governor.targetIds, ['sovereign-commander', 'natural-reload']);
+  const denied = await executePostSyncRefreshPlan({ beforeHead: 'a'.repeat(40), afterHead: 'b'.repeat(40),
     changedPaths: [...invocationOnlyRecoveryPaths, 'scripts/windows/run-vr-resource-governor.ps1'],
-    adapters: { confirmNaturalReload: forbidden, refreshSovereignCommander: forbidden },
+    adapters: { refreshSovereignCommander: async () => ({ ok: true, exactHeadProofOk: true, sourceHead: 'b'.repeat(40) }) },
   });
-  assert.equal(governor.ok, false);
-  assert.equal(governor.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
-  assert.deepEqual(governor.results, []);
+  assert.equal(denied.ok, false);
+  assert.equal(denied.blocker, 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN');
   const spatial = classifyPostSyncRefresh([...invocationOnlyRecoveryPaths, 'scripts/spatial-window-host.mjs']);
   assert.equal(spatial.spatialAdoptionRequired, true);
   assert.equal(spatial.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED);

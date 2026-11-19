@@ -317,14 +317,17 @@ test('real permission failures, malformed refusals and possible side effects are
     { ...busySync(), evaluation: { ...busySync().evaluation, performsShellExecution: undefined } },
     { ...busySync(), evaluation: { ...busySync().evaluation, exactNextAction: 'C:\\private\\path' } },
   ];
-  for (const refusal of variants) {
+  for (const [index, refusal] of variants.entries()) {
     let calls = 0, waits = 0;
     const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
       pendingReader: async () => null, sleepFn: async () => { waits += 1; },
       adapter: { runSync() { calls += 1; return { ok: true, result: refusal }; },
         runRefresh() { assert.fail('unsafe refusal reached refresh'); } },
     });
-    assert.equal(result.ok, false); assert.equal(result.blocker, 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED');
+    // Explicit undefined cannot occur in the fixed child's JSON; these two
+    // injected graphs fail at the shared boundary, still before any retry.
+    assert.equal(result.ok, false); assert.equal(result.blocker,
+      [1, 8].includes(index) ? 'SYNC_AND_REFRESH_OWNER_EVIDENCE_INVALID' : 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED');
     assert.equal(calls, 1); assert.equal(waits, 0);
     assert.ok(['', 'SYNC_ALREADY_RUNNING', 'LOCK_ACQUISITION_FAILED'].includes(result.syncBlockerReason));
     assert.doesNotMatch(JSON.stringify(projectSyncAndRefreshStatus(result)), /private|receipt|existing/);
@@ -996,4 +999,32 @@ test('an over-budget goal-discovery callback does not trigger mailbox or mainten
   assert.equal(result.budgetPhase, 'POST_GOAL_DISCOVERY');
   assert.equal(repairCalls, 0);
   assert.equal(pulseCalls, 0);
+});
+
+test('actual sync wrapper carries scoped Governor debt through fresh child evidence and requires covering proof', async () => {
+  for (const governorProven of [false, true]) {
+    const targetId = 'sovereign-commander';
+    const debt = pendingPostSyncRefreshDebt([{ beforeHead: A, afterHead: C }], [targetId], '',
+      { sovereignRelayRefreshRequired: false, governorRefreshRequired: true });
+    const calls = [];
+    const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths, ...nonWindowsRepairArgs(),
+      pendingReader: async () => ({ ok: true, spans: [], requiredTargetIds: [], sovereignRelayRefreshRequired: false }),
+      adapter: {
+        runSync: () => ({ ok: true, result: { ...noChange(C), facts: { ...noChange(C).facts, pendingRefresh: debt } } }),
+        runRefresh: ({ beforeHead, afterHead }) => {
+          calls.push({ beforeHead, afterHead });
+          const governorProof = { schemaVersion: 'stephanos.post-sync-governor-proof.v1', watchdogSucceeded: true,
+  normalOperatorObserved: true, healthy: true, inventoryComplete: true, processCount: 1,
+  identityVerified: true, progressVerified: true, currentSourceVerified: true,
+  sourceHead: C, sourceHeadMatchesLive: true, sourceSha256: 'a'.repeat(64), blocker: '' };
+          return { ok: true, result: { ...completedRefresh(beforeHead, afterHead), classification: 'REFRESH_COMPLETE',
+            noRuntimePathCount: 0, targetIds: [targetId], sovereignRelayRefreshRequired: false, governorRefreshRequired: governorProven,
+            resultTargets: [{ targetId, ok: true, exactHeadProofOk: true, sourceHead: C, blocker: '',
+              ...(governorProven ? { governorProof } : {}) }] } };
+        },
+      } });
+    assert.equal(result.ok, governorProven);
+    assert.deepEqual(calls, [{ beforeHead: A, afterHead: C }]);
+    if (!governorProven) assert.equal(result.blocker, 'PENDING_POST_SYNC_COMPLETION_COVERAGE_UNPROVEN');
+  }
 });
