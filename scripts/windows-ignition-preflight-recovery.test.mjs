@@ -30,7 +30,8 @@ $ErrorActionPreference = 'Stop'
 $ignitionProofRoot = ${quote(directory)}
 $script:ignitionHelperLogFiles = @((Join-Path $ignitionProofRoot '.\\current.stdout.log'), (Join-Path $ignitionProofRoot '.\\current.stderr.log'))
 function Initialize-IgnitionProofWorkspace {}
-${definition('Get-LauncherChildBlocker')}
+${['Read-IgnitionHelperLogObservedExtent','Read-IgnitionHelperLogSnapshot','ConvertTo-ThreeAppDesktopStartupAdmission',
+  'Get-LauncherChildBlocker','Get-CurrentIgnitionStartupObservation'].map(definition).join('\n')}
 ${body}
 `, 'utf8');
     return spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], {

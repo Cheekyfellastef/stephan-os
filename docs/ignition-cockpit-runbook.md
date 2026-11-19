@@ -73,3 +73,37 @@ failed browser opening is reported separately and cannot block proven core
 readiness. No caller optional flag may demote a Stephanos window. Earlier
 OpenClaw window receipts remain historical, and its current window proof remains
 explicitly unproven rather than borrowing the core windows' final proof.
+
+## Actual desktop entry and scoped native holds
+
+For this acceptance, the existing `Stephanos Local.lnk` must point to
+`windows/Launch-Stephanos-Local.cmd`, whose default mode is `launcher-root` /
+`cockpit`. Verify the installed link's target, fixed
+`-Mode launcher-root -BootMode cockpit -Unattended` arguments and repository
+working directory; opening a different helper is not proof that this entry
+works. This existing unattended path defers optional native commissioning and
+dialogs; it does not waive required process-owner or runtime qualification.
+A front-end-only local wrapper does not request AI Core or OpenClaw.
+
+The reviewed `scripts/windows/retarget-stephanos-local-shortcut.ps1` adapter
+previews a change without writing or qualifying it. Applying it requires the
+exact approved source head, current shortcut preimage hash and the existing
+qualified installation route. It preserves the original link bytes and verifies
+the saved link. It does not launch anything, change tasks, replace the local
+wrapper or prove startup. Do not substitute a worktree path or another desktop
+link when identity or source proof is unavailable.
+
+Ordinary startup may report native commissioning held for Spatial and the
+desktop plugin host while its own mandatory source and managed proofs pass.
+The full canonical native debt remains held. Unpaid target, Governor, relay,
+approval, unknown or unsafe obligations still block startup. Failure reporting
+retains the full residual list and source cohort, rather than showing the first
+optional blocker as the entire cause. A stale launch receipt is historical.
+
+Cold acceptance observes services stopped under their existing qualified owner,
+invokes this actual installed entry once, and verifies current served source
+plus the front-end, AI Core and OpenClaw windows. No port/PID-only stop is
+authorized. Report manual recovery after another press separately from
+unattended recovery through the existing owner; each needs its own fresh
+pickup and outcome receipt. Source tests, task presence and warm HTTP probes
+are preparation evidence, not either live acceptance result.

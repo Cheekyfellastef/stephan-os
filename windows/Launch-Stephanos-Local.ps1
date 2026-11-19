@@ -339,10 +339,15 @@ function Test-IgnitionBrowserReceiptSet([object[]]$Surfaces, [object[]]$Receipts
   return $true
 }
 
-function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [string]$Message, [hashtable]$Extra, [object]$SupervisorRecord, [string]$ExpectedHead, [object]$LatestOpenClawStartup, [object[]]$RequestedBrowserSurfaces, [object[]]$BrowserReceipts, [bool]$AutoOpenEnabled, [datetime]$RunStartedAtUtc, [object]$CurrentBrowserObservation) {
+function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [string]$Message, [hashtable]$Extra, [object]$SupervisorRecord, [string]$ExpectedHead, [object]$LatestOpenClawStartup, [object[]]$RequestedBrowserSurfaces, [object[]]$BrowserReceipts, [bool]$AutoOpenEnabled, [datetime]$RunStartedAtUtc, [object]$CurrentBrowserObservation, [object]$StartupObservation) {
   $supervisorStatus = if ($LaunchMode -eq 'launcher-root') { Convert-SupervisorRecordToIgnitionStatus -SupervisorRecord $SupervisorRecord -FallbackPhase $Phase -FallbackMessage $Message } else { $null }
   $details = @{}
   foreach ($key in $Extra.Keys) { $details[$key] = $Extra[$key] }
+  $startupAdmission = $null
+  if ($StartupObservation -and $StartupObservation.packetType -ceq 'ignition-startup-admission' -and
+      $StartupObservation.sourceCohortState -ceq 'CURRENT' -and $StartupObservation.sourceHead -ceq $StartupObservation.currentSourceHead) {
+    $startupAdmission = ConvertTo-ThreeAppDesktopStartupAdmission -Value $StartupObservation.startupAdmission -ExpectedHead $StartupObservation.sourceHead
+  }
   # Services and required Stephanos windows jointly determine desktop readiness.
   if ($Phase -notin @('blocked','restart-required','fixed-runtime-installation') -and $supervisorStatus -and $supervisorStatus.phase -eq 'blocked') {
     $Phase = 'blocked'
@@ -364,6 +369,14 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
     $details.currentStage = 'blocked'
     $details.blocker = 'desktop-ignition-browser-proof-unproven'
     $details.nextOperatorAction = 'Keep the required Stephanos browser surfaces available and retry Ignition to obtain their verified window receipts.'
+  }
+  elseif ($LaunchMode -eq 'launcher-root' -and $Phase -eq 'ready' -and
+      (-not $startupAdmission -or $startupAdmission.admitted -ne $true -or $startupAdmission.sourceHead -cne $ExpectedHead)) {
+    $Phase = 'blocked'
+    $Message = "Desktop Ignition requires the current helper's exact-head three-app startup admission."
+    $details.currentStage = 'blocked'
+    $details.blocker = 'desktop-ignition-startup-admission-unproven'
+    $details.nextOperatorAction = 'Reconcile the current source preflight and retry the same Ignition entry.'
   }
   $Extra = $details
   $currentStage = if ($Extra.ContainsKey('currentStage')) { $Extra.currentStage } else { $Phase }
@@ -404,10 +417,15 @@ function Resolve-IgnitionStatusProjection([string]$LaunchMode, [string]$Phase, [
     blocker = if ($Extra.ContainsKey('blocker')) { $Extra.blocker } else { '' }
     battleBridgeSupervisorCurrentPath = $battleBridgeSupervisorCurrentPath
     battleBridgeSupervisor = if ($supervisorStatus) { $supervisorStatus.battleBridgeSupervisor } else { $null }
+    startupScope = if ($startupAdmission) { 'THREE_APP_DESKTOP_STARTUP' } else { '' }
+    startupAdmission = $startupAdmission
+    startupSourceCohort = if ($startupAdmission) { $StartupObservation } else { $null }
+    globalRefreshState = if ($startupAdmission) { $startupAdmission.globalRefreshState } else { 'UNPROVEN' }
+    nativeCommissioningState = if ($startupAdmission) { $startupAdmission.nativeCommissioningState } else { 'UNPROVEN' }
     destinations = [ordered]@{ statusPath = $ignitionStatusPath; splashPath = $ignitionSplashPath; logRoot = (Join-Path $ignitionProofRoot 'logs'); transcriptPath = $ignitionTranscriptPath; supportSnapshotPath = $ignitionSupportSnapshotPath }
   }
   foreach ($key in $Extra.Keys) {
-    if ($key -notin @('phase','message','trafficLight','progressPercentage','enterStephanosEnabled','currentStage','blocker','nextOperatorAction','proofSummary','battleBridgeSupervisor','battleBridgeSupervisorCurrentPath','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','currentBrowserObservation','optionalBrowserSurfaces','executionMode','optionalPreparations')) { $payload[$key] = $Extra[$key] }
+    if ($key -notin @('phase','message','trafficLight','progressPercentage','enterStephanosEnabled','currentStage','blocker','nextOperatorAction','proofSummary','battleBridgeSupervisor','battleBridgeSupervisorCurrentPath','browserTargets','browserSurfaceReceipts','browserAutoOpenEnabled','browserProofScope','currentBrowserObservation','optionalBrowserSurfaces','executionMode','optionalPreparations','startupScope','startupAdmission','startupSourceCohort','globalRefreshState','nativeCommissioningState')) { $payload[$key] = $Extra[$key] }
   }
   if ([bool]$Unattended) {
     $payload.optionalPreparations = [ordered]@{
@@ -428,6 +446,9 @@ function Get-IgnitionStatusProjection([string]$Phase, [string]$Message, [hashtab
     $supervisorRecord = if ($Mode -eq 'launcher-root') { Get-BattleBridgeSupervisorCurrentRecord } else { $null }
     $expectedHead = if ($finalDesktop) { Get-RepositoryHeadForSupervisorProof } else { '' }
     $latestOpenClawStartup = Get-LatestOpenClawStartupStatus
+    # Include the current-helper log/head read in the existing bounded capture
+    # window. Final source, service, process-exit and deadline checks follow it.
+    $startupObservation = if ($Mode -eq 'launcher-root') { Get-CurrentIgnitionStartupObservation } else { $null }
     if ($Mode -eq 'launcher-root' -and $Phase -eq 'ready') {
       $beforeSupervisorRecord = $supervisorRecord
       $requiredSurfaces = @(Get-IgnitionRequiredBrowserSurfaces -Surfaces @($browserSurfaces))
@@ -449,7 +470,7 @@ function Get-IgnitionStatusProjection([string]$Phase, [string]$Message, [hashtab
       $currentObservation.elapsedMilliseconds = $captureClock.ElapsedMilliseconds
       if ($currentObservation.elapsedMilliseconds -gt 15000) { $currentObservation.surfaces = @() }
     }
-    return Resolve-IgnitionStatusProjection -LaunchMode $Mode -Phase $Phase -Message $Message -Extra $Extra -SupervisorRecord $supervisorRecord -ExpectedHead $expectedHead -LatestOpenClawStartup $latestOpenClawStartup -RequestedBrowserSurfaces @($browserSurfaces) -BrowserReceipts @($script:browserSurfaceReceipts) -AutoOpenEnabled ([bool]$autoOpenEnabled) -RunStartedAtUtc $script:ignitionRunStartedAtUtc -CurrentBrowserObservation $currentObservation
+    return Resolve-IgnitionStatusProjection -LaunchMode $Mode -Phase $Phase -Message $Message -Extra $Extra -SupervisorRecord $supervisorRecord -ExpectedHead $expectedHead -LatestOpenClawStartup $latestOpenClawStartup -RequestedBrowserSurfaces @($browserSurfaces) -BrowserReceipts @($script:browserSurfaceReceipts) -AutoOpenEnabled ([bool]$autoOpenEnabled) -RunStartedAtUtc $script:ignitionRunStartedAtUtc -CurrentBrowserObservation $currentObservation -StartupObservation $startupObservation
   }
   finally {
     if ($capture) { foreach ($capability in $capture.capabilities) { $capability.Dispose() } }
@@ -460,7 +481,9 @@ function Get-IgnitionStatusProjection([string]$Phase, [string]$Message, [hashtab
 function Publish-IgnitionStatusProjection([System.Collections.IDictionary]$Outcome) {
   Initialize-IgnitionProofWorkspace
   Write-IgnitionJson -Path $ignitionStatusPath -Value $Outcome -Depth 12
-  Write-IgnitionTranscript -Event @{ event = 'ignition-status'; phase = $Outcome.phase; message = $Outcome.message; currentStage = $Outcome.currentStage; blocker = $Outcome.blocker }
+  Write-IgnitionTranscript -Event @{ event = 'ignition-status'; phase = $Outcome.phase; message = $Outcome.message; currentStage = $Outcome.currentStage; blocker = $Outcome.blocker;
+    startupScope = $Outcome.startupScope; startupAdmission = $Outcome.startupAdmission; startupSourceCohort = $Outcome.startupSourceCohort;
+    globalRefreshState = $Outcome.globalRefreshState; nativeCommissioningState = $Outcome.nativeCommissioningState }
   Update-IgnitionSplashScreen -Status $Outcome
 }
 
@@ -858,7 +881,83 @@ function Show-IgnitionSplashScreen {
   Write-LiveLog "verbose logs/status destination: $ignitionProofRoot"
 }
 
-function Get-LauncherChildBlocker {
+function Read-IgnitionHelperLogObservedExtent([System.IO.Stream]$Stream, [long]$Length) {
+  if (-not $Stream.CanRead -or -not $Stream.CanSeek -or $Length -lt 0 -or $Length -gt 2097152 -or $Stream.Length -ne $Length) { return $null }
+  $bytes = New-Object byte[] ([int]$Length)
+  $offset = 0
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  while ($offset -lt $Length) {
+    $count = $Stream.Read($bytes, $offset, [int]($Length - $offset))
+    if ($count -le 0 -or $clock.ElapsedMilliseconds -gt 2000) { return $null }
+    $offset += $count
+  }
+  if ($Stream.Length -ne $Length) { return $null }
+  try {
+    $decoded = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+    if ($decoded.StartsWith([string][char]0xFEFF, [StringComparison]::Ordinal)) { return $decoded.Substring(1) }
+    return $decoded
+  } catch { return $null }
+}
+
+function Read-IgnitionHelperLogSnapshot([string]$Path) {
+  # This is a bounded sequential read of the retained helper's existing log,
+  # not a claim of atomicity or an independently observed physical file ID.
+  if ($Path -cnotin @($script:ignitionHelperLogFiles)) { return $null }
+  $stream = $null
+  try {
+    $before = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if (($before.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $before.PSIsContainer -or $before.Length -gt 2097152) { return $null }
+    if ($script:ignitionRunStartedAtUtc -is [datetime] -and
+        $before.LastWriteTimeUtc -lt $script:ignitionRunStartedAtUtc.ToUniversalTime().AddSeconds(-1 * $script:supervisorRecordFreshnessSkewSeconds)) { return $null }
+    $stream = [IO.File]::Open($before.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    $length = $stream.Length
+    if ($length -ne $before.Length) { return $null }
+    $content = Read-IgnitionHelperLogObservedExtent -Stream $stream -Length $length
+    if ($null -eq $content) { return $null }
+    $after = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if (($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $after.PSIsContainer -or
+        $after.Length -ne $length -or $after.LastWriteTimeUtc -ne $before.LastWriteTimeUtc -or
+        $after.CreationTimeUtc -ne $before.CreationTimeUtc -or $stream.Length -ne $length) { return $null }
+    return [pscustomobject]@{ lines = @($content -split '\r?\n'); lastWriteTimeUtc = $after.LastWriteTimeUtc; path = $after.FullName }
+  }
+  catch { return $null }
+  finally { if ($stream) { $stream.Dispose() } }
+}
+
+function ConvertTo-ThreeAppDesktopStartupAdmission([object]$Value, [string]$ExpectedHead) {
+  # Decode only the fixed shared projection protocol; this adapter performs no
+  # native qualification and never changes the producer's remaining debt.
+  $keys = @('schemaVersion','scope','sourceHead','admitted','globalRemaining','mandatoryRemaining','optionalRemaining','globalRefreshState','nativeCommissioningState')
+  if ($Value -isnot [pscustomobject] -or $ExpectedHead -cnotmatch '^[a-f0-9]{40}$' -or
+      @($Value.PSObject.Properties.Name).Count -ne $keys.Count -or
+      @($Value.PSObject.Properties.Name | Where-Object { $_ -cnotin $keys }).Count -ne 0 -or
+      $Value.schemaVersion -cne 'stephanos.three-app-desktop-startup-admission.v1' -or
+      $Value.scope -cne 'THREE_APP_DESKTOP_STARTUP' -or $Value.sourceHead -cne $ExpectedHead -or
+      $Value.admitted -isnot [bool]) { return $null }
+  $order = @('target:stephanos-ui-4173','target:vr-capability-atlas-browser-proof','target:stephanos-backend-8787',
+    'target:mission-orchestrator-worker','target:github-command-mailbox','target:sovereign-commander','target:natural-reload',
+    'governor','sovereign-relay','spatial-resident','desktop-plugin-host','openclaw-approval','unclassified-path','unsafe-path')
+  foreach ($key in @('globalRemaining','mandatoryRemaining','optionalRemaining')) {
+    if ($Value.$key -isnot [array] -or $Value.$key.Count -gt $order.Count) { return $null }
+    $last = -1
+    foreach ($id in $Value.$key) {
+      if ($id -isnot [string]) { return $null }
+      $position = [Array]::IndexOf($order, $id)
+      if ($position -le $last) { return $null }
+      $last = $position
+    }
+  }
+  $optional = @($Value.globalRemaining | Where-Object { $_ -cin @('spatial-resident','desktop-plugin-host') })
+  $mandatory = @($Value.globalRemaining | Where-Object { $_ -cnotin @('spatial-resident','desktop-plugin-host') })
+  if ([string]::Join('|', $optional) -cne [string]::Join('|', $Value.optionalRemaining) -or
+      [string]::Join('|', $mandatory) -cne [string]::Join('|', $Value.mandatoryRemaining) -or
+      $Value.admitted -ne ($mandatory.Count -eq 0) -or
+      $Value.globalRefreshState -cne $(if ($Value.globalRemaining.Count -eq 0) { 'COMPLETE' } else { 'HELD' }) -or
+      $Value.nativeCommissioningState -cne $(if ($optional.Count -eq 0) { 'NO_RECORDED_OPTIONAL_OBLIGATION' } else { 'HELD_UNPROVEN' })) { return $null }
+  return $Value
+}
+
+function Get-LauncherChildBlocker([switch]$IncludeStartupAdmission) {
   Initialize-IgnitionProofWorkspace
   # Observe only this retained helper's unique logs. A previous launch or another
   # background service cannot supply the current ignition failure.
@@ -867,7 +966,14 @@ function Get-LauncherChildBlocker {
     if (-not (Test-Path -LiteralPath $logPaths[$logIndex] -PathType Leaf)) { continue }
     try {
       $logFile = Get-Item -LiteralPath $logPaths[$logIndex] -ErrorAction Stop
-      $lines = @(Get-Content -LiteralPath $logFile.FullName -Encoding UTF8 -Tail 256 -ErrorAction Stop)
+      $runBound = $script:ignitionRunStartedAtUtc -is [datetime]
+      if ($runBound) {
+        $freshnessBoundaryUtc = $script:ignitionRunStartedAtUtc.ToUniversalTime().AddSeconds(-1 * $script:supervisorRecordFreshnessSkewSeconds)
+        if ($logFile.LastWriteTimeUtc -lt $freshnessBoundaryUtc) { continue }
+      }
+      $snapshot = Read-IgnitionHelperLogSnapshot -Path $logPaths[$logIndex]
+      if (-not $snapshot) { continue }
+      $lines = @($snapshot.lines)
 
       for ($index = $lines.Count - 1; $index -ge 0; $index--) {
         $line = [string]$lines[$index]
@@ -893,21 +999,86 @@ function Get-LauncherChildBlocker {
           try { $preflight = $line.Substring($preflightPrefix.Length) | ConvertFrom-Json }
           catch { return $null }
           if ($preflight.schemaVersion -cne 'stephanos.battle-bridge-ignition-sync-preflight.v1' -or
-              $preflight.ok -isnot [bool] -or $preflight.ok -ne $false -or
-              $preflight.classification -cne 'IGNITION_SYNC_PREFLIGHT_BLOCKED' -or
+              $preflight.ok -isnot [bool]) { return $null }
+          if ($preflight.ok -eq $true -and -not $IncludeStartupAdmission) { return $null }
+          if ($preflight.ok -eq $false -and ($preflight.classification -cne 'IGNITION_SYNC_PREFLIGHT_BLOCKED' -or
               $preflight.finalVerdict -cne 'IGNITION_SYNC_PREFLIGHT_BLOCKED' -or
-              [string]$preflight.blocker -cnotmatch '^[A-Z0-9_:-]{1,160}$') { return $null }
+              [string]$preflight.blocker -cnotmatch '^[A-Z0-9_:-]{1,160}$')) { return $null }
           $reason = [string]$preflight.syncBlockerReason
           if ($reason -cnotmatch '^[A-Z0-9_:-]{1,160}$') { $reason = [string]$preflight.blocker }
+          $sourceHead = if ($preflight.sourceHead -is [string] -and $preflight.sourceHead -cmatch '^[a-f0-9]{40}$') { [string]$preflight.sourceHead } else { '' }
+          $currentSourceHead = ''
+          if ($sourceHead) {
+            try { $currentSourceHead = [string](Get-RepositoryHeadForSupervisorProof) } catch { $currentSourceHead = '' }
+            if ($currentSourceHead -cnotmatch '^[a-f0-9]{40}$') { $currentSourceHead = '' }
+          }
+          $cohortState = if ($runBound -and $sourceHead -and $currentSourceHead) {
+            if ($sourceHead -ceq $currentSourceHead) { 'CURRENT' } else { 'STALE' }
+          } else { 'UNPROVEN' }
+          $startupAdmission = ConvertTo-ThreeAppDesktopStartupAdmission -Value $preflight.startupAdmission -ExpectedHead $sourceHead
+          if ($preflight.ok -eq $true) {
+            if ($preflight.classification -cne 'IGNITION_SYNC_PREFLIGHT_PASS_THREE_APP_STARTUP' -or
+                $preflight.finalVerdict -cne 'IGNITION_SYNC_PREFLIGHT_PASS' -or $preflight.blocker -cne '' -or
+                $preflight.startupScope -cne 'THREE_APP_DESKTOP_STARTUP' -or $cohortState -cne 'CURRENT' -or
+                -not $startupAdmission -or $startupAdmission.admitted -ne $true) { return $null }
+            return [ordered]@{ packetType = 'ignition-startup-admission'; sourceLog = $logFile.FullName;
+              sourceHead = $sourceHead; currentSourceHead = $currentSourceHead; sourceCohortState = $cohortState;
+              launcherRunStartedAtUtc = $script:ignitionRunStartedAtUtc.ToUniversalTime().ToString('o');
+              logLastWriteTimeUtc = $snapshot.lastWriteTimeUtc.ToString('o');
+              startupScope = 'THREE_APP_DESKTOP_STARTUP'; startupAdmission = $startupAdmission }
+          }
+          $refreshBlocker = if ($preflight.refreshBlocker -is [string] -and $preflight.refreshBlocker -cmatch '^[A-Z0-9_:-]{1,160}$') {
+            [string]$preflight.refreshBlocker
+          } else { [string]$preflight.blocker }
+          $degradationBlocker = if ($preflight.degradationBlocker -is [string] -and $preflight.degradationBlocker -cmatch '^[A-Z0-9_:-]{1,160}$') {
+            [string]$preflight.degradationBlocker
+          } else { '' }
+          $refreshObligations = $null
+          $reported = $preflight.refreshObligations
+          if ($sourceHead -and $reported -is [pscustomobject] -and
+              @($reported.PSObject.Properties.Name).Count -eq 3 -and
+              @($reported.PSObject.Properties.Name | Where-Object { $_ -cnotin @('schemaVersion','sourceHead','remaining') }).Count -eq 0 -and
+              $reported.schemaVersion -ceq 'stephanos.ignition-refresh-obligations.v1' -and
+              $reported.sourceHead -ceq $sourceHead -and $reported.remaining -is [array]) {
+            $remaining = @($reported.remaining)
+            if ($remaining.Count -le 16 -and @($remaining | Select-Object -Unique).Count -eq $remaining.Count -and
+                @($remaining | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^[a-z][a-z0-9:-]{0,95}$' }).Count -eq 0) {
+              $refreshObligations = [ordered]@{ schemaVersion = 'stephanos.ignition-refresh-obligations.v1'; sourceHead = $sourceHead; remaining = $remaining }
+            }
+          }
+          $message = "Ignition source preflight blocked: $reason"
+          if ($sourceHead) { $message = "Ignition source preflight blocked for source ${sourceHead}: $reason" }
+          if ($cohortState -ceq 'STALE') {
+            $reason = 'IGNITION_PREFLIGHT_SOURCE_COHORT_STALE'
+            $message = "Historical Ignition preflight refusal for source $sourceHead; current source is $currentSourceHead."
+          } elseif ($sourceHead -and $cohortState -ceq 'UNPROVEN') {
+            $message += ' Current source cohort is unproven.'
+          }
+          if ($refreshObligations) {
+            $message += if ($refreshObligations.remaining.Count -gt 0) {
+              " Remaining refresh obligations: $([string]::Join(', ', $refreshObligations.remaining))."
+            } else { ' No additional refresh obligations reported; preflight remains blocked.' }
+          } elseif ($sourceHead) { $message += ' Remaining refresh obligations are unproven.' }
+          if ($refreshObligations -and $refreshBlocker -cne [string]$preflight.blocker) { $message += " First refresh blocker: $refreshBlocker." }
           $nextAction = if ($reason -ceq 'SYNC_ALREADY_RUNNING') {
             'Another canonical source sync is still running. Let it finish, then press Ignition again.'
           } else { 'Resolve the reported preflight blocker, then press Ignition again.' }
           return [ordered]@{
-            message = "Ignition source preflight blocked: $reason"
+            message = $message
             reason = $reason
             nextOperatorAction = $nextAction
             packetType = 'ignition-sync-preflight'
             sourceLog = $logFile.FullName
+            sourceHead = $sourceHead
+            currentSourceHead = $currentSourceHead
+            sourceCohortState = $cohortState
+            launcherRunStartedAtUtc = if ($runBound) { $script:ignitionRunStartedAtUtc.ToUniversalTime().ToString('o') } else { '' }
+            logLastWriteTimeUtc = $logFile.LastWriteTimeUtc.ToString('o')
+            refreshBlocker = $refreshBlocker
+            degradationBlocker = $degradationBlocker
+            refreshObligations = $refreshObligations
+            startupScope = if ($startupAdmission) { 'THREE_APP_DESKTOP_STARTUP' } else { '' }
+            startupAdmission = $startupAdmission
           }
         }
 
@@ -959,6 +1130,23 @@ function Get-LauncherChildBlocker {
 
   return $null
 }
+
+function Get-CurrentIgnitionStartupObservation {
+  # A live writer can append a later retry. Never cache its earlier success or
+  # infer successful preflight from a supervisor row or an absent marker.
+  if (-not $script:ignitionHelperProcess -or -not $script:ignitionHelperProcess.HasExited) { return $null }
+  try {
+    $script:ignitionHelperProcess.WaitForExit()
+    $script:ignitionHelperProcess.Refresh()
+    $exitCode = $script:ignitionHelperProcess.ExitCode
+    if ($null -eq $exitCode -or [int]$exitCode -ne 0) { return $null }
+    $observed = Get-LauncherChildBlocker -IncludeStartupAdmission
+    if ($observed -and $observed.packetType -ceq 'ignition-startup-admission') { return $observed }
+  }
+  catch {}
+  return $null
+}
+
 function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$ErrorRecord, [System.Collections.IDictionary]$Outcome = $null) {
   $childBlocker = Get-LauncherChildBlocker
   if (-not $Outcome) {
@@ -1074,14 +1262,14 @@ function Wait-ForBattleBridgeSupervisorReady([int]$TimeoutSeconds = 300) {
   Write-LiveLog "waiting for Battle Bridge supervisor current record at $battleBridgeSupervisorCurrentPath (expectedHead=$expectedHead)"
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
+    $serviceReady = $false
     $record = Get-BattleBridgeSupervisorCurrentRecord
     if ($record) {
       Write-IgnitionStatus -Phase 'battle-bridge-supervisor' -Message 'Waiting for Battle Bridge ignition supervisor final contract.' -Extra @{ currentStage = 'served-proof'; battleBridgeSupervisorCurrentPath = $battleBridgeSupervisorCurrentPath }
       if (Test-BattleBridgeSupervisorFinalContract -SupervisorRecord $record -ExpectedHead $expectedHead) {
-        Write-LiveLog 'Battle Bridge supervisor final contract is green and exact-head.'
-        return $record
+        $serviceReady = $true
       }
-      if ($record.blockerId) {
+      elseif ($record.blockerId) {
         if ($record.blockerId -eq 'served-runtime-stale') {
           Write-LiveLog 'Battle Bridge supervisor detected stale served runtime; guarded UI repair/retry remains delegated to npm run stephanos:ignite.'
         }
@@ -1114,6 +1302,14 @@ function Wait-ForBattleBridgeSupervisorReady([int]$TimeoutSeconds = 300) {
       $childBlocker = Get-LauncherChildBlocker
       $detail = if ($childBlocker -and $childBlocker.message) { [string]$childBlocker.message } else { "Ignition helper exited with code $([int]$helperExitCode)." }
       throw "Battle Bridge ignition helper failed before a green supervisor contract: $detail"
+    }
+    if ($serviceReady) {
+      $startupObservation = Get-CurrentIgnitionStartupObservation
+      if ($startupObservation -and $startupObservation.sourceHead -ceq $expectedHead) {
+        Write-LiveLog "Battle Bridge supervisor final contract is green and exact-head; startupScope=$($startupObservation.startupScope); globalRefreshState=$($startupObservation.startupAdmission.globalRefreshState); nativeCommissioningState=$($startupObservation.startupAdmission.nativeCommissioningState)."
+        return $record
+      }
+      Write-LiveLog 'Current helper three-app startup admission is unproven; waiting without treating global native debt as paid.'
     }
     Start-Sleep -Seconds 1
   }
@@ -1381,7 +1577,9 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
     $snapshot.openClawStartupDetail = $Outcome.openClawStartupDetail
   }
   Write-IgnitionJson -Path $ignitionSupportSnapshotPath -Value $snapshot -Depth 10
-  Write-IgnitionTranscript -Event @{ event = 'support-snapshot'; verdict = $snapshot.verdict; phase = $snapshot.phase; blocker = $snapshot.blocker; supportSnapshotPath = $ignitionSupportSnapshotPath }
+  Write-IgnitionTranscript -Event @{ event = 'support-snapshot'; verdict = $snapshot.verdict; phase = $snapshot.phase; blocker = $snapshot.blocker; supportSnapshotPath = $ignitionSupportSnapshotPath;
+    startupScope = $Outcome.startupScope; startupAdmission = $Outcome.startupAdmission; startupSourceCohort = $Outcome.startupSourceCohort;
+    globalRefreshState = $Outcome.globalRefreshState; nativeCommissioningState = $Outcome.nativeCommissioningState }
 }
 
 function Invoke-SovereignCommanderRetainedCustodyPreparation {
