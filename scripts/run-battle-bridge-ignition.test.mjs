@@ -10,6 +10,7 @@ import {
   ensureBackend8787ConvergedBeforeSupervisor,
   ensureLiveUiConvergedBeforeSupervisor,
   main,
+  parseBattleBridgeIgnitionArgs,
   probeCanonicalBackendHealth,
   runSupervisorHousekeepPreservingLiveDist,
   runSupervisorHousekeepPreservingLiveRuntime,
@@ -55,6 +56,48 @@ function canonicalSourceTruth(head) {
     originHead: head,
   };
 }
+
+test('direct ignition parses one exact optional parent head and rejects malformed or additional arguments before effects',()=>{
+  const head='a'.repeat(40);
+  assert.equal(parseBattleBridgeIgnitionArgs(['--expected-main',head]).expectedMain,head);
+  assert.equal(parseBattleBridgeIgnitionArgs([]).expectedMain,'');
+  assert.equal(parseBattleBridgeIgnitionArgs(['--approve-local-merge']).expectedMain,'');
+  for(const args of [['--expected-main'],['--expected-main','bad'],['--expected-main',head,'--expected-main',head],
+    ['--expected-main',head,'--extra'],['--shared-workspace'],['--unexpected'],['--approve-local-merge','--approve-local-merge']])
+    assert.throws(()=>parseBattleBridgeIgnitionArgs(args),/IGNITION_/);
+});
+
+test('parent head mismatch and invalid CLI input execute zero service effects while current and unpinned canonical truth remain compatible',async()=>{
+  const head='a'.repeat(40),workspace=await mkdtemp(path.join(tmpdir(),'ignition-parent-head-fixture-'));
+  for(const expected of ['b'.repeat(40),head,'']){
+    const effects=[];
+    const result=await main({argv:['--shared-workspace',workspace,...(expected?['--expected-main',expected]:[])],platform:'win32',
+      sourceTruthFn:()=>canonicalSourceTruth(head),currentHeadFn:()=>head,
+      ollamaPreflightFn:async()=>{effects.push('ollama');return {state:'ready'};},
+      backendPreflightFn:async()=>{effects.push('backend');return {ok:true};},
+      uiPreflightFn:async()=>{effects.push('ui');},supervisorFn:async options=>{effects.push('supervisor');
+        assert.equal(options.sourceTruthFn().head,head);return {ok:true};}});
+    assert.equal(result,expected&&expected!==head?2:0);
+    assert.equal(effects.length,expected&&expected!==head?0:4);
+  }
+  const effects=[];
+  await assert.rejects(main({argv:['--expected-main',head,'--extra'],sourceTruthFn:()=>{effects.push('source');return canonicalSourceTruth(head);}}),/IGNITION_ARGUMENT_NOT_ALLOWED/);
+  assert.equal(effects.length,0);
+});
+
+test('existing interactive recovery flags remain accepted without granting merge or service-restart authority',async()=>{
+  const head='a'.repeat(40),workspace=await mkdtemp(path.join(tmpdir(),'ignition-compatibility-fixture-'));
+  for(const flag of ['--approve-local-merge','--approve-openclaw-service-restart']){
+    const parsed=parseBattleBridgeIgnitionArgs([flag]);
+    assert.equal(parsed.expectedMain,'');assert.equal(Object.hasOwn(parsed,'approval'),false);
+    let calls=0;
+    const result=await main({argv:['--shared-workspace',workspace,flag],platform:'win32',sourceTruthFn:()=>canonicalSourceTruth(head),
+      currentHeadFn:()=>head,ollamaPreflightFn:async()=>({state:'ready'}),backendPreflightFn:async()=>({ok:true}),
+      uiPreflightFn:async()=>{},supervisorFn:async options=>{calls++;assert.equal(Object.hasOwn(options,'approveLocalMerge'),false);
+        assert.equal(Object.hasOwn(options,'approveOpenClawServiceRestart'),false);return {ok:true};}});
+    assert.equal(result,0);assert.equal(calls,1);
+  }
+});
 
 test('supervisor housekeeping preserves exact-head dist and all runtime-owned data', () => {
   const delegated = [];

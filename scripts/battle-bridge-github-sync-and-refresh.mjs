@@ -298,7 +298,7 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
   });
 }
 
-export async function readPendingPostSyncRefresh(paths) {
+export async function readCanonicalPostSyncRefreshEvidenceV1(paths) {
   const records = {};
   for (const [key, filename] of [['syncRecord', 'battle-bridge-github-sync-current.json'], ['refreshRecord', 'post-sync-runtime-refresh-current.json']]) {
     try {
@@ -309,6 +309,14 @@ export async function readPendingPostSyncRefresh(paths) {
   const inertRecords = projectIgnitionInertEvidenceV1(records);
   if (!inertRecords) return Object.freeze({ ok: false, blocker: 'PENDING_POST_SYNC_EVIDENCE_INVALID' });
   const evidence = collectPostSyncRefreshDebt(inertRecords);
+  return evidence.ok ? Object.freeze({ ...evidence,
+    schemaVersion: 'stephanos.canonical-post-sync-refresh-evidence.v1', canonicalRecords: inertRecords }) : evidence;
+}
+
+export async function readPendingPostSyncRefresh(paths) {
+  const observed = await readCanonicalPostSyncRefreshEvidenceV1(paths);
+  if (observed.ok !== true) return observed;
+  const { canonicalRecords: inertRecords, schemaVersion: _readSchema, ...evidence } = observed;
   return evidence.ok && !evidence.spans.length && !evidence.completion ? null : Object.freeze({ ...evidence,
     ...(evidence.ok && evidence.completion ? { completionRecord: inertRecords.refreshRecord, syncStatusRecord: inertRecords.syncRecord } : {}),
   });
