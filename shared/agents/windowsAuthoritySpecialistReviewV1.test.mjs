@@ -458,6 +458,16 @@ test('composite review refuses contradictory typed counts and verdict before del
         { findings: analysis.findings.map((entry, i) => i === index
           ? { ...entry, [field]: [entry[field]] } : entry) },
       ])),
+      ...[0, 1].flatMap((index) => [
+        ['lowercase severity finding ' + index, {
+          findings: analysis.findings.map((entry, i) => i === index
+            ? { ...entry, severity: 'p0' } : entry),
+        }],
+        ['whitespace-padded source path finding ' + index, {
+          findings: analysis.findings.map((entry, i) => i === index
+            ? { ...entry, path: ' ' + entry.path + ' ' } : entry),
+        }],
+      ]),
       ['zero P0', { counts: { P0: 0, P1: 0, P2: 0 } }],
       ['extra P0', { counts: { P0: 3, P1: 0, P2: 0 } }],
       ['coerced P0', { counts: { P0: '2', P1: 0, P2: 0 } }],

@@ -181,9 +181,12 @@ function exactTwoP0CompositeEnvelope(analysis) {
 // Do not let one-element JSON arrays masquerade as scalar P0 identities.
 // This is reviewer-only source classification; it grants no game/runtime action.
 function exactCompositeFindingScalars(findings) {
-  return findings.every((item) => typeof item?.severity === 'string'
-    && typeof item?.code === 'string'
-    && typeof item?.path === 'string');
+  // The candidate matcher tolerates case and whitespace, but child routing
+  // requires literal P0 and exact source paths. Refuse normalized aliases.
+  return findings.every((item) => item?.severity === 'P0'
+    && item?.code === 'unsupported-high-risk-surface'
+    && typeof item?.path === 'string'
+    && item.path === item.path.trim());
 }
 
 function rejectedCompositeEnvelope(paths) {
