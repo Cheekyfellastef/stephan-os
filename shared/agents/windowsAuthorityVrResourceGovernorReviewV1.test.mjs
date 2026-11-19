@@ -321,6 +321,30 @@ test('one exact P0 escalation rejects inconsistent typed counts and false-clean 
   }
 });
 
+test('rejects array-coerced source and escalation identities before reviewer proof', () => {
+  const baseline = input();
+  const finding = baseline.analysis.findings[0];
+  const cases = [
+    ['repository array', { repository: [REPOSITORY] }],
+    ['source head array', { sourceHead: [HEAD] }],
+    ['severity array', { analysis: { ...baseline.analysis, findings: [{ ...finding, severity: ['P0'] }] } }],
+    ['code array', { analysis: { ...baseline.analysis, findings: [{ ...finding, code: ['unsupported-high-risk-surface'] }] } }],
+    ['path array', { analysis: { ...baseline.analysis, findings: [{ ...finding, path: [PATH] }] } }],
+    ['object severity', { analysis: { ...baseline.analysis, findings: [{ ...finding, severity: { toString: 'P0' } }] } }],
+    ['absent repository', { repository: undefined }],
+    ['absent source head', { sourceHead: undefined }],
+  ];
+  assert.equal(analyzeWindowsAuthorityVrResourceGovernorReviewV1(baseline).clean, true);
+  for (const [reason, overrides] of cases) {
+    const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor, overrides));
+    assert.equal(result.eligible, false, reason);
+    assert.equal(result.clean, false, reason);
+    assert.deepEqual(result.proofRefs, [], reason);
+    assert.equal(result.mergeAuthority, false, reason);
+    assert.equal(result.providerQualificationAuthority, false, reason);
+  }
+});
+
 test('specialist ignores unrelated high-risk surfaces', () => {
   const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor, {
     analysis: {

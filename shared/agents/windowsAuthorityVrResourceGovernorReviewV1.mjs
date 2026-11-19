@@ -58,9 +58,10 @@ function exactEscalation(analysis = {}) {
     && counts.P1 === 0
     && counts.P2 === 0
     && analysis?.verdict === 'findings'
-    && text(findings[0]?.severity).toUpperCase() === 'P0'
-    && text(findings[0]?.code) === 'unsupported-high-risk-surface'
-    && text(findings[0]?.path) === PATH;
+    && typeof findings[0]?.severity === 'string'
+    && findings[0].severity.toUpperCase() === 'P0'
+    && findings[0]?.code === 'unsupported-high-risk-surface'
+    && findings[0]?.path === PATH;
 }
 
 function exactSource(source, repository, head) {
@@ -357,8 +358,9 @@ function reviewGovernor(source, findings) {
 }
 
 export function analyzeWindowsAuthorityVrResourceGovernorReviewV1(input = {}) {
-  const repository = text(input.repository);
-  const sourceHead = text(input.sourceHead).toLowerCase();
+  // Fail closed rather than coercing collection identities into trusted source claims.
+  const repository = typeof input.repository === 'string' ? input.repository : '';
+  const sourceHead = typeof input.sourceHead === 'string' ? input.sourceHead.toLowerCase() : '';
   if (repository !== REPOSITORY || !SHA.test(sourceHead) || !exactEscalation(input.analysis)) {
     return Object.freeze({
       schemaVersion: SCHEMA,
