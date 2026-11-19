@@ -57,7 +57,9 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     let latestTime = -Infinity;
     let ambiguous = false;
     for (const record of array(statusRecords)) {
-      if (record?.statusId !== id) continue;
+      if (!record || typeof record !== 'object' || Array.isArray(record)
+        || !Object.prototype.hasOwnProperty.call(record, 'statusId')
+        || record.statusId !== id) continue;
       const observed = time(record?.timestampUtc);
       if (!Number.isFinite(observed)) continue;
       if (observed > latestTime) {
@@ -494,6 +496,15 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       evidenceSource: 'AMBIGUOUS_INDEPENDENT_SERVICE_IDENTITY',
     };
     const independent = serviceMatches[0] || null;
+    // In-memory prototype decoration cannot establish producer-owned status.
+    // Reject incomplete independent service provenance without falling back to Core.
+    const independentFields = ['serviceId', 'sourceHead', 'freshness',
+      'observedAtUtc', 'trafficLight'];
+    if (independent && !independentFields.every(field => ownProofField(independent, field))) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'INCOMPLETE_INDEPENDENT_SERVICE_PROVENANCE',
+    };
     const independentLive = independent?.freshness === 'CURRENT'
       && fresh(independent?.observedAtUtc, nowMs, maxAgeMs);
     const independentLight = String(independent?.trafficLight || '').toUpperCase();

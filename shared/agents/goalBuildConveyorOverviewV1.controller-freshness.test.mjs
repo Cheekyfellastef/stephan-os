@@ -682,3 +682,65 @@ test('Goal #2961: inherited signed diagnostic wrapper provenance cannot greenlig
   assert.equal(pickup(invalidGate).state, 'UNKNOWN',
     'an inherited gate proof is still excluded');
 });
+
+test('Goal #2961: inherited canonical status identity cannot greenlight signed pickup', () => {
+  const head = 'a'.repeat(40);
+  const ledger = {
+    schemaVersion: 'stephanos.goal-build-gate-observatory.v1',
+    diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
+    sourceHead: head, observedAtUtc: at(-1000),
+    observationStatus: 'EVIDENCE_AVAILABLE',
+    gates: [4, 5, 7, 6, 18, 19].map(id => signedGate(id)),
+  };
+  const stage = records => overview({ goalBuildGateObservatory: ledger }, {
+    nowMs: NOW, statusRecords: records,
+  }).stages.find(value => value.id === 'pickup');
+  const valid = sourceWitness(head);
+  assert.equal(stage([valid]).state, 'PROVEN', 'owned, current Core identity admits diagnostic');
+  const inherited = Object.assign(Object.create({ statusId: valid.statusId }), {
+    timestampUtc: valid.timestampUtc, sourceHead: valid.sourceHead,
+  });
+  for (const [label, record] of [
+    ['inherited statusId', inherited],
+    ['missing statusId', { timestampUtc: valid.timestampUtc, sourceHead: head }],
+    ['foreign head', sourceWitness('b'.repeat(40))],
+    ['stale', sourceWitness(head, -700000)],
+    ['future', sourceWitness(head, 1000)],
+  ]) {
+    const result = stage([record]);
+    assert.equal(result.state, 'UNKNOWN', label);
+    assert.equal(result.trafficLight, 'GREY', label);
+    assert.equal(result.expiresAtUtc, '', label);
+  }
+});
+
+test('Goal #2961: independent service report needs owned identity and health fields', () => {
+  const head = 'a'.repeat(40);
+  const core = { ...sourceWitness(head), missionWorkerHealthy: false, backendHealthy: false };
+  for (const [serviceId, healthId] of [
+    ['mission-worker', 'missionWorkerHealthy'],
+    ['backend', 'backendHealthy'],
+  ]) {
+    const valid = {
+      serviceId, sourceHead: head, freshness: 'CURRENT',
+      observedAtUtc: at(-1000), trafficLight: 'GREEN',
+    };
+    const health = record => overview({
+      captainsBridge: { runtimeHealth: { services: [record] } },
+    }, { nowMs: NOW, statusRecords: [core] }).health.find(item => item.id === healthId);
+    assert.equal(health(valid).state, 'HEALTHY', serviceId + ' owned GREEN');
+    assert.equal(health({ ...valid, trafficLight: 'RED' }).state, 'UNHEALTHY',
+      serviceId + ' owned RED remains visible');
+    assert.equal(health({ ...valid, trafficLight: 'AMBER' }).state, 'DEGRADED',
+      serviceId + ' owned AMBER remains visible');
+    for (const field of ['serviceId', 'sourceHead', 'freshness', 'observedAtUtc', 'trafficLight']) {
+      const inherited = Object.assign(Object.create({ [field]: valid[field] }),
+        Object.fromEntries(Object.entries(valid).filter(([key]) => key !== field)));
+      const result = health(inherited);
+      assert.equal(result.state, 'UNKNOWN', serviceId + ' inherited ' + field);
+      assert.equal(result.evidenceSource, 'INCOMPLETE_INDEPENDENT_SERVICE_PROVENANCE');
+      assert.equal(result.observedAtUtc, '');
+      assert.equal(result.expiresAtUtc, '');
+    }
+  }
+});
