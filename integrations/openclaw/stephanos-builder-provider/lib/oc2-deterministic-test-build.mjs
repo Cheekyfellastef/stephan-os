@@ -360,6 +360,16 @@ export async function executeClaimedOpenClawOc2DeterministicTestBuild(action, cl
     return blocker('OPENCLAW_OC2_SHARED_WORKSPACE_UNAVAILABLE');
   }
   if (!layout?.ok) return blocker('OPENCLAW_OC2_SHARED_WORKSPACE_UNAVAILABLE');
+  // An existing STARTED or COMPLETED receipt is retained execution custody,
+  // not permission to replay the same original grant or overwrite its proof.
+  // Absence must be a real ENOENT; unreadable state remains an explicit hold.
+  const priorReceiptPath = path.resolve(workspaceRoot, 'receipts', `${receiptId}.json`);
+  try {
+    await (options.readExistingReceiptFn || readFile)(priorReceiptPath, 'utf8');
+    return blocker('OPENCLAW_OC2_EXISTING_RECEIPT_UNRECONCILED');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') return blocker('OPENCLAW_OC2_RECEIPT_PRESENCE_UNPROVEN');
+  }
   const writeJson = options.writeAtomicJsonFn || writeAtomicJson;
   const workerId = `openclaw-${sha256(providerInstance).slice(0, 24)}`;
   const receiptBase = {
