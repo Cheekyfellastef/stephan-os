@@ -413,7 +413,89 @@ def fixed_roots():
             user / "Documents" / "Stephanos-openclaw-workspace")
 
 
-def gaming_admitted(workspace):
+def continuing_cpu_probe_admitted(state, now, observe_owner):
+    """Consume only the governor's bounded grant for an already-running CPU Job.
+
+    A persisted PID/boolean is not live ownership. The production caller supplies
+    the existing exact-birth Win32 observer; initial admission never calls this.
+    Model permissions and unknown/abandoned native custody remain restrictive.
+    """
+    import datetime
+    if not callable(observe_owner):
+        return False
+    grant = state.get("cpuProbeContinuity")
+    keys = {"schemaVersion", "cycleId", "phase", "allowed", "observedAtUtc", "expiresAtUtc",
+            "priorObservationAtUtc", "ownerProcessId", "ownerCreationFileTime", "machineHash", "bootIdentifier"}
+    if (not isinstance(grant, dict) or set(grant) != keys
+            or grant["schemaVersion"] != "stephanos.governor-cpu-probe-continuity.v1"
+            or grant["phase"] != "IDLE_READ_ONLY_RECONCILE" or grant["allowed"] is not True
+            or not isinstance(grant["cycleId"], str) or not re.fullmatch(r"[a-f0-9]{32}", grant["cycleId"])
+            or type(grant["ownerProcessId"]) is not int or not 0 < grant["ownerProcessId"] <= 0xffffffff
+            or not isinstance(grant["ownerCreationFileTime"], str)
+            or not re.fullmatch(r"[1-9][0-9]{0,19}", grant["ownerCreationFileTime"])
+            or int(grant["ownerCreationFileTime"]) > 0xffffffffffffffff
+            or not isinstance(grant["machineHash"], str) or not SHA256.fullmatch(grant["machineHash"])
+            or not isinstance(grant["bootIdentifier"], str)
+            or not re.fullmatch(r"[a-f0-9]{32}", grant["bootIdentifier"])
+            or grant["bootIdentifier"] == "0" * 32):
+        return False
+    try:
+        dates = []
+        for key in ("observedAtUtc", "expiresAtUtc", "priorObservationAtUtc"):
+            value = grant[key]
+            if not isinstance(value, str) or not re.search(r"(?:Z|[+-][0-9]{2}:[0-9]{2})\Z", value):
+                return False
+            dates.append(datetime.datetime.fromisoformat(value.replace("Z", "+00:00")))
+        observed, expires, prior = dates
+        if (not observed <= now < expires or not 0 < (expires - observed).total_seconds() <= 5
+                or not 0 <= (observed - prior).total_seconds() <= 10
+                or not 0 <= (now - prior).total_seconds() <= 15
+                or grant["priorObservationAtUtc"] != state["updatedAtUtc"]):
+            return False
+        if (type(state.get("nativeProbeCustodyHeld")) is not bool
+                or state.get("localModelAllowed") is not False or state.get("heavyModelAllowed") is not False
+                or state.get("dependencyObservationKnown") is not False or state.get("evictionHealthy") is not False
+                or state.get("ollamaLoadMode") != "unknown"):
+            return False
+        attempt = state.get("nativeProbeAttempt")
+        attempt_keys = {"schemaVersion", "attemptId", "operation", "commandSha256", "phase", "ownerProcessId",
+                        "ownerCreationFileTime", "machineHash", "bootIdentifier", "preparedAtUtc"}
+        if (not isinstance(attempt, dict) or set(attempt) != attempt_keys
+                or attempt.get("schemaVersion") != "stephanos.governor-probe-attempt.v1"
+                or not isinstance(attempt.get("attemptId"), str)
+                or not re.fullmatch(r"[a-f0-9]{32}", attempt["attemptId"])
+                or attempt.get("operation") not in ("GpuSnapshot", "OllamaInventory")
+                or type(attempt.get("ownerProcessId")) is not int or attempt["ownerProcessId"] != grant["ownerProcessId"]
+                or not isinstance(attempt.get("commandSha256"), str) or not SHA256.fullmatch(attempt["commandSha256"])
+                or not isinstance(attempt.get("preparedAtUtc"), str)
+                or not re.search(r"(?:Z|[+-][0-9]{2}:[0-9]{2})\Z", attempt["preparedAtUtc"])):
+            return False
+        prepared = datetime.datetime.fromisoformat(attempt["preparedAtUtc"].replace("Z", "+00:00"))
+        if not observed <= prepared <= now:
+            return False
+        if attempt.get("phase") == "PREPARING":
+            if (state["nativeProbeCustodyHeld"] is not True or type(attempt.get("ownerCreationFileTime")) is not int
+                    or attempt["ownerCreationFileTime"] != 0 or attempt.get("machineHash") != "UNOBSERVED"
+                    or attempt.get("bootIdentifier") != "UNOBSERVED"):
+                return False
+        elif attempt.get("phase") == "BOUND":
+            if (type(attempt.get("ownerCreationFileTime")) is not int
+                    or str(attempt["ownerCreationFileTime"]) != grant["ownerCreationFileTime"]
+                    or attempt.get("machineHash") != grant["machineHash"]
+                    or attempt.get("bootIdentifier") != grant["bootIdentifier"]):
+                return False
+        else:
+            return False
+        owner = observe_owner(grant["ownerProcessId"], grant["ownerCreationFileTime"])
+        return (observed <= datetime.datetime.now(datetime.timezone.utc) < expires
+                and isinstance(owner, dict) and owner.get("ok") is True and owner.get("alive") is True
+                and type(owner.get("pid")) is int and owner["pid"] == grant["ownerProcessId"]
+                and owner.get("created_filetime") == grant["ownerCreationFileTime"])
+    except (ValueError, KeyError, TypeError, OSError):
+        return False
+
+
+def _gaming_admitted_once(workspace, *, probe_owner_observer=None):
     directory = workspace / "vr"
     require_plain(directory, directory=True)
     if entry_present(directory / "gaming-resource-prepare.json"):
@@ -434,9 +516,16 @@ def gaming_admitted(workspace):
             or type(state.get("governorVersion")) is not int or state["governorVersion"] != 3 or not 0 <= age <= 30
             or any(state.get(key) is not False for key in flags)
             or state.get("phase") != "NORMAL" or state.get("overrideMode") != "AUTO"
-            or state.get("ollamaLoadMode") != "balanced" or state.get("cooldownUntilUtc") != ""
-            or state.get("localModelAllowed") is not True or state.get("heavyModelAllowed") is not True):
+            or state.get("cooldownUntilUtc") != ""):
         raise BuildBlocked("GAMING_PERMISSION_HELD")
+    if (state.get("ollamaLoadMode") != "balanced" or state.get("localModelAllowed") is not True
+            or state.get("heavyModelAllowed") is not True or state.get("nativeProbeCustodyHeld") is not False
+            or state.get("dependencyObservationKnown") is not True or state.get("evictionHealthy") is not True):
+        if not continuing_cpu_probe_admitted(state, now, probe_owner_observer):
+            raise BuildBlocked("GAMING_PERMISSION_HELD")
+        # The native observation must bind the same complete canonical record.
+        if bounded_json_file(state_path) != state:
+            raise BuildBlocked("GAMING_STATE_CHANGED")
     override = directory / "gaming-resource-override.json"
     if entry_present(override):
         data = bounded_json_file(override)
@@ -445,6 +534,47 @@ def gaming_admitted(workspace):
     if entry_present(directory / "gaming-resource-prepare.json"):
         raise BuildBlocked("GAMING_PREPARATION_ACTIVE")
     return True
+
+
+def gaming_admitted(workspace, *, probe_owner_observer=None):
+    # Atomic publisher replacement and a probe's PREPARING -> BOUND transition
+    # can race the read. Discard that observation and validate a complete fresh
+    # one; never retry an observed policy denial or reuse a prior grant.
+    started = time.monotonic()
+    for _ in range(3):
+        if time.monotonic() - started >= 0.1:
+            raise BuildBlocked("GAMING_STATE_CHANGED")
+        try:
+            admitted = _gaming_admitted_once(workspace, probe_owner_observer=probe_owner_observer)
+        except BuildBlocked as error:
+            if str(error) != "GAMING_STATE_CHANGED":
+                raise
+            continue
+        if time.monotonic() - started >= 0.1:
+            raise BuildBlocked("GAMING_STATE_CHANGED")
+        return admitted
+    raise BuildBlocked("GAMING_STATE_CHANGED")
+
+
+def wait_for_ordinary_gaming_admission(workspace):
+    # Only before native execution. A periodic probe is not initial permission:
+    # wait at most one second for the unchanged ordinary predicate to pass.
+    started = time.monotonic()
+    for attempt in range(11):
+        if time.monotonic() - started >= 1:
+            raise BuildBlocked("GAMING_PERMISSION_HELD")
+        try:
+            admitted = gaming_admitted(workspace)
+        except BuildBlocked as error:
+            if str(error) != "GAMING_PERMISSION_HELD":
+                raise
+            if attempt < 10:
+                time.sleep(0.1)
+            continue
+        if time.monotonic() - started >= 1:
+            raise BuildBlocked("GAMING_PERMISSION_HELD")
+        return admitted
+    raise BuildBlocked("GAMING_PERMISSION_HELD")
 
 
 def entry_present(path):
@@ -536,6 +666,9 @@ def fixed_environment(compiler, staging):
     temporary.mkdir()
     env.update({"PATH": r"C:\Windows\System32;C:\Windows", "PATHEXT": ".COM;.EXE;.BAT;.CMD",
                 "COMSPEC": r"C:\Windows\System32\cmd.exe", "TEMP": str(temporary), "TMP": str(temporary),
+                # VsDevCmd otherwise starts detached PowerShell telemetry. It
+                # is not build work and can outlive the fixed recipe's root.
+                "VSCMD_SKIP_SENDTELEMETRY": "1",
                 "STEPH_OBSERVER_EXPECTED_CL": str(compiler)})
     return env
 
@@ -587,7 +720,7 @@ def run_build(packet, verified):
         if launcher.get("ok") is not True or launcher.get("alive") is not True:
             raise BuildBlocked("BUILD_LAUNCHER_UNPROVEN")
         original, builds, workspace = fixed_roots()
-        gaming_admitted(workspace)
+        wait_for_ordinary_gaming_admission(workspace)
         require_plain(original, directory=True)
         require_plain(builds.parent, directory=True)
         pins = NativePins()
@@ -610,6 +743,15 @@ def run_build(packet, verified):
         verify_originals(original, records, pins)
         receipt["originalSourceVerified"] = True
         compiler, observed_tools = toolchain(pins)
+        # Optional toolchain work has a separate, source-qualified lifetime.
+        # Canonical pins protect its binary and ancestors until Job zero.
+        if compiler.parent != Path(job.COMPLETED_HELPER_IMAGE).parent:
+            raise BuildBlocked("TOOLCHAIN_HELPER_PROFILE_UNQUALIFIED")
+        try:
+            completed_helper = job.pin_completed_toolchain_helper(pins)
+        except (OSError, ValueError) as error:
+            raise BuildBlocked("TOOLCHAIN_HELPER_PROFILE_UNQUALIFIED") from error
+        observed_tools["vctip.exe"] = completed_helper.sha256
         receipt["toolchainObserved"] = True
         overlay = {path[len(PACKAGE):]: raw for path, raw in verified.items()
                    if path.startswith(PACKAGE) and path != RECIPE}
@@ -624,20 +766,25 @@ def run_build(packet, verified):
                 raise BuildBlocked("STAGED_SOURCE_PIN_CHANGED")
         receipt["isolatedBuildCreated"] = True
         environment = fixed_environment(compiler, staged)
-        gaming_admitted(workspace)
+        wait_for_ordinary_gaming_admission(workspace)
         deadline = time.monotonic() + 600
         # Continued gaming permission is checked during the owned job. Any
         # hold cancels only this build's process tree; it never kills a game.
         admission_last = [0.0, ""]
 
-        def cancelled():
+        def cancelled(*, allow_continuation=False):
             if admission_last[1]:
                 return True
             now = time.monotonic()
-            if now - admission_last[0] >= 1:
+            # Every prelaunch/pre-resume observation is fresh and ordinary.
+            # Only monitoring an actually resumed Job uses the polling cache.
+            if not allow_continuation or now - admission_last[0] >= 1:
                 admission_last[0] = now
                 try:
-                    gaming_admitted(workspace)
+                    if allow_continuation:
+                        gaming_admitted(workspace, probe_owner_observer=job.observe_parent_identity)
+                    else:
+                        wait_for_ordinary_gaming_admission(workspace)
                     launcher = job.observe_parent_identity(packet["launcherPid"], packet["launcherBirthFileTime"])
                     if launcher.get("ok") is not True or launcher.get("alive") is not True:
                         raise BuildBlocked("BUILD_LAUNCHER_ENDED")
@@ -656,7 +803,8 @@ def run_build(packet, verified):
             args=["/d", "/s", "/c", "build-paired-source-observe.cmd"],
             cwd=str(staged), env=environment, deadline_monotonic=deadline, output_limit=256 * 1024,
             parent_pid=packet["parentPid"], parent_birth_filetime=packet["parentBirthFileTime"],
-            cancel_requested=cancelled, on_suspended=active.bind)
+            cancel_requested=cancelled, running_cancel_requested=lambda: cancelled(allow_continuation=True),
+            on_suspended=active.bind, completed_helper=completed_helper)
         receipt["allJobsEmpty"] = stage_result.get("zero_active_processes_observed") is True
         receipt["executionCustodyReleased"] = stage_result.get("custody_released") is True and receipt["allJobsEmpty"]
         receipt["outputComplete"] = stage_result.get("output_complete") is True
@@ -680,6 +828,8 @@ def run_build(packet, verified):
             raise BuildBlocked("NATIVE_BUILD_DEADLINE_EXCEEDED")
         if stage_result.get("cancelled") is True:
             raise BuildBlocked("NATIVE_BUILD_CANCELLED")
+        if stage_result.get("reason") == "ROOT_EXITED_WITH_LIVE_DESCENDANTS":
+            raise BuildBlocked("NATIVE_BUILD_CHILD_EXIT_UNPROVEN")
         if (stage_result.get("operation_ok") is not True
                 or type(stage_result.get("root_exit_code")) is not int or stage_result["root_exit_code"] != 0
                 or stage_result.get("root_exited") is not True or not receipt["outputComplete"]

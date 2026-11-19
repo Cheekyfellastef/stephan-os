@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, mkdtemp, mkdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { projectVrGovernorExecutionPermissionsV1 } from '../shared/ai/ollamaLoadGovernor.mjs';
 
 const governor = await readFile(new URL('./windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
@@ -44,6 +45,64 @@ const nativeContext = windows ? run(String.raw`
   try{[pscustomobject]@{normal=($identity.ImpersonationLevel -eq [Security.Principal.TokenImpersonationLevel]::None -and -not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and [IntPtr]::Size -eq 8 -and [Environment]::Is64BitProcess)}|ConvertTo-Json -Compress}finally{$identity.Dispose()}
 `) : {normal:false};
 const normalNativeSkip = !windows ? 'Windows required' : nativeContext.normal ? false : 'GOVERNOR_NATIVE_CONTEXT_UNPROVEN: genuine normal-token fixture is not applicable';
+
+test('caretaker owner identity accepts only terminal ASCII launch separators', {skip:!windows},()=>{
+  const result=run(String.raw`
+    $powershellExecutable='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $vrGovernorScript='C:\fixture\run-vr-resource-governor.ps1'
+    $tail='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$vrGovernorScript+'" -Action Watch'
+    $quoted='"'+$powershellExecutable+'" '+$tail
+    $bare=$powershellExecutable+' '+$tail
+    $results=@()
+    foreach($prefix in @($quoted,$bare)){
+      foreach($suffix in @('', ' ', '   ', ([string][char]9), (' '+[char]9+'  '))){
+        $process=[pscustomobject]@{ProcessId=42;ExecutablePath=$powershellExecutable;CommandLine=$prefix+$suffix;CreationDate=[DateTime]::UtcNow.AddSeconds(-1)}
+        $results+=,[pscustomobject]@{kind='valid';accepted=(Test-VrResourceGovernorProcessIdentity $process)}
+      }
+    }
+    $invalid=@(($quoted+' extra'),($quoted+' ""'),($quoted+'" "'),($quoted+[char]13),($quoted+[char]10),($quoted+[char]0),($quoted+[char]0xA0),
+      (' '+$quoted),$quoted.Replace('-Action Watch','-Action Reconcile'),$quoted.Replace($vrGovernorScript,'C:\other\run-vr-resource-governor.ps1'),
+      $quoted.Replace('-File','-Command'),$quoted.Replace('Watch','Watch.exe'))
+    foreach($command in $invalid){
+      $process=[pscustomobject]@{ProcessId=42;ExecutablePath=$powershellExecutable;CommandLine=$command;CreationDate=[DateTime]::UtcNow.AddSeconds(-1)}
+      $results+=,[pscustomobject]@{kind='invalid';accepted=(Test-VrResourceGovernorProcessIdentity $process)}
+    }
+    foreach($field in @('pid','executable','birth')){
+      $process=[pscustomobject]@{ProcessId=42;ExecutablePath=$powershellExecutable;CommandLine=$quoted+' ';CreationDate=[DateTime]::UtcNow.AddSeconds(-1)}
+      if($field -ceq 'pid'){$process.ProcessId=0}
+      if($field -ceq 'executable'){$process.ExecutablePath='C:\other\powershell.exe'}
+      if($field -ceq 'birth'){$process.CreationDate=[DateTime]::UtcNow.AddMinutes(1)}
+      $results+=,[pscustomobject]@{kind='invalid';accepted=(Test-VrResourceGovernorProcessIdentity $process)}
+    }
+    ConvertTo-Json -InputObject $results -Compress`,[caretaker]);
+  assert.equal(result.length,25);
+  for(const row of result)assert.equal(row.accepted,row.kind==='valid',JSON.stringify(row));
+});
+
+test('caretaker recognizes the actual Windows Start-Process Watch command', {skip:!windows},async t=>{
+  const root=await mkdtemp(join(tmpdir(),'governor-owner-command-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const fixture=join(root,'run-vr-resource-governor.ps1');
+  await writeFile(fixture,"param([string]$Action)\nif($Action -cne 'Watch'){exit 7}\nStart-Sleep -Seconds 3\n");
+  const result=run(String.raw`
+    $powershellExecutable='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $vrGovernorScript='${fixture.replaceAll("'","''")}'
+    $child=Start-Process -FilePath $powershellExecutable -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('"'+$vrGovernorScript+'"'),'-Action','Watch') -WindowStyle Hidden -PassThru
+    try{
+      $observed=Get-CimInstance Win32_Process -Filter ('ProcessId='+$child.Id) -ErrorAction Stop
+      $accepted=Test-VrResourceGovernorProcessIdentity -Process $observed
+      $terminalSeparator=[int][char]$observed.CommandLine[$observed.CommandLine.Length-1]
+      if(-not $child.WaitForExit(8000)){throw 'FIXTURE_CHILD_TIMEOUT'}
+      [pscustomobject]@{accepted=$accepted;terminalSeparator=$terminalSeparator;childExit=$child.ExitCode;pidBound=($observed.ProcessId -eq $child.Id)}|ConvertTo-Json -Compress
+    }finally{
+      if(-not $child.HasExited){$child.Kill();$child.WaitForExit()}
+      $child.Dispose()
+    }`,[caretaker]);
+  assert.equal(result.pidBound,true);
+  assert.equal(result.childExit,0);
+  assert.ok([9,32].includes(result.terminalSeparator),'actual Start-Process serialization supplies the regression');
+  assert.equal(result.accepted,true);
+});
 
 function launch(body, sources) {
   const child = spawn(ps, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
@@ -120,6 +179,282 @@ function New-Object {
  Microsoft.PowerShell.Utility\New-Object @PSBoundParameters
 }
 `;
+
+const caretakerObservationFixture = String.raw`
+    $script:observations=0;$script:lifecycleCalls=0;$script:sleeps=0;$script:expectedIds=@()
+    $script:governorMutationOwner=$null
+    function Get-VrResourceGovernorProcesses {
+      $script:observations++;$script:vrGovernorInventoryComplete=$true
+      return [pscustomobject]@{ProcessId=(100+$script:observations)}
+    }
+    function Get-VrResourceGovernorProgress {param($Process) [pscustomobject]@{updatedAtUtc='2026-11-18T00:00:00Z'}}
+    function Test-VrResourceGovernorProcessCurrent {param($Process) return $false}
+    function Wait-VrResourceGovernorProgress {throw 'STALE_SOURCE_MUST_NOT_WAIT_FOR_PROGRESS'}
+    function Start-Sleep {param($Milliseconds)
+      if($Milliseconds -ne 500 -or $null -ne $script:governorMutationOwner){throw 'RETRY_SLEEP_BOUNDARY'}
+      $script:sleeps++
+    }
+    function New-FixtureLifecycleResult {param([string]$Blocker='')
+      [pscustomobject]@{blocker=$Blocker;restartRequested=$false;startRequested=$false;stopped=0;startedPid=0;baseline=''}
+    }
+`;
+
+test('caretaker observation refreshes every expected owner after transient pre-mutation refusal', {skip:!windows},()=>{
+  const result=run(caretakerObservationFixture+String.raw`
+    function Get-VrResourceGovernorProcesses {
+      $script:observations++
+      $script:vrGovernorInventoryComplete=$script:observations -gt 1
+      if(-not $script:vrGovernorInventoryComplete){return @()}
+      return [pscustomobject]@{ProcessId=(100+$script:observations)}
+    }
+    function Invoke-VrResourceGovernorLifecycle {param($ExpectedProcess,$ExpectedAbsent,$ProgressProven,$ExpectedProgress)
+      $script:lifecycleCalls++;$script:expectedIds+=,$(if($ExpectedProcess){$ExpectedProcess.ProcessId}else{0})
+      if($ExpectedAbsent -or $ProgressProven){throw 'UNPROVEN_ABSENCE_OR_PROGRESS'}
+      if($script:lifecycleCalls -eq 1){return New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'}
+      if($script:lifecycleCalls -eq 2){return New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BUSY'}
+      return New-FixtureLifecycleResult
+    }
+    $result=Invoke-VrResourceGovernorObservedLifecycle
+    [pscustomobject]@{blocker=$result.blocker;observations=$script:observations;calls=$script:lifecycleCalls;sleeps=$script:sleeps;expectedIds=$script:expectedIds}|ConvertTo-Json -Compress
+  `,[caretaker]);
+  assert.deepEqual(result,{blocker:'',observations:3,calls:3,sleeps:2,expectedIds:[0,102,103]});
+});
+
+test('caretaker observation state model never retries mutation, custody uncertainty or a terminal result', {skip:!windows},()=>{
+  const rows=run(caretakerObservationFixture+String.raw`
+    $rows=@()
+    foreach($mode in @('success','custody','starting','recycle-failed','start-failed','unknown','restart-requested','start-requested','stopped','started')){
+      $script:observations=0;$script:lifecycleCalls=0;$script:sleeps=0;$script:mode=$mode
+      function Invoke-VrResourceGovernorLifecycle {param($ExpectedProcess,$ExpectedAbsent,$ProgressProven,$ExpectedProgress)
+        $script:lifecycleCalls++
+        if($script:lifecycleCalls -eq 1){return New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BUSY'}
+        $r=New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'
+        switch($script:mode){
+          'success'{$r.blocker=''}
+          'custody'{$r.blocker='SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'}
+          'starting'{$r.blocker='SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STARTING'}
+          'recycle-failed'{$r.blocker='SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED'}
+          'start-failed'{$r.blocker='SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED'}
+          'unknown'{$r.blocker='UNRECOGNIZED'}
+          'restart-requested'{$r.restartRequested=$true}
+          'start-requested'{$r.startRequested=$true}
+          'stopped'{$r.stopped=1}
+          'started'{$r.startedPid=42}
+        };return $r
+      }
+      $result=Invoke-VrResourceGovernorObservedLifecycle
+      $rows+=,[pscustomobject]@{mode=$mode;calls=$script:lifecycleCalls;observations=$script:observations;sleeps=$script:sleeps}
+    };ConvertTo-Json -InputObject $rows -Compress
+  `,[caretaker]);
+  assert.equal(rows.length,10);
+  for(const row of rows)assert.deepEqual(row,{mode:row.mode,calls:2,observations:2,sleeps:1});
+});
+
+test('caretaker observation has a finite attempt bound when no owner can be proven', {skip:!windows},()=>{
+  const result=run(caretakerObservationFixture+String.raw`
+    function Invoke-VrResourceGovernorLifecycle {param($ExpectedProcess,$ExpectedAbsent,$ProgressProven,$ExpectedProgress)
+      $script:lifecycleCalls++;return New-FixtureLifecycleResult 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'
+    }
+    $result=Invoke-VrResourceGovernorObservedLifecycle
+    [pscustomobject]@{blocker=$result.blocker;calls=$script:lifecycleCalls;observations=$script:observations;sleeps=$script:sleeps}|ConvertTo-Json -Compress
+  `,[caretaker]);
+  assert.deepEqual(result,{blocker:'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN',calls:24,observations:24,sleeps:23});
+});
+
+test('caretaker observation deadline expires before lifecycle admission after a slow census', {skip:!windows},()=>{
+  const result=run(caretakerObservationFixture+String.raw`
+    function Get-VrResourceGovernorProcesses {
+      $script:observations++;[Threading.Thread]::Sleep(12020);$script:vrGovernorInventoryComplete=$true
+      return [pscustomobject]@{ProcessId=101}
+    }
+    function Invoke-VrResourceGovernorLifecycle {$script:lifecycleCalls++;throw 'EXPIRED_OBSERVATION_DISPATCHED'}
+    $result=Invoke-VrResourceGovernorObservedLifecycle
+    [pscustomobject]@{blocker=$result.blocker;calls=$script:lifecycleCalls;observations=$script:observations;sleeps=$script:sleeps}|ConvertTo-Json -Compress
+  `,[caretaker]);
+  assert.deepEqual(result,{blocker:'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN',calls:0,observations:1,sleeps:0});
+});
+
+const cpuFixture = root => fixtureStatePaths(root) + String.raw`
+    $script:governorMutationOwner=[pscustomobject]@{acquired=$true;abandoned=$false}
+    $telemetryPath=Join-Path $stateRoot 'events.jsonl';$lightweightModel='llama3.2:3b'
+    $script:governorDependencyHealthy=$true
+    function Append-TelemetryEvent {param($Payload)}
+    $signal=[pscustomobject]@{active=$false;flatGameActive=$false;airLinkActive=$false;realAirLinkActive=$false;virtualAirLinkTestActive=$false}
+    $effective=[pscustomobject]@{active=$false;phase='NORMAL';overrideMode='AUTO';lease=[pscustomobject]@{active=$false}}
+    function Publish-CpuFixture {
+      $script:governorCpuProbeCycleId=''
+      $script:governorNativeClock=[Diagnostics.Stopwatch]::StartNew()
+      $script:governorDependencyHealthy=$true
+      $null=Write-GovernorState -Phase NORMAL -OverrideMode AUTO -CooldownUntilUtc '' -ZeroLocalModelInvariant $true -HeavyModelsAfter @()
+    }
+    Publish-CpuFixture
+`;
+
+test('game census preserves the detection model across window, path and fallback failures', {skip:!windows},()=>{
+  const rows=run(String.raw`
+    $env:STEPHANOS_GAME_PROCESS_NAMES='CustomGame';$env:STEPHANOS_GAME_LIBRARY_ROOTS='C:\CustomGames'
+    function Get-ParentProcessInfo {param($ProcessId) [pscustomobject]@{processId=0;processName='';executablePath=''}}
+    function Test-WindowsGamePresenceActive {return $script:presence}
+    function Get-Process {param($ErrorAction) return $script:fixtureProcess}
+    $rows=@()
+    foreach($name in @('Starfield','CustomGame','Background','steam')){
+      foreach($pathMode in @('library','custom-library','outside','unreadable')){
+        foreach($windowMode in @('present','absent','unreadable')){
+          foreach($presence in @($false,$true)){
+            $script:presence=$presence;$script:pathReads=0;$script:windowReads=0
+            $script:fixturePathMode=$pathMode;$script:fixtureWindowMode=$windowMode
+            $script:fixtureProcess=[pscustomobject]@{Id=100;ProcessName=$name}
+            $script:fixtureProcess|Add-Member ScriptProperty Path {
+              $script:pathReads++
+              switch($script:fixturePathMode){
+                'library'{return 'C:\SteamLibrary\steamapps\common\Example\game.exe'}
+                'custom-library'{return 'C:\CustomGames\Example\game.exe'}
+                'outside'{return 'C:\Windows\background.exe'}
+                'unreadable'{throw 'FIXTURE_PATH_UNREADABLE'}
+              }
+            }
+            $script:fixtureProcess|Add-Member ScriptProperty MainWindowHandle {
+              $script:windowReads++
+              if($script:fixtureWindowMode -eq 'unreadable'){throw 'FIXTURE_WINDOW_UNREADABLE'}
+              if($script:fixtureWindowMode -eq 'present'){return 123};return 0
+            }
+            $signal=Get-FlatGameSignal
+            $rows+=,[pscustomobject]@{name=$name;pathMode=$pathMode;windowMode=$windowMode;presence=$presence;active=$signal.active;selected=$signal.processName;pathReads=$script:pathReads;windowReads=$script:windowReads}
+          }
+        }
+      }
+    }
+    ConvertTo-Json -InputObject $rows -Compress
+  `);
+  assert.equal(rows.length,96);
+  for(const row of rows){
+    const excluded=row.name==='steam';
+    const known=['Starfield','CustomGame'].includes(row.name);
+    const visible=row.windowMode==='present';
+    const library=['library','custom-library'].includes(row.pathMode);
+    const detected=!excluded&&(known||(visible&&library));
+    const context=JSON.stringify(row);
+    assert.equal(row.active,detected||row.presence,context);
+    assert.equal(row.selected,detected?row.name:row.presence?'GameBarPresenceWriter':'',context);
+    assert.equal(row.pathReads,!excluded&&(known||visible)?1:0,context);
+    assert.equal(row.windowReads,!excluded&&!known?1:0,context);
+  }
+});
+
+test('background census size cannot multiply expensive path observations or change first matching game', {skip:!windows},()=>{
+  const result=run(String.raw`
+    $env:STEPHANOS_GAME_PROCESS_NAMES='';$env:STEPHANOS_GAME_LIBRARY_ROOTS=''
+    $script:pathReads=0;$script:fixtureProcesses=@()
+    function Get-ParentProcessInfo {param($ProcessId) [pscustomobject]@{processId=0;processName='';executablePath=''}}
+    function Test-WindowsGamePresenceActive {return $false}
+    function Get-Process {param($ErrorAction) return $script:fixtureProcesses}
+    for($i=0;$i -lt 500;$i++){
+      $p=[pscustomobject]@{Id=($i+1);ProcessName=('background'+$i);MainWindowHandle=0}
+      $p|Add-Member ScriptProperty Path {$script:pathReads++;throw 'NON_CANDIDATE_PATH_MUST_NOT_BE_OBSERVED'}
+      $script:fixtureProcesses+=,$p
+    }
+    $script:fixtureProcesses+=,[pscustomobject]@{Id=600;ProcessName='FirstLibraryGame';MainWindowHandle=1;Path='C:\XboxGames\Example\game.exe'}
+    $script:fixtureProcesses+=,[pscustomobject]@{Id=601;ProcessName='Starfield';MainWindowHandle=0;Path='C:\games\Starfield.exe'}
+    $signal=Get-FlatGameSignal
+    [pscustomobject]@{selected=$signal.processName;active=$signal.active;unnecessaryPathReads=$script:pathReads}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{selected:'FirstLibraryGame',active:true,unnecessaryPathReads:0});
+});
+
+test('CPU continuation comes only from unchanged complete publication and closes every denial edge', {skip:normalNativeSkip}, async t=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'governor-cpu-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const rows=run(cpuFixture(root)+String.raw`
+    $rows=@()
+    foreach($mode in @('valid','changed-bytes','duplicate-json','foreign-owner','held','unknown','gaming','prepare','override','stale','future','expired-cycle','signal-unknown','active-signal')){
+      Publish-CpuFixture
+      $state=Read-GovernorState
+      if($mode -ceq 'held'){$state.nativeProbeCustodyHeld=$true}
+      if($mode -ceq 'unknown'){$state.dependencyObservationKnown=$false}
+      if($mode -ceq 'gaming'){$state.flatGameActive=$true}
+      if($mode -ceq 'stale'){$state.updatedAtUtc=[DateTime]::UtcNow.AddSeconds(-11).ToString('o')}
+      if($mode -ceq 'future'){$state.updatedAtUtc=[DateTime]::UtcNow.AddSeconds(10).ToString('o')}
+      if($mode -in @('held','unknown','gaming','stale','future')){
+        # Adversarial producer model: permit its exact bytes past the digest
+        # boundary to exercise the independent typed policy checks as well.
+        $json=$state|ConvertTo-Json -Depth 8
+        [IO.File]::WriteAllText($statePath,$json,[Text.UTF8Encoding]::new($false))
+        $script:governorCpuPriorStateSha256=Get-GovernorBytesDigestV1 ([Text.Encoding]::UTF8.GetBytes($json))
+      }
+      if($mode -ceq 'changed-bytes'){[IO.File]::AppendAllText($statePath,' ')}
+      if($mode -ceq 'duplicate-json'){[IO.File]::WriteAllText($statePath,([IO.File]::ReadAllText($statePath).Insert(1,'"active":true,')))}
+      if($mode -ceq 'foreign-owner'){$script:governorCpuPriorStateSha256=''}
+      if($mode -ceq 'prepare'){[IO.File]::WriteAllText($preparePath,'{}')}
+      if($mode -ceq 'override'){$null=Write-OverrideMode -Mode FORCE_OFF}
+      if($mode -ceq 'expired-cycle'){$script:governorNativeClock=[pscustomobject]@{Elapsed=[pscustomobject]@{TotalMilliseconds=5001}}}
+      if($mode -ceq 'signal-unknown'){$signal.active='false'}
+      if($mode -ceq 'active-signal'){$signal.active=$true}
+      Start-GovernorCpuProbeContinuity -Signal $signal -Effective $effective
+      $after=Read-GovernorState
+      $grant=$null;if($after.PSObject.Properties['cpuProbeContinuity']){$grant=$after.cpuProbeContinuity}
+      $rows+=,[pscustomobject]@{mode=$mode;granted=($null -ne $grant -and $grant.allowed -eq $true);grant=$grant}
+      Revoke-GovernorCpuProbeContinuity
+      $signal.active=$false
+      if(Test-Path -LiteralPath $preparePath){[IO.File]::Delete($preparePath)}
+      if(Test-Path -LiteralPath $overridePath){[IO.File]::Delete($overridePath)}
+      # These adversarial fixtures launched no native child.
+      if($mode -ceq 'held'){[IO.File]::Delete($statePath)}
+    }
+    ConvertTo-Json -InputObject $rows -Depth 8 -Compress
+  `);
+  for(const row of rows)assert.equal(row.granted,row.mode==='valid',row.mode);
+  const grant=rows[0].grant;
+  assert.equal(typeof grant.ownerCreationFileTime,'string');
+  assert.ok(Date.parse(grant.expiresAtUtc)-Date.parse(grant.observedAtUtc)<=5000);
+});
+
+test('CPU grant revocation never skips retained-child cleanup even if its state write fails', {skip:!windows},()=>{
+  const result=run(String.raw`$outputText='';$errorText=''
+    ${fakeChild}
+    $fake.HasExited=$false
+    function Revoke-GovernorCpuProbeContinuity {throw 'FIXTURE_REVOCATION_IO_FAILURE'}
+    $reason='';try{$null=Invoke-GovernorNativeProbe -Operation GpuSnapshot}catch{$reason=$_.Exception.Message}
+    [pscustomobject]@{reason=$reason;killed=$fake.Killed;disposed=$fake.Disposed;exitWitness=$script:governorNativeProbeExitProven;known=$script:governorDependencyHealthy}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{reason:'GOVERNOR_CPU_PROBE_REVOCATION_UNPROVEN',killed:true,disposed:true,exitWitness:true,known:false});
+});
+
+test('reconciliation exceptions revoke the owned CPU grant before releasing mutation ownership', {skip:normalNativeSkip},async t=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'governor-cpu-revoke-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const result=run(cpuFixture(root)+String.raw`
+    function Get-GpuSnapshot {throw 'FIXTURE_DEPENDENCY_FAILURE'}
+    $reason='';try{$null=Invoke-Reconcile -Signal $signal -Effective $effective}catch{$reason=$_.Exception.Message}
+    $state=Read-GovernorState
+    [pscustomobject]@{reason=$reason;allowed=$state.cpuProbeContinuity.allowed;cycle=$script:governorCpuProbeCycleId}|ConvertTo-Json -Compress
+  `);
+  assert.deepEqual(result,{reason:'FIXTURE_DEPENDENCY_FAILURE',allowed:false,cycle:''});
+});
+
+test('actual Windows producer and native consumer bind one live owner and deny it after exit', {skip:normalNativeSkip},async t=>{
+  const root=await realpath(await mkdtemp(join(tmpdir(),'governor-cpu-native-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const ready=join(root,'ready');const release=join(root,'release');
+  const producer=launch(cpuFixture(root)+String.raw`
+    Start-GovernorCpuProbeContinuity -Signal $signal -Effective $effective
+    # No native child is launched in this isolated state/identity fixture.
+    Set-GovernorNativeCustodyHold -Held $true -Operation GpuSnapshot -CommandSha256 ('a'*64)
+    [IO.File]::WriteAllText('${ready.replaceAll("'","''")}','ready')
+    ${fixtureBarrierWait(release)}
+    [pscustomobject]@{released=$true}|ConvertTo-Json -Compress
+  `,[governor]);
+  const nativeDirectory=fileURLToPath(new URL('./windows/starfield-native-build/',import.meta.url));
+  const observe=()=>spawnSync('python',[join(nativeDirectory,'governor_owner_fixture.py'),root],
+    {encoding:'utf8',shell:false,windowsHide:true,timeout:10000});
+  try{
+    await waitForFixture(ready);
+    const alive=observe();assert.equal(alive.status,0,alive.stderr);
+    assert.deepEqual(JSON.parse(alive.stdout),{admitted:true,ownerLive:true});
+  }finally{await writeFile(release,'release');}
+  const terminal=await producer.done;assert.equal(terminal.status,0,terminal.stderr);
+  const dead=observe();assert.equal(dead.status,0,dead.stderr);
+  assert.deepEqual(JSON.parse(dead.stdout),{admitted:false,ownerLive:false});
+});
 
 test('native metadata admits only an actual non-administrator primary token and otherwise proves its typed refusal', {skip:!windows},()=>{
   const result=run(String.raw`
@@ -458,8 +793,9 @@ test('governor and caretaker use the same fixed SID-bound protected kernel owner
   assert.match(governor, /SetAccessRuleProtection\(\$true, \$false\)/);
   assert.match(governor, /GetAccessControl\(\)/);
   assert.match(governor, /AbandonedMutexException/);
-  const lifecycle = caretaker.slice(caretaker.indexOf('function Invoke-VrResourceGovernorLifecycle {'),
-    caretaker.indexOf('function Get-SovereignCommanderHealth {'));
+  const lifecycleStart = caretaker.indexOf('function Invoke-VrResourceGovernorLifecycle {');
+  const lifecycle = caretaker.slice(lifecycleStart,
+    caretaker.indexOf('\nfunction ', lifecycleStart + 1));
   assert.doesNotMatch(lifecycle, /Wait-VrResourceGovernorProgress/,
     'caretaker must release ownership before asking the new watcher to advance');
 });
