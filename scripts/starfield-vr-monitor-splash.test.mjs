@@ -198,6 +198,52 @@ test('actual bootstrap refuses changed bridge bytes without executing them', asy
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+
+test('Hybrid brings only the exact game window forward after the verified waiting state', () => {
+  const event = functionSource('Receive-MonitorEvent');
+  assert.match(event, /\$event\.mode -ceq 'waiting'[\s\S]*?FocusBoundGame\(\[int\]\$event\.process\.pid, \[string\]\$event\.process\.createdFileTime\)/);
+  assert.match(event, /\$monitorState\.FocusAttemptedRunId -cne \$event\.runId/);
+  assert.match(source, /game\.StartTime\.ToUniversalTime\(\)\.ToFileTimeUtc\(\)/);
+  assert.match(source, /String\.Equals\(birth, createdFileTime, StringComparison\.Ordinal\)/);
+  assert.match(source, /game\.MainModule\.FileName/);
+  assert.match(source, /windows\.Count != 1\) return "game-window-ambiguous"/);
+  assert.match(source, /GetForegroundWindow\(\) == target/);
+  assert.match(source, /return "windows-denied-foreground"/);
+  assert.match(event, /Select Starfield from the taskbar, load your save, then return here to confirm/);
+  assert.doesNotMatch(event.match(/\} elseif \(\$event\.mode -ceq 'waiting'\)([\s\S]*?)\} elseif \(\$event\.mode -cin/)?.[1] || '', /Send-MonitorCommand -Command 'confirm'/);
+});
+
+test('the splash exposes local meter-free cleanup reasons without touching the custody decision', () => {
+  const diagnostic = functionSource('Get-MonitorCleanupDiagnostics');
+  const event = functionSource('Receive-MonitorEvent');
+  assert.match(diagnostic, /'Local cleanup diagnostic \(read only, no AI service\):'/);
+  assert.match(diagnostic, /paired-source-v1\\session\.json/);
+  assert.match(diagnostic, /Get-MonitorDiagnosticField -Record \$journal -Name 'cleanupError'/);
+  assert.match(diagnostic, /\$file\.Length -gt 1048576/);
+  assert.match(diagnostic, /Test-MonitorCustodyPathPresent -LiteralPath \$entry\.Path/);
+  assert.doesNotMatch(diagnostic, /Remove-Item|Set-Content|Stop-Process|Start-Process|Send-MonitorCommand|\.Kill\(/);
+  assert.match(event, /Get-MonitorCleanupDiagnostics -Event \$event/);
+  assert.match(event, /\$detailsBox\.Visible = \$true/);
+  const control = functionSource('Set-MonitorProviderControls');
+  assert.match(control, /\$monitorState\.ProviderSlotReleased -and \$monitorState\.DurableCustodyReleased/);
+});
+
+test('native Windows PowerShell 5.1 can compile the new bounded foreground helper', { skip: process.platform !== 'win32' }, async () => {
+  const code = source.match(/Add-Type -TypeDefinition @'\r?\n([\s\S]*?)\r?\n'@/)?.[1];
+  assert.ok(code);
+  const folder = await mkdtemp(path.join(os.tmpdir(), 'Stephanos focus compile '));
+  const fixture = path.join(folder, 'focus-compile.ps1');
+  try {
+    await writeFile(fixture, "Set-StrictMode -Version Latest\r\n$ErrorActionPreference = 'Stop'\r\nAdd-Type -TypeDefinition @'\r\n" + code +
+      "\r\n'@\r\nif ([Stephanos.Starfield.MonitorPipe]::FocusBoundGame(0, '') -cne 'game-identity-missing') { throw 'unexpected-identity-guard' }\r\n", 'utf8');
+    const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const result = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fixture],
+      { encoding: 'utf8', timeout: 20000 });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});
+
 test('final splash pins exactly the packaged bridge and runner', async () => {
   const bridgePin = source.match(/\$monitorBridgeSha256 = '([a-f0-9]{64})'/)?.[1];
   const runnerPin = source.match(/\$monitorRunnerSha256 = '([a-f0-9]{64})'/)?.[1];
