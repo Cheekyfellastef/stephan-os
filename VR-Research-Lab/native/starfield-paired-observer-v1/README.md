@@ -165,12 +165,19 @@ controller's retained input pins and fresh-session checks remain prerequisites
 for any eventual execution; this offline function does not supply them.
 
 The initial preparation candidate and completed build remain historical
-artifacts. The source repairs below require a new guarded native build and a
-matching, independently reviewed loader candidate before runtime admission.
-The loader preparation function remains pinned to the prior completed build
-until a new authenticated terminal receipt supplies its replacement identity.
-It cannot admit an arbitrary caller-supplied DLL or promote a source change
-into binary qualification.
+artifacts. The repaired source was built at protected main
+`d63633034854b31560c9d8bb4779491dfcc6fe71`. Its
+[authenticated terminal receipt](https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-7005643854)
+proves the complete native build and self-tests, original-source preservation,
+complete output, native Job zero and released custody. All five output hashes
+were independently observed. The qualified ancillary compiler helper retirement
+is explicitly recorded; root exit alone is not used as child-exit proof.
+
+Loader preparation now pins that repaired observer: 255,488 bytes, SHA-256
+`9a4c08bc6b8ce26280b56b551880f799ecab3df3df97cdc0375391dad37a4185`.
+It rejects the earlier observer and any arbitrary caller-supplied DLL. Exact
+private observer/loader review and successor-session admission remain required
+before runtime use; a successful build is not installed-game qualification.
 
 ### Manifest and restoration evidence repairs
 
