@@ -164,11 +164,46 @@ out-of-bounds spans, duplicate anchors and hook collisions. The original
 controller's retained input pins and fresh-session checks remain prerequisites
 for any eventual execution; this offline function does not supply them.
 
-Actual private preparation authenticated the original closure, parsed the new
-loader and checked ordering of the three remote mutation calls without
-executing it. The candidate loader is 26,084 bytes, SHA-256
-`8bb4794f07a8a5bf3d7726f96e211035c2508fd0ec0bc82e81a42cabebff28fd`.
-This identity needs independent private source review; it is not an approval.
+The initial preparation candidate and completed build remain historical
+artifacts. The repaired source was built at protected main
+`d63633034854b31560c9d8bb4779491dfcc6fe71`. Its
+[authenticated terminal receipt](https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-7005643854)
+proves the complete native build and self-tests, original-source preservation,
+complete output, native Job zero and released custody. All five output hashes
+were independently observed. The qualified ancillary compiler helper retirement
+is explicitly recorded; root exit alone is not used as child-exit proof.
+
+Loader preparation now pins that repaired observer: 255,488 bytes, SHA-256
+`9a4c08bc6b8ce26280b56b551880f799ecab3df3df97cdc0375391dad37a4185`.
+It rejects the earlier observer and any arbitrary caller-supplied DLL. Exact
+private observer/loader review and successor-session admission remain required
+before runtime use; a successful build is not installed-game qualification.
+
+### Manifest and restoration evidence repairs
+
+The first transformation handled literal manifest filenames but missed the
+active view manifest selected through `native_manifest`. Manifest reads in
+`main` now use parsed expression spans, including that selected filename, so
+all such reads consume the authenticated snapshots. Unsupported name or read
+shapes fail preparation. A synthetic generated-main regression changes the
+disk file after snapshot creation and proves the authenticated view entries
+are still used before mutation.
+
+The native COM observer already distinguishes exact page flags from its
+accepted private copy-on-write page policy. The paired receipt now preserves
+`pagePolicyAccepted` and `residualPrivateCowPages` alongside
+`exactPageFlagsRestored`. The analyzer accepts only consistent, typed evidence
+within the existing 64-slot observer bound, while preserving the distinction
+between exact flags and accepted residual private pages. Missing, rejected,
+contradictory or out-of-bound evidence remains incomplete. This does not
+change the native hook or page-restoration policy.
+
+Both outcomes explicitly require normal process exit. Diagnostic completeness
+never proves process exit, retirement of retained pages, pixel capture or
+headset readiness. The session owner must separately verify normal game exit
+and proxy restoration. The reusable invariant is that the bytes checked must
+be the bytes consumed, and accepted restoration policy must never be reported
+as exact restoration or completed process cleanup.
 
 The original monitor attempt is consumed. Its November 16 capture passed the
 native-output analysis, but the saved outcome remains

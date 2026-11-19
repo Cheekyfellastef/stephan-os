@@ -9,12 +9,11 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-import re
 
-BUILD_HEAD = "db730e7f9a83e2f5a053b63e89163189acec9719"
-BUILD_RECEIPT = "https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-6995753681"
+BUILD_HEAD = "d63633034854b31560c9d8bb4779491dfcc6fe71"
+BUILD_RECEIPT = "https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-7005643854"
 OBSERVER_NAME = "native-paired-source-observe.dll"
-OBSERVER_SHA256 = "36dd35a2dd31b6f116e8b8a055e2608915445edebdc25f3c1f1fbca99e9c2ef0"
+OBSERVER_SHA256 = "9a4c08bc6b8ce26280b56b551880f799ecab3df3df97cdc0375391dad37a4185"
 OBSERVER_BYTES = 255488
 LOADER_NAME = "load-native-paired-source-observe.py"
 PROBE = "native-paired-source-observe"
@@ -65,6 +64,60 @@ def validate_manifest_inputs(originals: dict[str, bytes]) -> None:
     for name, raw in originals.items():
         if name.endswith(".json") and strict_document(raw).get("exeSha256") != game:
             raise ValueError("Manifest game identity differs: " + name)
+
+
+def _snapshot_main_manifest_reads(source: str) -> str:
+    """Replace the closed manifest-read forms, including the selected name.
+
+    AST spans avoid a literal-filename regex overlooking the active view
+    manifest selected through native_manifest. Legacy-only names also resolve
+    through the authenticated set, so they cannot acquire a new disk-read lane.
+    """
+    module = ast.parse(source)
+    mains = [node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "main"]
+    if len(mains) != 1:
+        raise ValueError("Non-unique original loader anchor")
+    encoded = source.encode("utf-8")
+    offsets = [0]
+    for line in encoded.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+    replacements = []
+    selected_reads = 0
+    for node in ast.walk(mains[0]):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"read_text", "read_bytes"}):
+            continue
+        path = node.func.value
+        if not (isinstance(path, ast.Call) and isinstance(path.func, ast.Attribute)
+                and path.func.attr == "with_name"):
+            continue
+        owner = path.func.value
+        if not (isinstance(owner, ast.Call) and isinstance(owner.func, ast.Name)
+                and owner.func.id == "Path" and len(owner.args) == 1
+                and isinstance(owner.args[0], ast.Name) and owner.args[0].id == "__file__"
+                and not owner.keywords):
+            continue
+        if node.args or node.keywords or len(path.args) != 1 or path.keywords:
+            raise ValueError("Unsupported manifest read shape")
+        name = path.args[0]
+        if isinstance(name, ast.Constant) and type(name.value) is str and name.value.endswith(".json"):
+            key = repr(name.value)
+        elif isinstance(name, ast.Name) and name.id == "native_manifest":
+            key = name.id
+            selected_reads += 1
+        else:
+            raise ValueError("Unsupported manifest name expression")
+        replacement = "paired_manifest_bytes[" + key + "]"
+        if node.func.attr == "read_text":
+            replacement += ".decode('utf-8')"
+        start = offsets[node.lineno - 1] + node.col_offset
+        end = offsets[node.end_lineno - 1] + node.end_col_offset
+        replacements.append((start, end, replacement.encode("utf-8")))
+    if selected_reads != 1:
+        raise ValueError("Expected one selected view-manifest read")
+    for start, end, replacement in sorted(replacements, reverse=True):
+        encoded = encoded[:start] + replacement + encoded[end:]
+    return encoded.decode("utf-8")
 
 
 def _additional_checks() -> str:
@@ -127,12 +180,7 @@ def _transform(source: str) -> bytes:
         '    parser.add_argument("--expected-process-created-filetime", type=int, required=True)')
     # All active manifest consumers use the same authenticated snapshots; a
     # second path read cannot substitute different bytes after validation.
-    for name in ORIGINALS:
-        if not name.endswith(".json"):
-            continue
-        expression = r"Path\(__file__\)\.with_name\((['\"])" + re.escape(name) + r"\1\)\.read_(text|bytes)\(\)"
-        source = re.sub(expression,
-            lambda match: f"paired_manifest_bytes[{name!r}]" + (".decode('utf-8')" if match[2] == "text" else ""), source)
+    source = _snapshot_main_manifest_reads(source)
     source = unique_replace(source, '    args = parser.parse_args()',
         '    args = parser.parse_args()\n    paired_manifest_bytes = read_paired_manifest_bytes()')
     source = unique_replace(source, 'def main():', _additional_checks() + 'def main():')

@@ -4,6 +4,17 @@ import json
 from pathlib import Path
 
 FALSE_PROOFS = ("gpuCopyCommandsIssued", "imagesRecorded", "pixelsCaptured", "gpuCompletionProven", "openxrSubmitted", "sameSimulationUpdateProven")
+MAX_OBSERVER_PAGES = 64  # Exact original gpu_api::Observer uses Hooks<64>.
+
+def page_restoration(receipt, errors):
+    exact = receipt.get("exactPageFlagsRestored")
+    residual = receipt.get("residualPrivateCowPages")
+    if (receipt.get("pagePolicyAccepted") is not True or type(exact) is not bool
+            or type(residual) is not int or not 0 <= residual <= MAX_OBSERVER_PAGES
+            or exact is not (residual == 0)):
+        errors.append("Page restoration policy is missing, rejected, or contradictory")
+        return "UNPROVEN"
+    return "EXACT_FLAGS_RESTORED" if exact else "ACCEPTED_PRIVATE_COW_REQUIRES_PROCESS_EXIT"
 
 def analyze(rows):
     receipts = [r for r in rows if r.get("pairedSourceObservation") is True]
@@ -18,9 +29,10 @@ def analyze(rows):
     for field in FALSE_PROOFS:
         if receipt.get(field) is not False:
             errors.append("Unproven or missing field: " + field)
-    for field in ("bound", "nativeDrained", "comRestored", "coverageOwnedBeforeDisarm", "slotsRestored", "calleeBytesUnchanged", "exactPageFlagsRestored"):
+    for field in ("bound", "nativeDrained", "comRestored", "coverageOwnedBeforeDisarm", "slotsRestored", "calleeBytesUnchanged", "normalProcessExitRequired"):
         if receipt.get(field) is not True:
             errors.append("Incomplete observation: " + field)
+    page_outcome = page_restoration(receipt, errors)
     for field in ("failure", "modelFailure", "dropped", "openApi"):
         if type(receipt.get(field)) is not int or receipt[field] != 0:
             errors.append("Nonzero or missing failure count: " + field)
@@ -68,7 +80,10 @@ def analyze(rows):
     return {"outcome": "INCOMPLETE_OBSERVATION_NO_PIXEL_AUTHORITY" if errors else "OBSERVATION_COMPLETE_NO_PIXEL_AUTHORITY",
             "errors": errors, "events": len(events), "diagnosticLocalWitnessCounts": witnesses,
             "pixelAuthority": False, "submissionAuthority": False, "gpuCompletionProven": False,
-            "openxrSubmitted": False, "sameSimulationUpdateProven": False}
+            "openxrSubmitted": False, "sameSimulationUpdateProven": False,
+            "pageProtectionOutcome": page_outcome,
+            "residualPrivateCowPages": receipt.get("residualPrivateCowPages") if page_outcome != "UNPROVEN" else None,
+            "normalProcessExitRequired": True, "processExitProven": False}
 
 def main():
     parser = argparse.ArgumentParser();parser.add_argument("journal", type=Path);args = parser.parse_args()

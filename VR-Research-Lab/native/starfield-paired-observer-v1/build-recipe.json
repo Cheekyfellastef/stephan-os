@@ -5,7 +5,7 @@
   "publicMembers": [
     {
       "path": "VR-Research-Lab/native/starfield-paired-observer-v1/analyze-paired-source-observation.py",
-      "sha256": "b5e0a0b37167a3e1aec24386ff2a8c324f7a294f40f613a8e7dbf1e79e544466"
+      "sha256": "12fa494b96802e85564aa673680ba4850da7677b0f643167393b2a4b2c630364"
     },
     {
       "path": "VR-Research-Lab/native/starfield-paired-observer-v1/build-paired-source-observe.cmd",
@@ -13,7 +13,7 @@
     },
     {
       "path": "VR-Research-Lab/native/starfield-paired-observer-v1/native-paired-source-observer.h",
-      "sha256": "d99a55155b1a17217e6751f3105189acfd8f13b02623d4ddd51fb4de68e6521b"
+      "sha256": "15bf307e9fc9978fbb377bccdb708f15709054d6f7d9abfcecf1367ea8eb075c"
     },
     {
       "path": "VR-Research-Lab/native/starfield-paired-observer-v1/paired-observer-recipe.json",
@@ -41,7 +41,7 @@
     },
     {
       "path": "VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observer-source.py",
-      "sha256": "712aaa27601e5e1567875cc45ca3dbb173effbbffcda43d13a877388da0ceb99"
+      "sha256": "5b8bdb7391c5d4e8c91551270d60e9dd85f076cea27e34050a166cf21b2adfe6"
     },
     {
       "path": "VR-Research-Lab/native/starfield-paired-observer-v1/test-scoped-eye-ledger.cpp",
