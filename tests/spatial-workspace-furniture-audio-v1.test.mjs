@@ -144,6 +144,8 @@ test('audio devices are real browser-local tests and do not acquire mic without 
   assert.deepEqual(found.inputs,[{id:'mic1',label:'Headset mic'}]);
   assert.deepEqual(found.outputs,[{id:'out1',label:'Headset speakers'}]);
   assert.deepEqual(calls,['enumerate']);
+  assert.equal(audio.setInput('mic1'),true,'a local test requires an explicit chosen microphone');
+  assert.equal(audio.setOutput('out1'),true,'a local test requires an explicit chosen speaker');
   const opened=await audio.testMicrophone('mic1');
   assert.equal(opened.ok,true);
   assert.equal(calls[1][1].audio.deviceId.exact,'mic1');
