@@ -10,10 +10,10 @@ import ast
 import hashlib
 import json
 
-BUILD_HEAD = "db730e7f9a83e2f5a053b63e89163189acec9719"
-BUILD_RECEIPT = "https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-6995753681"
+BUILD_HEAD = "d63633034854b31560c9d8bb4779491dfcc6fe71"
+BUILD_RECEIPT = "https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-7005643854"
 OBSERVER_NAME = "native-paired-source-observe.dll"
-OBSERVER_SHA256 = "36dd35a2dd31b6f116e8b8a055e2608915445edebdc25f3c1f1fbca99e9c2ef0"
+OBSERVER_SHA256 = "9a4c08bc6b8ce26280b56b551880f799ecab3df3df97cdc0375391dad37a4185"
 OBSERVER_BYTES = 255488
 LOADER_NAME = "load-native-paired-source-observe.py"
 PROBE = "native-paired-source-observe"
