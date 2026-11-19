@@ -49,12 +49,13 @@ function exactEscalation(analysis = {}) {
     && counts !== null
     && typeof counts === 'object'
     && !Array.isArray(counts)
+    && Object.keys(counts).length === 3
     && counts.P0 === 1
     && counts.P1 === 0
     && counts.P2 === 0
+    && (analysis?.clean === undefined || analysis.clean === false)
     && analysis?.verdict === 'findings'
-    && typeof findings[0]?.severity === 'string'
-    && findings[0].severity.toUpperCase() === 'P0'
+    && findings[0]?.severity === 'P0'
     && findings[0]?.code === 'unsupported-high-risk-surface'
     && findings[0]?.path === PATH;
 }

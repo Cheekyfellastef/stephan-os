@@ -680,6 +680,8 @@ test('the existing Starfield splash monitor closure adopts source without starti
     'start_native_eye_output_session.py',
     'analyze_native_eye_output_session.py',
     'analyze_paired_source_session.py',
+    'monitor_session_custody.py',
+    'paired_session_adapter.py',
   ].map(name => directory + name);
   const fixtures = [
     'test_splash_monitor_bridge.py',
@@ -687,6 +689,8 @@ test('the existing Starfield splash monitor closure adopts source without starti
     'test_start_native_eye_output_session.py',
     'test_analyze_native_eye_output_session.py',
     'test_analyze_paired_source_session.py',
+    'test_monitor_session_custody.py',
+    'test_paired_session_adapter.py',
   ].map(name => directory + name);
   fixtures.push('scripts/windows/Test-StarfieldMonitorSplash.ps1');
   const plan = classifyPostSyncRefresh([

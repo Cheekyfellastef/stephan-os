@@ -120,6 +120,39 @@ for (const [name, content] of [['current reviewer governor', governor]]) {
   });
 }
 
+test('direct governor specialist refuses contradictory or noncanonical upstream P0 envelopes', () => {
+  // Exercise the actual specialist with the registered exact source bytes;
+  // a malformed upstream envelope cannot become a positive reviewer proof.
+  const baseline = input(governor).analysis;
+  const valid = analyzeWindowsAuthorityVrResourceGovernorReviewV1(
+    input(governor, { analysis: { ...baseline, clean: false } }));
+  assert.equal(valid.eligible, true);
+  assert.equal(valid.clean, true);
+  for (const [name, analysis] of [
+    ['extra zero count category', { ...baseline, counts: { ...baseline.counts, P3: 0 } }],
+    ['extra nonzero count category', { ...baseline, counts: { ...baseline.counts, P3: 1 } }],
+    ['contradictory clean true', { ...baseline, clean: true }],
+    ['wrong-typed clean', { ...baseline, clean: 'false' }],
+    ['normalized lowercase severity', {
+      ...baseline, findings: [{ ...baseline.findings[0], severity: 'p0' }],
+    }],
+    ['array severity', {
+      ...baseline, findings: [{ ...baseline.findings[0], severity: ['P0'] }],
+    }],
+    ['contradictory clean verdict', { ...baseline, verdict: 'clean' }],
+  ]) {
+    const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(
+      input(governor, { analysis }));
+    assert.equal(result.eligible, false, name);
+    assert.equal(result.clean, false, name);
+    assert.deepEqual(result.proofRefs, [], name);
+    for (const key of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(result[key], false, name + ':' + key);
+    }
+  }
+});
+
 test('historical fixture preserves exact pre-repair main bytes without qualification authority', () => {
   assert.equal(historicalFixture.schemaVersion, 'stephanos.test-only-historical-vr-governor-fixture.v1');
   assert.equal(historicalFixture.repository, REPOSITORY);
