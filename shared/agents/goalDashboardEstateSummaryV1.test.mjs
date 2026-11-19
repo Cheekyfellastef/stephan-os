@@ -425,7 +425,8 @@ test('current independent service health survives a stopped Core status publishe
   assert.deepEqual(result.health.map(h => h.state), ['UNKNOWN', 'UNKNOWN', 'UNKNOWN']);
 
   data.captainsBridge.runtimeHealth.services[1] = {
-    serviceId: 'backend', freshness: 'CURRENT', trafficLight: 'AMBER', observedAtUtc: at(-1000) };
+    serviceId: 'backend', sourceHead: 'a'.repeat(40),
+    freshness: 'CURRENT', trafficLight: 'AMBER', observedAtUtc: at(-1000) };
   result = project(data, { ...options, statusRecords: [staleCore] });
   assert.equal(result.health[2].state, 'DEGRADED');
 });
