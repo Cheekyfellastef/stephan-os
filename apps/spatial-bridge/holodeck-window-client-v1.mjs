@@ -24,6 +24,9 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   }
   let image=null,epoch=0,refreshPromise=null;
   let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false,inputClickPending=false;
+  // Keep an unverified native release in memory even if sessionStorage is blocked.
+  // Losing this identity would permit a second session before the old one stopped.
+  let unverifiedNativeReleaseToken=null;
   // Room-local acknowledgement, not native keyboard focus. Never infer an editor from a bind or frame.
   let editorClickConfirmed=false;
   // One owner spans picker, native revocation, playback and the accepted view.
@@ -95,8 +98,9 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     const current=++epoch,previousCapture=capture;
     capture=keepCapture;
     if(keepCapture)keepCapture.epoch=current;
-    let old=token;
+    let old=unverifiedNativeReleaseToken||token;
     if(!old)try{old=sessionStore?.getItem(storageKey);}catch{}
+    if(old)unverifiedNativeReleaseToken=old;
     token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;busy=false;inputClickPending=false;editorClickConfirmed=false;
     const oldTimer=timer;timer=null;
     if(previousCapture!==keepCapture)closeCapture(previousCapture);
@@ -107,6 +111,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     // Preserve the original one-hop, token-free disconnect timing: a room
     // with no native session must not delay an explicitly requested discovery.
     const stopped=old?revokeNativeToken(old).then(released=>{
+      if(released&&unverifiedNativeReleaseToken===old)unverifiedNativeReleaseToken=null;
       // A late revocation must never overwrite a newer native bind or view.
       if(old&&currentEpoch(current)&&capture===keepCapture&&state.status==='idle'){
         publish({status:released?'idle':'unavailable',
