@@ -373,18 +373,18 @@ function Get-VrResourceGovernorProcesses {
     $script:vrGovernorInventoryComplete = $false
     try {
         $rows = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop)
-        $matches = @()
+        $governorMatches = @()
         foreach ($row in $rows) {
             # An opaque PowerShell may be the existing owner. Absence is not
             # established by suppressing a failed census or unreadable command.
             if (-not [string]$row.CommandLine) { return @() }
             if ([string]$row.CommandLine -match $vrGovernorScriptPattern) {
                 if (-not (Test-VrResourceGovernorProcessIdentity -Process $row)) { return @() }
-                $matches += $row
+                $governorMatches += $row
             }
         }
         $script:vrGovernorInventoryComplete = $true
-        return @($matches)
+        return @($governorMatches)
     } catch { return @() }
 }
 

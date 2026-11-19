@@ -449,3 +449,69 @@ try{
     rawRepresentationsDiffer: true, dirtyBytesRefused: true,
   });
 });
+
+test('actual Windows PowerShell 5.1 Governor collector preserves its result array across real match operations', { skip: process.platform !== 'win32' }, () => {
+  const loader = String.raw`$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+Set-StrictMode -Version Latest
+$data=[Console]::In.ReadToEnd() | ConvertFrom-Json
+if($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1){throw 'ACTUAL_WINDOWS_POWERSHELL_51_REQUIRED'}
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseInput($data.source,[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'SOURCE_PARSE_FAILED'}
+$names=@('Get-VrResourceGovernorProcesses','Test-VrResourceGovernorProcessIdentity')
+$functions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -cin $names},$false))
+if($functions.Count -ne 2){throw 'COLLECTOR_FUNCTIONS_UNPROVEN'}
+foreach($fn in $functions){. ([ScriptBlock]::Create($fn.Extent.Text))}
+$powershellExecutable='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$vrGovernorScript='C:\fixture\scripts\windows\run-vr-resource-governor.ps1'
+$vrGovernorScriptPattern=[regex]::Escape($vrGovernorScript)
+$tail='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$vrGovernorScript+'" -Action Watch'
+$closedCommand='"'+$powershellExecutable+'" '+$tail
+function New-FixtureGovernorRow {
+ param([int]$OwnerPid)
+ [pscustomobject]@{Name='powershell.exe';ProcessId=$OwnerPid;ExecutablePath=$powershellExecutable;
+  CommandLine=$closedCommand+' ';CreationDate=[DateTime]::UtcNow.AddSeconds(-2)}
+}
+function Get-CimInstance {
+ param([string]$ClassName,[string]$Filter,[string]$ErrorAction)
+ if($ClassName -cne 'Win32_Process' -or $Filter -cne "Name='powershell.exe'" -or $ErrorAction -cne 'Stop'){throw 'FIXTURE_FIXED_QUERY_CHANGED'}
+ if($scenario -ceq 'query-failure'){throw 'FIXTURE_QUERY_FAILED'}
+ return $fixtureRows
+}
+$results=@()
+foreach($scenario in @('zero','one','multiple','opaque-first','opaque-after-match','query-failure','wrong-image','future-birth','invalid-pid','extra-command')){
+ $first=New-FixtureGovernorRow 42
+ $second=New-FixtureGovernorRow 43
+ $opaque=New-FixtureGovernorRow 44
+ $opaque.CommandLine=$null
+ $fixtureRows=@($first)
+ switch -Exact ($scenario){
+  'zero' {$first.CommandLine='powershell.exe -NoProfile -File C:\fixture\unrelated.ps1'}
+  'multiple' {$fixtureRows=@($first,$second)}
+  'opaque-first' {$fixtureRows=@($opaque,$first)}
+  'opaque-after-match' {$fixtureRows=@($first,$opaque)}
+  'wrong-image' {$first.ExecutablePath='C:\fixture\other\powershell.exe'}
+  'future-birth' {$first.CreationDate=[DateTime]::UtcNow.AddMinutes(1)}
+  'invalid-pid' {$first.ProcessId=0}
+  'extra-command' {$first.CommandLine=$closedCommand+' extra'}
+ }
+ $script:vrGovernorInventoryComplete=$true
+ $observed=@(Get-VrResourceGovernorProcesses)
+ $results+=,[pscustomobject]@{scenario=$scenario;complete=[bool]$script:vrGovernorInventoryComplete;count=$observed.Count}
+}
+ConvertTo-Json -InputObject $results -Compress`;
+  const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(loader, 'utf16le').toString('base64')],
+    { input: JSON.stringify({ source: readSource('scripts/windows/run-sovereign-commander-hidden.ps1') }),
+      cwd: 'C:\\Windows\\System32', encoding: 'utf8', shell: false, windowsHide: true, timeout: 10_000, maxBuffer: 16_384 });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [
+    { scenario: 'zero', complete: true, count: 0 },
+    { scenario: 'one', complete: true, count: 1 },
+    { scenario: 'multiple', complete: true, count: 2 },
+    ...['opaque-first', 'opaque-after-match', 'query-failure', 'wrong-image', 'future-birth', 'invalid-pid', 'extra-command']
+      .map(scenario => ({ scenario, complete: false, count: 0 })),
+  ]);
+});
