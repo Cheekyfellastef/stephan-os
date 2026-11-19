@@ -34,7 +34,7 @@ GAME = Path(r"C:\Program Files (x86)\Steam\steamapps\common\Starfield\Starfield.
 SCHEMA = "stephanos.native-eye-output.one-click.v1"
 HELPER_NAME = "start_native_eye_output_session.py"
 ANALYZER_NAME = "analyze_native_eye_output_session.py"
-HELPER_SHA256 = "9e22c700cafea50894958ebc20e0bcc94863ac9d3f2d03ff69a0e327874e7d61"
+HELPER_SHA256 = "4ab371616f27de7c424d0de523c4bbf09d948fcda2098ff425a88f0eac15bc9d"
 ANALYZER_SHA256 = "18c2ec52d3d0184e7b6c2a77efe45108d5843a524c3386d285f50f83f3395336"
 HANDOFF_SHA256 = "2c234970c5bcd7cf54544c496a7f74b398ee2ecaa9055ebcead4f64d5c42685f"
 DLL_SHA256 = "43e6fd3b2a3e92abd11312e46d1f17ef427a220185fb4a3271b702b7efab8448"
@@ -45,6 +45,14 @@ FINISHED = {"GAME_EXIT_OBSERVED_PROXY_RESTORED", "PRELAUNCH_ABORT_PROXY_RESTORED
 MAX_CAPTURE_BYTES = 64 * 1024 * 1024
 MAX_CHILD_BYTES = 4 * 1024 * 1024
 INTERNAL_ACTIONS = {"modules", "stock", "scene", "load"}
+CUSTODY_NAME = "monitor_session_custody.py"
+CUSTODY_SHA256 = "e32457ed217f5d444a8e434d8553adba45bd1cac2d1d20b44fccb62ec7185550"
+PAIRED_ADAPTER_NAME = "paired_session_adapter.py"
+PAIRED_ADAPTER_SHA256 = "52066de6b32fa6b8522b5c6949f97fcd5c2a1dcf82ffbb2e1cb71312009f359c"
+REVIEWED_LEGACY_RUNNER_HASHES = frozenset({
+    "26cc78b3eb8b8eac551f305a028de3ec5c6f8f80d9e9809544f742ff47ec4c2c",
+    "f40df00ff7378b8d3c62714bfb32702226746735f73d804a2c5f3e3727f7ba6c",
+    "6e296ff22f3de9fc1ec0ef4a6751cc7cc85b315a2641a8d20c0e1d9bb6c1d4b3"})
 
 
 class Blocked(RuntimeError):
@@ -128,11 +136,11 @@ def same_process(first, second):
             and first["createdFileTime"] == second["createdFileTime"])
 
 
-def waiting_receipt(session):
+def waiting_receipt(session, dll_sha256=DLL_SHA256):
     if (not isinstance(session, dict) or session.get("stage") != WAITING
             or session.get("launchRequested") is not True
             or session.get("handoffSha256") != HANDOFF_SHA256
-            or session.get("reviewedDllSha256") != DLL_SHA256
+            or session.get("reviewedDllSha256") != dll_sha256
             or any(session.get(field) is not False for field in
                    ("injected", "captureAttempted", "saveLoadedConfirmed"))
             or not re.fullmatch(r"[0-9a-f]{32}", str(session.get("sessionId", "")))
@@ -141,10 +149,10 @@ def waiting_receipt(session):
     return session
 
 
-def waiting_session(status):
+def waiting_session(status, dll_sha256=DLL_SHA256):
     if not isinstance(status, dict) or status.get("operationLockPresent") is not False:
         raise Blocked("The existing starter has a busy or unresolved operation lock.")
-    session = waiting_receipt(status.get("session"))
+    session = waiting_receipt(status.get("session"), dll_sha256)
     games = status.get("games")
     if (not isinstance(games, list) or len(games) != 1
             or not same_process(games[0], session["process"])
@@ -177,36 +185,52 @@ class Journal:
         self.version = None
         self.write_uncertain = False
         self.state = None
+        self.dll_sha256 = DLL_SHA256
 
     def acquire(self):
-        plain_path(self.directory.parent)
-        self.directory.mkdir(exist_ok=True)
-        plain_path(self.directory)
+        self.acquire_lock()
+        self.admit_new_state()
+        return self.open_state()
+
+    def admit_new_state(self):
+        pass
+
+    def new_fields(self):
+        return {}
+
+    def acquire_lock(self):
+        plain_path(self.lock.parent.parent)
+        self.lock.parent.mkdir(exist_ok=True)
+        plain_path(self.lock.parent)
         self.token = json_bytes({"owner": uuid.uuid4().hex, "pid": os.getpid(), "utc": utc()})
         try:
             write_new(self.lock, self.token)
         except FileExistsError as exc:
             self.token = None
             raise Blocked("This monitor window is already running, or a previous operation is unresolved. The lock is preserved.") from exc
+    def open_state(self):
+        self.directory.mkdir(exist_ok=True)
+        plain_path(self.directory)
         if self.path.exists():
             raw = bounded_bytes(self.path, 1024 * 1024)
             state = strict_json(raw)
             if (not isinstance(state, dict) or state.get("schema") != SCHEMA
                     or state.get("workspace") != str(WORKSPACE)
                     or state.get("handoffSha256") != HANDOFF_SHA256
-                    or state.get("reviewedDllSha256") != DLL_SHA256
+                    or state.get("reviewedDllSha256") != self.dll_sha256
                     or not re.fullmatch(r"[0-9a-f]{32}", str(state.get("runId", "")))):
                 raise Blocked("The existing one-click session identity differs; it is preserved.")
             self.version, self.state = sha256(raw), state
             return False
         self.state = {"schema": SCHEMA, "runId": uuid.uuid4().hex, "workspace": str(WORKSPACE),
-                      "handoffSha256": HANDOFF_SHA256, "reviewedDllSha256": DLL_SHA256,
+                      "handoffSha256": HANDOFF_SHA256, "reviewedDllSha256": self.dll_sha256,
                       "createdUtc": utc(), "stage": "RESERVED", "events": [],
                       "captureAttempted": False, "saveLoadedConfirmed": False,
                       "starterSessionId": None, "process": None, "activeChild": None,
                       "childCalls": [], "probeLoadedProven": False, "probeLoadState": "NOT_ATTEMPTED",
                       "operatorLockOwner": strict_json(self.token)["owner"],
                       "windowProcessId": os.getpid(), "headsetNeeded": False}
+        self.state.update(self.new_fields())
         self.save(new=True)
         return True
 
@@ -282,7 +306,7 @@ class Monitor:
                 return self.finish("CANCELLED_BEFORE_PROBE")
             start_receipt = self.host.helper("start")
             self.state["starterStartReceipt"] = start_receipt
-            returned = waiting_receipt(start_receipt)
+            returned = waiting_receipt(start_receipt, self.journal.dll_sha256)
             self.state.update(starterSessionId=returned["sessionId"], process=returned["process"],
                               starterSession=returned, ownershipSource="this_window_start_receipt")
             self.journal.save()
@@ -290,7 +314,7 @@ class Monitor:
             status = self.host.helper("status")
         else:
             self.state["adoptedExistingWaitingStarter"] = True
-        session = waiting_session(status)
+        session = waiting_session(status, self.journal.dll_sha256)
         self.guard = self.host.open_guard(session["process"])
         self.journal.event("WAITING_FOR_FRESH_SAVE_CONFIRMATION", process=session["process"],
                            starterSessionId=session["sessionId"], starterSession=session)
@@ -300,7 +324,7 @@ class Monitor:
 
     def _same_waiting_process(self):
         status = self.host.helper("status")
-        session = waiting_session(status)
+        session = waiting_session(status, self.journal.dll_sha256)
         if (session["sessionId"] != self.state.get("starterSessionId")
                 or not same_process(session["process"], self.state.get("process"))):
             raise Blocked("The waiting process/session changed; no probe will be loaded.")
@@ -378,7 +402,7 @@ class Monitor:
             self.state["probeLoadedProven"] = bool(isinstance(loader, dict)
                                                    and loader.get("moduleLoaded") is True
                                                    and loader.get("pid") == process["pid"]
-                                                   and loader.get("dllSha256") == DLL_SHA256)
+                                                   and loader.get("dllSha256") == self.journal.dll_sha256)
             if self.state["probeLoadedProven"]:
                 self.state["probeLoadState"] = "MODULE_LOAD_PROVEN"
             deadline = min(deadline, self.host.monotonic() + 180.0)
@@ -521,7 +545,63 @@ class ReadPins:
         self.kernel.CreateFileW.restype = wintypes.HANDLE
         self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         self.kernel.CloseHandle.restype = wintypes.BOOL
+        self.kernel.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR,
+                                                         wintypes.DWORD, wintypes.DWORD]
+        self.kernel.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+        self.kernel.GetLongPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        self.kernel.GetLongPathNameW.restype = wintypes.DWORD
         self.handles = {}
+
+    def add_namespaces(self, directories):
+        """Retain each directory component without write/delete sharing.
+
+        Opening the reparse point itself and comparing the handle's final name
+        prevents a pathname check from silently pinning a substituted target.
+        Child file creation remains possible; directory replacement does not.
+        """
+        C, W = self.ctypes, self.types
+
+        class FileInformation(C.Structure):
+            _fields_ = [("attributes", W.DWORD), ("creation", W.FILETIME),
+                        ("access", W.FILETIME), ("write", W.FILETIME),
+                        ("volume", W.DWORD), ("sizeHigh", W.DWORD), ("sizeLow", W.DWORD),
+                        ("links", W.DWORD), ("indexHigh", W.DWORD), ("indexLow", W.DWORD)]
+
+        self.kernel.GetFileInformationByHandle.argtypes = [W.HANDLE, C.POINTER(FileInformation)]
+        self.kernel.GetFileInformationByHandle.restype = W.BOOL
+        for directory in directories:
+            directory = plain_path(directory)
+            for path in tuple(reversed(directory.parents)) + (directory,):
+                if str(path) in self.handles:
+                    continue
+                handle = self.kernel.CreateFileW(str(path), 0x80, 1, None, 3, 0x02200000, None)
+                if handle == C.c_void_p(-1).value:
+                    raise Blocked("Cannot retain the reviewed namespace: " + path.name)
+                try:
+                    info = FileInformation()
+                    if (not self.kernel.GetFileInformationByHandle(handle, C.byref(info))
+                            or not info.attributes & 0x10 or info.attributes & 0x400):
+                        raise Blocked("A retained namespace is not a plain directory.")
+                    name = C.create_unicode_buffer(32768)
+                    size = self.kernel.GetFinalPathNameByHandleW(handle, name, len(name), 0)
+                    # Windows temp roots can use an 8.3 spelling. Compare its
+                    # long spelling only after the ancestor handles are held;
+                    # accepting a short alias must not admit a reparse target.
+                    long_name = C.create_unicode_buffer(32768)
+                    long_size = self.kernel.GetLongPathNameW(str(path), long_name, len(long_name))
+                    if not 0 < long_size < len(long_name):
+                        raise Blocked("The retained namespace spelling could not be authenticated.")
+                    expected = long_name.value.rstrip("\\").casefold()
+                    observed = name.value
+                    if observed.startswith("\\\\?\\"):
+                        observed = observed[4:]
+                    if not 0 < size < len(name) or observed.rstrip("\\").casefold() != expected:
+                        raise Blocked("The retained namespace has a different final identity.")
+                    plain_path(path)
+                except BaseException:
+                    self.kernel.CloseHandle(handle)
+                    raise
+                self.handles[str(path)] = handle
 
     def add(self, paths):
         for path in paths:
@@ -590,12 +670,25 @@ class ProcessGuard:
 
 
 class WindowsActions:
+    capture_prefix = "native-eye-output"
+    loader_sha256 = LOADER_SHA256
+
+    @property
+    def capture_source(self):
+        return getattr(self, "_capture_source", SOURCE)
+
+    @capture_source.setter
+    def capture_source(self, directory):
+        self._capture_source = Path(directory)
+
     def __init__(self, journal, package_directory=None):
         if os.name != "nt":
             raise Blocked("Live actions require the Windows Battle Bridge.")
         if not (sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode):
             raise Blocked("Use the Hybrid / Stephanos VR button (isolated Python is required).")
         self.journal = journal
+        self.capture_source = SOURCE
+        self.capture_prefix = "native-eye-output"
         self.package = plain_path(package_directory or Path(__file__).parent)
         self.runner_path = self.package / Path(__file__).name
         self.runner_hash = verified_runner_identity(self.runner_path, globals().get("__VERIFIED_RUNNER_SHA256__"))
@@ -620,7 +713,14 @@ class WindowsActions:
         if self.journal.state is not None:
             saved = self.journal.state.get("runnerSha256")
             if saved is not None and saved != self.runner_hash:
-                raise Blocked("This session belongs to a different GUI runner build.")
+                legacy_cleanup = (saved in REVIEWED_LEGACY_RUNNER_HASHES
+                    and self.journal.state.get("sessionProfile") is None
+                    and self.journal.state.get("reviewedDllSha256") == DLL_SHA256)
+                if not legacy_cleanup:
+                    raise Blocked("This session belongs to a different GUI runner build.")
+                # Monitor.prepare cannot reconfirm an existing journal. Its
+                # original runner/consent fields stay immutable; the internal
+                # stock/load gate still requires the exact current runner.
             if saved is None:
                 self.journal.state["runnerSha256"] = self.runner_hash
                 self.journal.save()
@@ -784,7 +884,7 @@ class WindowsActions:
         return False
 
     def capture_terminal_seen(self, process):
-        path = plain_path(SOURCE / ("native-eye-output-%d.jsonl" % process["pid"]))
+        path = plain_path(self.capture_source / (self.capture_prefix + "-%d.jsonl" % process["pid"]))
         if not path.exists():
             return False
         try:
@@ -797,6 +897,19 @@ class WindowsActions:
         except (ValueError, UnicodeDecodeError, OSError, Blocked):
             return False
 
+    def analysis_arguments(self, state, process):
+        return dict(loader_receipt=state.get("loaderReceipt"), expected_pid=process["pid"],
+                    expected_process_created_filetime=process["createdFileTime"],
+                    observed_process_created_filetime=state.get("observedProcessCreatedFileTime"),
+                    timed_out=state.get("timedOut", False))
+
+    def analyze_capture(self, path, state, process):
+        return self.analyzer.analyze_file(path, **self.analysis_arguments(state, process))
+
+    def analyze_missing(self, state, process):
+        return self.analyzer.analyze_records([], **self.analysis_arguments(state, process),
+            parse_errors=[state.get("captureReadError", "Native capture file is absent.")])
+
     def collect_results(self, state):
         self._refresh_children()
         result_id = uuid.uuid4().hex[:12]
@@ -808,7 +921,7 @@ class WindowsActions:
         analysis = None
         state.pop("captureReadError", None)
         if process_valid(process):
-            source = plain_path(SOURCE / ("native-eye-output-%d.jsonl" % process["pid"]))
+            source = plain_path(self.capture_source / (self.capture_prefix + "-%d.jsonl" % process["pid"]))
             if source.exists():
                 try:
                     raw = bounded_bytes(source, MAX_CAPTURE_BYTES)
@@ -818,19 +931,11 @@ class WindowsActions:
                     state["captureSnapshot"] = {"name": source.name, "bytes": len(raw), "sha256": sha256(raw),
                                                 "copiedUtc": utc(), "cleanupComplete": state.get("cleanupComplete") is True,
                                                 "processExitObserved": state.get("cleanupReceipt", {}).get("gameExitObserved") is True}
-                    analysis = self.analyzer.analyze_file(
-                        destination, loader_receipt=state.get("loaderReceipt"), expected_pid=process["pid"],
-                        expected_process_created_filetime=process["createdFileTime"],
-                        observed_process_created_filetime=state.get("observedProcessCreatedFileTime"),
-                        timed_out=state.get("timedOut", False))
+                    analysis = self.analyze_capture(destination, state, process)
                 except Exception as error:
                     state["captureReadError"] = str(error)
             if analysis is None and state.get("captureAttempted"):
-                analysis = self.analyzer.analyze_records(
-                    [], loader_receipt=state.get("loaderReceipt"), expected_pid=process["pid"],
-                    expected_process_created_filetime=process["createdFileTime"],
-                    observed_process_created_filetime=state.get("observedProcessCreatedFileTime"),
-                    timed_out=state.get("timedOut", False), parse_errors=[state.get("captureReadError", "Native capture file is absent.")])
+                analysis = self.analyze_missing(state, process)
         state["analysis"] = analysis
         accepted = bool(analysis and analysis.get("monitorCaptureAccepted") is True)
         cleaned = state.get("cleanupComplete") is True
@@ -872,7 +977,8 @@ class WindowsActions:
                     raise Blocked("Invocation receipt is not bound to this session/process.")
                 if name.startswith("loader") and (receipt.get("attemptToken") != state.get("captureAttemptToken")
                         or receipt.get("starterSessionId") != state.get("starterSessionId")
-                        or receipt.get("reviewedDllSha256") != DLL_SHA256 or receipt.get("loaderSha256") != LOADER_SHA256):
+                        or receipt.get("reviewedDllSha256") != self.journal.dll_sha256
+                        or receipt.get("loaderSha256") != self.loader_sha256):
                     raise Blocked("Loader invocation receipt differs from the reserved attempt.")
                 destination = directory / name
                 write_new(destination, raw)
@@ -939,14 +1045,14 @@ class WindowsActions:
         self.pins.close()
 
 
-def validate_internal_admission(state, lock, action, pid, filetime, attempt=None, parent_pid=None):
+def validate_internal_admission(state, lock, action, pid, filetime, attempt=None, parent_pid=None, *, dll_sha256=DLL_SHA256):
     """Fixed child entry cannot bypass the current GUI's durable admission."""
     if action not in ("stock", "load"):
         raise Blocked("This admission is only for the two receipt/mutation child actions.")
     if (not isinstance(state, dict) or state.get("schema") != SCHEMA
             or state.get("workspace") != str(WORKSPACE)
             or state.get("handoffSha256") != HANDOFF_SHA256
-            or state.get("reviewedDllSha256") != DLL_SHA256
+            or state.get("reviewedDllSha256") != dll_sha256
             or not re.fullmatch(r"[0-9a-f]{32}", str(state.get("runId", "")))
             or not re.fullmatch(r"[0-9a-f]{32}", str(state.get("starterSessionId", "")))
             or not process_valid(state.get("process"))
@@ -1110,13 +1216,60 @@ def native_error(message):
         print(str(message), file=sys.stderr)
 
 
+def reviewed_runner_hashes():
+    return REVIEWED_LEGACY_RUNNER_HASHES | {sha256(bounded_bytes(Path(__file__), 256 * 1024))}
+
+
+def paired_adapter():
+    return pinned_module(Path(__file__).with_name(PAIRED_ADAPTER_NAME), PAIRED_ADAPTER_SHA256,
+                         "_starfield_fixed_paired_adapter")
+
+
+def create_monitor(notify):
+    """Select one fixed profile; admission is re-proven under its common lock."""
+    helper = pinned_module(Path(__file__).with_name(HELPER_NAME), HELPER_SHA256, "_monitor_profile_starter")
+    custody = pinned_module(Path(__file__).with_name(CUSTODY_NAME), CUSTODY_SHA256, "_monitor_profile_custody")
+    paths = custody.custody_paths(sys.modules[__name__], helper)
+    if any(plain_path(paths[key]).exists() for key in
+           ("pairedDirectory", "pairedOuter", "pairedStarter", "pairedStockMarker", "pairedLoadMarker")):
+        selected = "paired"
+    else:
+        try:
+            result = custody.provider_custody(sys.modules[__name__], helper,
+                runner_hashes=reviewed_runner_hashes())
+            selected = "paired" if result.get("reason") == "MONITOR_CUSTODY_RELEASED" else "legacy"
+        except Exception:
+            # An unresolved predecessor may be inspected/closed through its
+            # existing owner. It never qualifies a new paired attempt.
+            selected = "legacy"
+    if selected == "paired":
+        journal_type, actions_type, _ = paired_adapter().classes(sys.modules[__name__], helper,
+            custody, reviewed_runner_hashes())
+        journal = journal_type()
+        return Monitor(journal, actions_type(journal), notify)
+    journal = Journal(RUN_DIRECTORY)
+    return Monitor(journal, WindowsActions(journal), notify)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--internal", choices=sorted(INTERNAL_ACTIONS))
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--internal", choices=sorted(INTERNAL_ACTIONS))
+    actions.add_argument("--paired-internal", choices=sorted(INTERNAL_ACTIONS))
+    actions.add_argument("--paired-helper", choices=("start", "status", "finish"))
     parser.add_argument("--pid", type=int)
     parser.add_argument("--filetime")
     parser.add_argument("--attempt")
     args = parser.parse_args(argv)
+    if args.paired_internal or args.paired_helper:
+        if os.name != "nt" or not (sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode) or sys.flags.optimize:
+            raise Blocked("The fixed paired child requires non-optimized isolated Windows Python.")
+        adapter = paired_adapter()
+        if args.paired_helper:
+            if any(value is not None for value in (args.pid, args.filetime, args.attempt)):
+                raise Blocked("Paired helper operations cannot take process overrides.")
+            return adapter.helper_main(sys.modules[__name__], args.paired_helper)
+        return adapter.internal_main(sys.modules[__name__], args)
     if args.internal:
         return internal_main(args)
     if any(value is not None for value in (args.pid, args.filetime, args.attempt)):
@@ -1127,7 +1280,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    child_invocation = "--internal" in sys.argv
+    child_invocation = any(flag in sys.argv for flag in ("--internal", "--paired-internal", "--paired-helper"))
     try:
         sys.exit(main())
     except Exception as error:

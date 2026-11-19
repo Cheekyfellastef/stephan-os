@@ -12,6 +12,8 @@ const members = [
   'start_native_eye_output_session.py',
   'analyze_native_eye_output_session.py',
   'analyze_paired_source_session.py',
+  'monitor_session_custody.py',
+  'paired_session_adapter.py',
 ];
 const relativeDirectory = 'scripts/windows/starfield-native-monitor/';
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
