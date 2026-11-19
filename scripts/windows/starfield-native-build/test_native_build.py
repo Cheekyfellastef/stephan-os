@@ -232,6 +232,22 @@ class FilesAndGamingTests(unittest.TestCase):
         bad = copy.deepcopy(records);bad["input0.h"]["bytes"] = True
         with self.assertRaises(build.BuildBlocked):build.source_records(types.SimpleNamespace(ORIGINAL_FILES=bad))
 
+    def test_toolchain_setup_cannot_inherit_detached_telemetry_or_compiler_hooks(self):
+        for index, inherited in enumerate(("", "0", "1", "false")):
+            stage = self.root / str(index);stage.mkdir()
+            compiler = self.root / "fixed-cl.exe"
+            external = {"SystemRoot": r"C:\Windows", "VSCMD_SKIP_SENDTELEMETRY": inherited,
+                        "VSCMD_DEBUG": "3", "CL": "/caller", "_CL_": "/caller", "NODE_OPTIONS": "caller"}
+            with patch.dict(os.environ, external, clear=True):
+                before = dict(os.environ)
+                environment = build.fixed_environment(compiler, stage)
+                self.assertEqual(dict(os.environ), before, "no user or machine setting is changed")
+            self.assertEqual(environment["VSCMD_SKIP_SENDTELEMETRY"], "1")
+            self.assertEqual(environment["STEPH_OBSERVER_EXPECTED_CL"], str(compiler))
+            self.assertTrue((stage / "compiler-temp").is_dir())
+            for name in ("VSCMD_DEBUG", "CL", "_CL_", "NODE_OPTIONS"):
+                self.assertNotIn(name, environment)
+
     def test_exact_staged_members_and_artifacts(self):
         stage = self.root / "staged";stage.mkdir();files = {}
         for index in range(5):
@@ -435,6 +451,11 @@ class PortableOrchestrationModelTests(unittest.TestCase):
                 if mode == "native_cancel":result.update(operation_ok=False, root_exit_code=79, cancelled=True, reason="CANCELLED")
                 if mode == "native_timeout":result.update(operation_ok=False, root_exit_code=79, cancelled=True, timed_out=True, reason="DEADLINE_EXCEEDED")
                 if mode == "compiler_failure":result.update(operation_ok=False, root_exit_code=1)
+                if mode == "live_descendant":result.update(operation_ok=False, root_exit_code=0,
+                    reason="ROOT_EXITED_WITH_LIVE_DESCENDANTS")
+                if mode == "live_descendant_custody":result.update(operation_ok=False, root_exit_code=0,
+                    custody_released=False, zero_active_processes_observed=False,
+                    reason="ROOT_EXITED_WITH_LIVE_DESCENDANTS")
                 if mode == "missing_artifact":(Path(arguments["cwd"]) / build.EXPECTED_ARTIFACTS[-1]).unlink()
                 return result
 
@@ -538,12 +559,21 @@ class PortableOrchestrationModelTests(unittest.TestCase):
         for mode, reason, verdict in (
             ("native_cancel", "NATIVE_BUILD_CANCELLED", "STARFIELD_VR_NATIVE_BUILD_BLOCKED"),
             ("native_timeout", "NATIVE_BUILD_DEADLINE_EXCEEDED", "STARFIELD_VR_NATIVE_BUILD_BLOCKED"),
+            ("live_descendant", "NATIVE_BUILD_CHILD_EXIT_UNPROVEN", "STARFIELD_VR_NATIVE_BUILD_BLOCKED"),
             ("compiler_failure", "COMPILER_OR_SELF_TEST_FAILED", "STARFIELD_VR_NATIVE_BUILD_FAILED")):
             with self.subTest(mode=mode):
                 receipt, saved, owner, observed = self.exercise(mode)
                 self.assertEqual((receipt["reason"], receipt["finalVerdict"]), (reason, verdict))
                 self.assertEqual(observed["privateProof"]["admissionCancellationReason"], "")
                 self.assertIsNone(owner)
+
+    def test_descendant_exit_uncertainty_keeps_custody_ahead_of_build_diagnostics(self):
+        receipt, saved, owner, observed = self.exercise("live_descendant_custody")
+        self.assertEqual(receipt["finalVerdict"], "STARFIELD_VR_NATIVE_BUILD_CUSTODY_HELD")
+        self.assertEqual(receipt["reason"], "NATIVE_JOB_TERMINAL_UNPROVEN")
+        self.assertFalse(receipt["executionCustodyReleased"])
+        self.assertIsNotNone(owner)
+        self.assertEqual(observed["privateProof"]["nativeStage"]["reason"], "ROOT_EXITED_WITH_LIVE_DESCENDANTS")
 
     def test_missing_marker_exit_and_artifact_never_pass(self):
         for mode in ("missing_marker", "unknown_exit", "boolean_exit", "float_exit", "missing_artifact"):
@@ -810,7 +840,7 @@ class CpuProbeContinuityTests(unittest.TestCase):
         def changed(pid, birth):
             self.state_path.write_text(json.dumps(governor(active=True)))
             return self.owner(pid, birth)
-        with self.assertRaisesRegex(build.BuildBlocked, "GAMING_STATE_CHANGED"):
+        with self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
             self.admitted(self.state(), changed)
 
     def test_permission_expiry_during_native_owner_observation_is_rechecked(self):
@@ -843,6 +873,108 @@ class CpuProbeContinuityTests(unittest.TestCase):
             path = self.vr / filename;path.write_text(json.dumps(value))
             with self.subTest(filename=filename), self.assertRaises(build.BuildBlocked):self.admitted(self.state())
             path.unlink()
+
+
+class GamingObservationAcquisitionTests(unittest.TestCase):
+    setUp = CpuProbeContinuityTests.setUp
+    state = CpuProbeContinuityTests.state
+    owner = staticmethod(CpuProbeContinuityTests.owner)
+    admitted = CpuProbeContinuityTests.admitted
+
+    def test_fresh_complete_probe_transition_is_revalidated(self):
+        state = self.state();calls = []
+        def owner(pid, birth):
+            calls.append(pid)
+            if len(calls) == 1:
+                newer = copy.deepcopy(state)
+                newer["nativeProbeAttempt"]["attemptId"] = "f" * 32
+                self.state_path.write_text(json.dumps(newer))
+            return self.owner(pid, birth)
+        self.assertTrue(self.admitted(state, owner))
+        self.assertEqual(calls, [1234, 1234])
+
+    def test_raced_snapshot_revalidates_every_activity_denial(self):
+        for flag in ("active", "flatGameActive", "airLinkActive", "realAirLinkActive",
+                     "virtualAirLinkTestActive", "prepareLeaseActive"):
+            calls = []
+            def owner(pid, birth):
+                calls.append(pid)
+                self.state_path.write_text(json.dumps(governor(**{flag: True})))
+                return self.owner(pid, birth)
+            with self.subTest(flag=flag), self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
+                self.admitted(self.state(), owner)
+            self.assertEqual(calls, [1234])
+
+    def test_continuous_record_race_has_three_attempt_limit(self):
+        state = self.state();calls = []
+        def owner(pid, birth):
+            calls.append(pid)
+            state["nativeProbeAttempt"]["attemptId"] = format(len(calls), "032x")
+            self.state_path.write_text(json.dumps(state))
+            return self.owner(pid, birth)
+        with patch.object(build.time, "monotonic", return_value=0):
+            with self.assertRaisesRegex(build.BuildBlocked, "GAMING_STATE_CHANGED"):
+                self.admitted(state, owner)
+        self.assertEqual(len(calls), 3)
+
+    def test_snapshot_expiry_before_and_during_read_never_grants(self):
+        for mode in ("before", "during"):
+            clock = [0];reads = []
+            def now():
+                reads.append(True)
+                return 0 if mode == "before" and len(reads) == 1 else (0.1 if mode == "before" else clock[0])
+            calls = []
+            def owner(pid, birth):
+                calls.append(pid);clock[0] = 0.1
+                return self.owner(pid, birth)
+            with patch.object(build.time, "monotonic", now):
+                with self.subTest(mode=mode), self.assertRaisesRegex(build.BuildBlocked, "GAMING_STATE_CHANGED"):
+                    self.admitted(self.state(), owner)
+            self.assertEqual(len(calls), 0 if mode == "before" else 1)
+
+    def test_initial_wait_requires_full_ordinary_permission_after_probe(self):
+        self.state_path.write_text(json.dumps(self.state()))
+        now = [0];pauses = []
+        def pause(seconds):
+            pauses.append(seconds);now[0] += seconds
+            self.state_path.write_text(json.dumps(governor()))
+        with patch.object(build.time, "monotonic", lambda: now[0]), patch.object(build.time, "sleep", pause):
+            self.assertTrue(build.wait_for_ordinary_gaming_admission(self.root))
+        self.assertEqual(pauses, [0.1])
+
+    def test_initial_hold_never_becomes_permission_by_waiting(self):
+        for stopped_clock in (False, True):
+            self.state_path.write_text(json.dumps(governor(active=True)))
+            now = [0];pauses = []
+            def pause(seconds):
+                pauses.append(seconds)
+                if not stopped_clock:now[0] += seconds
+            with patch.object(build.time, "monotonic", lambda: now[0]), patch.object(build.time, "sleep", pause):
+                with self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
+                    build.wait_for_ordinary_gaming_admission(self.root)
+            self.assertEqual(len(pauses), 10)
+
+    def test_initial_wait_refuses_late_success_and_does_not_retry_unknown(self):
+        clock = [0]
+        def late(_workspace):
+            clock[0] = 1
+            return True
+        with patch.object(build.time, "monotonic", lambda: clock[0]), patch.object(build, "gaming_admitted", late):
+            with self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
+                build.wait_for_ordinary_gaming_admission(self.root)
+        for reason in ("GAMING_PREPARATION_ACTIVE", "GAMING_OVERRIDE_UNPROVEN", "GAMING_STATE_CHANGED",
+                       "GAMING_STATE_INVALID", "GAMING_CLOCK_UNPROVEN"):
+            with patch.object(build, "gaming_admitted", side_effect=build.BuildBlocked(reason)) as observed:
+                with patch.object(build.time, "sleep", side_effect=AssertionError("must not wait")):
+                    with self.subTest(reason=reason), self.assertRaisesRegex(build.BuildBlocked, reason):
+                        build.wait_for_ordinary_gaming_admission(self.root)
+                self.assertEqual(observed.call_count, 1)
+
+    def test_running_policy_denial_never_waits(self):
+        state = self.state();state["cpuProbeContinuity"]["allowed"] = False
+        with patch.object(build.time, "sleep", side_effect=AssertionError("running Job cannot wait through denial")):
+            with self.assertRaisesRegex(build.BuildBlocked, "GAMING_PERMISSION_HELD"):
+                self.admitted(state)
 
 
 if __name__ == "__main__":unittest.main()

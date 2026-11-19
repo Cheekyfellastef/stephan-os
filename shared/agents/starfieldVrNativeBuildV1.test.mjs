@@ -185,6 +185,67 @@ test('gaming holds prevent any compiler stage and recheck holds remain binding',
   }
 });
 
+test('ordinary admission waits for a fresh pass at both prelaunch gates', async () => {
+  const h = host(); let now = 0; let observations = 0; let pauses = 0;
+  const result = await h.execute({ admissionClockFn: () => now,
+    admissionDelayFn: async ms => { assert.equal(h.packet, undefined); now += ms; pauses++; },
+    admissionFn: () => (++observations === 2 || observations === 4
+      ? { ok: true } : { ok: false, reason: 'native-capacity-gaming-permission-denied' }),
+  });
+  assert.equal(result.ok, true); assert.equal(observations, 4); assert.equal(pauses, 2);
+});
+
+test('ordinary admission state model never promotes hold or unknown evidence', async () => {
+  const states = ['held', 'allowed', 'unknown'];
+  for (const a of states) for (const b of states) for (const c of states) {
+    const trace = [a, b, c]; const h = host(); let now = 0; let calls = 0;
+    const result = await h.execute({ admissionClockFn: () => now,
+      admissionDelayFn: async ms => { now += ms; assert.equal(h.packet, undefined); },
+      admissionFn: () => {
+        const state = trace[Math.min(calls++, trace.length - 1)];
+        return state === 'allowed' ? { ok: true } : { ok: false, reason: state === 'held'
+          ? 'native-capacity-gaming-permission-denied' : 'native-capacity-gaming-evidence-unavailable' };
+      } });
+    // The same sequence must reach an ordinary pass for both gates, with any
+    // unknown ending that gate immediately and persistent holds exhausting it.
+    let at = 0; let expected = true;
+    for (let gate = 0; gate < 2; gate++) {
+      let passed = false;
+      for (let read = 0; read < 10; read++) {
+        const state = trace[Math.min(at++, 2)];
+        if (state === 'allowed') { passed = true; break; }
+        if (state === 'unknown') break;
+      }
+      if (!passed) { expected = false; break; }
+    }
+    assert.equal(result.ok, expected, trace.join(','));
+    assert.equal(Boolean(h.packet), expected, trace.join(','));
+    assert(calls <= 20);
+  }
+});
+
+test('ordinary admission has finite attempts and refuses a late successful observation', async () => {
+  for (const mode of ['clock-stalled', 'expired-before-read', 'expired-during-read']) {
+    const h = host(); let now = 0; let calls = 0; let pauses = 0;
+    const result = await h.execute({ admissionClockFn: () => now,
+      admissionDelayFn: async () => { pauses++; if (mode === 'expired-before-read') now = 1000; },
+      admissionFn: () => {
+        calls++;
+        if (mode === 'expired-during-read') { now = 1000; return { ok: true }; }
+        return { ok: false, reason: 'native-capacity-gaming-permission-denied' };
+      } });
+    assert.equal(result.blocker, 'STARFIELD_VR_NATIVE_BUILD_GAMING_HOLD');
+    assert.equal(h.packet, undefined);
+    assert.equal(calls, mode === 'clock-stalled' ? 11 : 1);
+    assert.equal(pauses, mode === 'clock-stalled' ? 10 : mode === 'expired-before-read' ? 1 : 0);
+  }
+  const h = host(fixture(), { mainMoves: true }); let now = 0; let calls = 0;
+  const result = await h.execute({ admissionClockFn: () => now, admissionDelayFn: async ms => { now += ms; },
+    admissionFn: () => ++calls === 1 ? { ok: false, reason: 'native-capacity-gaming-permission-denied' } : { ok: true } });
+  assert.equal(result.blocker, 'STARFIELD_VR_NATIVE_BUILD_PROTECTED_HEAD_UNPROVEN');
+  assert.equal(h.packet, undefined);
+});
+
 test('missing terminal proof retains custody without exposing raw errors', async () => {
   const h = host(fixture(), { executionError: true }); const result = await h.execute();
   assert.equal(result.ok, false); assert.equal(result.executionCustodyReleased, false);

@@ -495,7 +495,7 @@ def continuing_cpu_probe_admitted(state, now, observe_owner):
         return False
 
 
-def gaming_admitted(workspace, *, probe_owner_observer=None):
+def _gaming_admitted_once(workspace, *, probe_owner_observer=None):
     directory = workspace / "vr"
     require_plain(directory, directory=True)
     if entry_present(directory / "gaming-resource-prepare.json"):
@@ -534,6 +534,47 @@ def gaming_admitted(workspace, *, probe_owner_observer=None):
     if entry_present(directory / "gaming-resource-prepare.json"):
         raise BuildBlocked("GAMING_PREPARATION_ACTIVE")
     return True
+
+
+def gaming_admitted(workspace, *, probe_owner_observer=None):
+    # Atomic publisher replacement and a probe's PREPARING -> BOUND transition
+    # can race the read. Discard that observation and validate a complete fresh
+    # one; never retry an observed policy denial or reuse a prior grant.
+    started = time.monotonic()
+    for _ in range(3):
+        if time.monotonic() - started >= 0.1:
+            raise BuildBlocked("GAMING_STATE_CHANGED")
+        try:
+            admitted = _gaming_admitted_once(workspace, probe_owner_observer=probe_owner_observer)
+        except BuildBlocked as error:
+            if str(error) != "GAMING_STATE_CHANGED":
+                raise
+            continue
+        if time.monotonic() - started >= 0.1:
+            raise BuildBlocked("GAMING_STATE_CHANGED")
+        return admitted
+    raise BuildBlocked("GAMING_STATE_CHANGED")
+
+
+def wait_for_ordinary_gaming_admission(workspace):
+    # Only before native execution. A periodic probe is not initial permission:
+    # wait at most one second for the unchanged ordinary predicate to pass.
+    started = time.monotonic()
+    for attempt in range(11):
+        if time.monotonic() - started >= 1:
+            raise BuildBlocked("GAMING_PERMISSION_HELD")
+        try:
+            admitted = gaming_admitted(workspace)
+        except BuildBlocked as error:
+            if str(error) != "GAMING_PERMISSION_HELD":
+                raise
+            if attempt < 10:
+                time.sleep(0.1)
+            continue
+        if time.monotonic() - started >= 1:
+            raise BuildBlocked("GAMING_PERMISSION_HELD")
+        return admitted
+    raise BuildBlocked("GAMING_PERMISSION_HELD")
 
 
 def entry_present(path):
@@ -625,6 +666,9 @@ def fixed_environment(compiler, staging):
     temporary.mkdir()
     env.update({"PATH": r"C:\Windows\System32;C:\Windows", "PATHEXT": ".COM;.EXE;.BAT;.CMD",
                 "COMSPEC": r"C:\Windows\System32\cmd.exe", "TEMP": str(temporary), "TMP": str(temporary),
+                # VsDevCmd otherwise starts detached PowerShell telemetry. It
+                # is not build work and can outlive the fixed recipe's root.
+                "VSCMD_SKIP_SENDTELEMETRY": "1",
                 "STEPH_OBSERVER_EXPECTED_CL": str(compiler)})
     return env
 
@@ -676,7 +720,7 @@ def run_build(packet, verified):
         if launcher.get("ok") is not True or launcher.get("alive") is not True:
             raise BuildBlocked("BUILD_LAUNCHER_UNPROVEN")
         original, builds, workspace = fixed_roots()
-        gaming_admitted(workspace)
+        wait_for_ordinary_gaming_admission(workspace)
         require_plain(original, directory=True)
         require_plain(builds.parent, directory=True)
         pins = NativePins()
@@ -713,7 +757,7 @@ def run_build(packet, verified):
                 raise BuildBlocked("STAGED_SOURCE_PIN_CHANGED")
         receipt["isolatedBuildCreated"] = True
         environment = fixed_environment(compiler, staged)
-        gaming_admitted(workspace)
+        wait_for_ordinary_gaming_admission(workspace)
         deadline = time.monotonic() + 600
         # Continued gaming permission is checked during the owned job. Any
         # hold cancels only this build's process tree; it never kills a game.
@@ -728,8 +772,10 @@ def run_build(packet, verified):
             if not allow_continuation or now - admission_last[0] >= 1:
                 admission_last[0] = now
                 try:
-                    gaming_admitted(workspace, probe_owner_observer=(job.observe_parent_identity
-                                    if allow_continuation else None))
+                    if allow_continuation:
+                        gaming_admitted(workspace, probe_owner_observer=job.observe_parent_identity)
+                    else:
+                        wait_for_ordinary_gaming_admission(workspace)
                     launcher = job.observe_parent_identity(packet["launcherPid"], packet["launcherBirthFileTime"])
                     if launcher.get("ok") is not True or launcher.get("alive") is not True:
                         raise BuildBlocked("BUILD_LAUNCHER_ENDED")
@@ -773,6 +819,8 @@ def run_build(packet, verified):
             raise BuildBlocked("NATIVE_BUILD_DEADLINE_EXCEEDED")
         if stage_result.get("cancelled") is True:
             raise BuildBlocked("NATIVE_BUILD_CANCELLED")
+        if stage_result.get("reason") == "ROOT_EXITED_WITH_LIVE_DESCENDANTS":
+            raise BuildBlocked("NATIVE_BUILD_CHILD_EXIT_UNPROVEN")
         if (stage_result.get("operation_ok") is not True
                 or type(stage_result.get("root_exit_code")) is not int or stage_result["root_exit_code"] != 0
                 or stage_result.get("root_exited") is not True or not receipt["outputComplete"]
