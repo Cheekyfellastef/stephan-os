@@ -23,7 +23,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       '. Open Spatial Workspace using its Windows desktop shortcut.'};}
   }
   let image=null,epoch=0,refreshPromise=null;
-  let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false,inputClickPending=false;
+  let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false,inputClickPending=false,pendingNativeSession=false;
   // Keep an unverified native release in memory even if sessionStorage is blocked.
   // Losing this identity would permit a second session before the old one stopped.
   let unverifiedNativeReleaseToken=null;
@@ -216,28 +216,45 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   }
   function stop(){return beginDisconnect().stopped;}
   async function discover() {
-    if(disposed)return;
+    if(disposed)return false;
+    // A late native /session may have allocated an owner after Stop. Do not
+    // allocate another until that older grant is resolved and release checked.
+    if(pendingNativeSession){
+      publish({inputStatus:'A previous native session request is still pending. No second session was requested.'});
+      return false;
+    }
     const transition=beginDisconnect(),current=transition.epoch;
     if(!await transition.stopped)return false; // Do not allocate a new native session after an unverified stop.
-    if(!publishCurrent(current,{status:'connecting',message:'Looking for open desktop windows.'}))return;
+    if(pendingNativeSession)return false;
+    pendingNativeSession=true;
     try {
+      if(!publishCurrent(current,{status:'connecting',message:'Looking for open desktop windows.'}))return false;
       const session=await request('/session');
       if(disposed||current!==epoch){
-        // A delayed session grant still needs revoking after this surface closes.
-        if(/^[a-f0-9]{64}$/.test(session.token??''))void fetchRef(endpoint+'/stop',{method:'POST',headers:{'Content-Type':'application/json','X-Spatial-Session':session.token},body:'{}',keepalive:true}).catch(()=>{});
-        return;
+        // A late grant belongs to the cancelled request, not the next view.
+        // Preserve its token across failed /stop responses, including when
+        // browser sessionStorage is unavailable. No automatic reconnect.
+        if(/^[a-f0-9]{64}$/.test(session.token??'')){
+          unverifiedNativeReleaseToken=session.token;
+          try{sessionStore?.setItem(storageKey,session.token);}catch{}
+          const released=await revokeNativeToken(session.token);
+          if(released&&unverifiedNativeReleaseToken===session.token)unverifiedNativeReleaseToken=null;
+        }
+        return false;
       }
       if(!/^[a-f0-9]{64}$/.test(session.token??''))throw new Error('Invalid session');
       token=session.token;
       try{sessionStore?.setItem(storageKey,token);}catch{}
       const result=await request('/windows');
-      if(current!==epoch)return;
-      if(!showWindows(current,result.windows))return;
+      if(current!==epoch)return false;
+      if(!showWindows(current,result.windows))return false;
       // Keep the unbound selection alive while the person reads the window list.
       scheduleDiscovery(current);
+      return true;
     }catch(error){if(current===epoch)publish({status:'unavailable',message:error.message==='another-surface-active'
       ?'Another workspace has the connection. Disconnect it first, or wait for it to close.'
-      :'The local window connection is unavailable. Start Spatial Workspace from its desktop button.'});}
+      :'The local window connection is unavailable. Start Spatial Workspace from its desktop button.'});return false;}
+    finally{pendingNativeSession=false;}
   }
   async function connect(id) {
     let selected=state.windows.find(w=>w.id===id);if(!selected||busy||state.status!=='selecting')return false;
