@@ -586,15 +586,15 @@ test('OC2 refuses a retained STARTED/COMPLETED receipt or unreadable prior custo
       const spawnSyncFn = (executable, args) => {
         if (String(executable).toLowerCase().endsWith('git.exe')) {
           const command = args.join(' ');
-          if (command === 'rev-parse --show-toplevel') return { status: 0, stdout: repoRoot + '\\n' };
-          if (command === 'remote get-url origin') return { status: 0, stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\\n' };
-          if (command === 'rev-parse --abbrev-ref HEAD') return { status: 0, stdout: 'main\\n' };
-          if (command === 'rev-parse HEAD') return { status: 0, stdout: HEAD + '\\n' };
+          if (command === 'rev-parse --show-toplevel') return { status: 0, stdout: repoRoot + '\n' };
+          if (command === 'remote get-url origin') return { status: 0, stdout: 'https://github.com/Cheekyfellastef/stephan-os.git\n' };
+          if (command === 'rev-parse --abbrev-ref HEAD') return { status: 0, stdout: 'main\n' };
+          if (command === 'rev-parse HEAD') return { status: 0, stdout: HEAD + '\n' };
           if (command === 'status --porcelain=v1 --untracked-files=all') return { status: 0, stdout: '' };
           return { status: 1, stderr: 'unexpected git operation' };
         }
         nodeCalls += 1;
-        return { status: 0, stdout: 'fixed plan pass\\n' };
+        return { status: 0, stdout: 'fixed plan pass\n' };
       };
       const result = await executeClaimedOpenClawOc2DeterministicTestBuild(parts.action, parts.claim, {
         actionGrant: parts.grant,
@@ -612,7 +612,7 @@ test('OC2 refuses a retained STARTED/COMPLETED receipt or unreadable prior custo
         readExistingReceiptFn: async (file, encoding) => {
           priorReads += 1;
           assert.equal(encoding, 'utf8');
-          assert.match(path.basename(file), /^oc2-receipt-[a-f0-9]{32}\\.json$/);
+          assert.match(path.basename(file), /^oc2-receipt-[a-f0-9]{32}\.json$/);
           if (scenario === 'unreadable' || scenario === 'absent') {
             const error = new Error(scenario);
             error.code = scenario === 'absent' ? 'ENOENT' : 'EACCES';
