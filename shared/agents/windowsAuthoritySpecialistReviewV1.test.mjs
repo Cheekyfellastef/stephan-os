@@ -88,8 +88,8 @@ function input(overrides = {}) {
 test('router preserves exact governor specialist source pin after metadata fail-closed correction', async () => {
   const reviewerSource = await readFile(new URL('./windowsAuthorityVrResourceGovernorReviewV1.mjs', import.meta.url), 'utf8');
   const routerSource = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.equal(gitBlobSha(reviewerSource), '56976555d9aafb27dd0c52b9cd97a28afb905169');
-  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = '56976555d9aafb27dd0c52b9cd97a28afb905169';"));
+  assert.equal(gitBlobSha(reviewerSource), 'ff8b7faa8634944d7f4d0a08de81dcdc1f6b5cfa');
+  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = 'ff8b7faa8634944d7f4d0a08de81dcdc1f6b5cfa';"));
   assert.ok(reviewerSource.includes('counts.P0 === 1'));
   assert.ok(reviewerSource.includes("analysis?.verdict === 'findings'"));
 });
@@ -150,7 +150,7 @@ test('registry source pins the current bounded mailbox recovery blobs and grants
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
   assert.match(source, /f66cc26ef865bb840522b16cbb53f830f9499838/);
-  assert.match(source, /56976555d9aafb27dd0c52b9cd97a28afb905169/);
+  assert.match(source, /ff8b7faa8634944d7f4d0a08de81dcdc1f6b5cfa/);
   assert.match(source, /1b103fda85c371a218f38f20fe5163ca3f5042bf/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
