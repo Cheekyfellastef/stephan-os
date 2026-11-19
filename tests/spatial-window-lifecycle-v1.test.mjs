@@ -118,7 +118,11 @@ test('installation verification rejects replaced sources, binaries and redirecte
   }finally{rmSync(root,{recursive:true,force:true});}
 });
 test('audio help and reload confirmation do not click through to the concealed app',()=>{
-  const calls=[],screen=createHolodeckScreen({documentRef:{createElement:()=>({getContext:()=>({})})},client:{getFrame:()=>({naturalWidth:1920,naturalHeight:1080}),getState:()=>({status:'live',message:'Synthetic live fixture.'}),input:x=>calls.push(x)}});
+  const calls=[],frame={naturalWidth:1920,naturalHeight:1080};
+  const context={fillRect(){},clearRect(){},strokeRect(){},fillText(){},drawImage(){}};
+  const screen=createHolodeckScreen({documentRef:{createElement:()=>({getContext:()=>context})},
+    client:{getFrame:()=>frame,getState:()=>({status:'live',message:'Synthetic live fixture.'}),input:x=>calls.push(x)}});
+  screen.render(); // A real hologram must have painted a stable frame before any input is admitted.
   assert.equal(screen.point(.5,.5,true),true);screen.action('voice');assert.equal(screen.point(.5,.5,true),false);
   screen.action('voice');screen.action('reload');assert.equal(screen.point(.5,.5,true),false);assert.equal(calls.length,1);
 });
