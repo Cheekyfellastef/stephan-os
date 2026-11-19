@@ -195,9 +195,17 @@ test('speaker tests use the shared output selection and never begin after dispos
   assert.deepEqual(audio.getState(),closed);
   const normal=audioContextHarness(),live=createHolodeckAudioControls({...normal,navigatorRef});
   await live.listDevices();assert.equal(live.setOutput('selected-output'),true);
-  assert.equal((await live.testSpeakers()).ok,true);
+  const playback=await live.testSpeakers();
+  assert.equal(playback.ok,true);
+  assert.match(playback.reason,/tone started.*listen/i,'starting a tone cannot claim it was heard');
+  assert.doesNotMatch(playback.reason,/ChatGPT Voice (started|enabled|verified)/i);
   assert.equal(normal.contexts[0].sink,'selected-output');assert.equal(normal.contexts[0].starts,1);
-  normal.contexts[0].oscillator.onended();assert.equal(normal.contexts[0].closes,1);live.dispose();
+  assert.match(live.getState().status,/tone started.*listen/i);
+  normal.contexts[0].oscillator.onended();
+  assert.equal(normal.contexts[0].closes,1);
+  assert.match(live.getState().status,/test completed.*not verified/i,
+    'native tone completion is not proof of headset audibility or ChatGPT Voice');
+  live.dispose();
 });
 
 test('superseded device discovery cannot replace a newer list or publish after disposal',async()=>{
