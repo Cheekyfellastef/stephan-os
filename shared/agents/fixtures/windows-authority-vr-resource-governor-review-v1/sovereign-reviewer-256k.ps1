@@ -493,24 +493,46 @@ function Read-PrepareLease {
         return [pscustomobject]@{ active = $false; processName = ''; profileName = ''; expiresAtUtc = '' }
     }
     try {
-        $lease = Get-Content -LiteralPath $preparePath -Raw | ConvertFrom-Json
-        if ($lease.schemaVersion -ne 'stephanos.gaming-resource-prepare.v1' -or $lease.active -ne $true) {
-            return [pscustomobject]@{ active = $false; processName = ''; profileName = ''; expiresAtUtc = '' }
+        $raw = Get-Content -LiteralPath $preparePath -Raw
+        # Windows PowerShell 5.1 may enumerate a single-object top-level JSON
+        # array into a scalar when piping ConvertFrom-Json. Reject the root
+        # array before parsing, not only after it has been unwrapped.
+        if ($raw -notmatch '^\s*\{') { throw 'GOVERNOR_PREPARE_LEASE_INVALID_ROOT' }
+        $lease = $raw | ConvertFrom-Json
+        # A persisted reviewer/model reservation is a bounded two-minute
+        # capability. Array-valued or wrong-typed JSON must not be coerced by
+        # PowerShell collection comparisons into a live reservation.
+        if ($lease -isnot [pscustomobject] -or
+            $lease.schemaVersion -isnot [string] -or
+            $lease.schemaVersion -ne 'stephanos.gaming-resource-prepare.v1' -or
+            $lease.active -isnot [bool] -or $lease.active -ne $true -or
+            $lease.processName -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($lease.processName) -or
+            $lease.profileName -isnot [string] -or
+            $lease.createdAtUtc -isnot [string] -or
+            $lease.expiresAtUtc -isnot [string]) {
+            throw 'GOVERNOR_PREPARE_LEASE_INVALID_SCHEMA'
         }
-        $expiry = [DateTime]::MinValue
-        if (-not [DateTime]::TryParse([string]$lease.expiresAtUtc, [ref]$expiry)) {
-            Clear-PrepareLease
-            return [pscustomobject]@{ active = $false; processName = ''; profileName = ''; expiresAtUtc = '' }
+        $created = [DateTimeOffset]::MinValue
+        $expiry = [DateTimeOffset]::MinValue
+        $style = [System.Globalization.DateTimeStyles]::AssumeUniversal
+        $culture = [System.Globalization.CultureInfo]::InvariantCulture
+        if (-not [DateTimeOffset]::TryParse($lease.createdAtUtc, $culture, $style, [ref]$created) -or
+            -not [DateTimeOffset]::TryParse($lease.expiresAtUtc, $culture, $style, [ref]$expiry)) {
+            throw 'GOVERNOR_PREPARE_LEASE_INVALID_TIME'
         }
-        if ((Get-Date).ToUniversalTime() -ge $expiry.ToUniversalTime()) {
-            Clear-PrepareLease
-            return [pscustomobject]@{ active = $false; processName = ''; profileName = ''; expiresAtUtc = '' }
+        $nowUtc = [DateTimeOffset]::UtcNow
+        if ($created -gt $nowUtc.AddSeconds(5) -or
+            $expiry -le $created -or
+            $expiry -gt $created.AddMinutes(2) -or
+            $nowUtc -ge $expiry) {
+            throw 'GOVERNOR_PREPARE_LEASE_OUTSIDE_BOUNDED_WINDOW'
         }
         return [pscustomobject]@{
             active = $true
-            processName = [string]$lease.processName
-            profileName = [string]$lease.profileName
-            expiresAtUtc = [string]$lease.expiresAtUtc
+            processName = $lease.processName
+            profileName = $lease.profileName
+            expiresAtUtc = $lease.expiresAtUtc
         }
     }
     catch {

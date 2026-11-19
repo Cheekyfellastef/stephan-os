@@ -103,8 +103,8 @@ function rejects(content) {
 }
 
 test('fixture preserves exact current reviewer governor source blob', () => {
-  assert.equal(blobSha(governor), 'c6ea953880d63b61d494259ccc8e8ecd423b14d0');
-  assert.equal(Buffer.byteLength(governor, 'utf8'), 59891);
+  assert.equal(blobSha(governor), '25d44f8d7a388a6117acbdb2c2bed145743fe852');
+  assert.equal(Buffer.byteLength(governor, 'utf8'), 61073);
 });
 
 for (const [name, content] of [['current reviewer governor', governor]]) {
@@ -753,6 +753,183 @@ test('Windows PowerShell executes the isolated gaming override reader with mocke
   });
   assert.equal(result.status,0,String(result.stderr || result.error || 'PowerShell override evaluation failed'));
   assert.match(result.stdout,/OVERRIDE_MOCK_CASES_PASSED/);
+});
+
+test('persisted preparation lease requires scalar identity and a bounded two-minute interval', () => {
+  const reader = governor.split('function Read-PrepareLease {')[1]
+    ?.split('function Get-ProfileOverride {')[0] || '';
+  for (const literal of [
+    '$lease -isnot [pscustomobject]',
+    "$raw -notmatch '^\\s*\\{'",
+    '$lease.schemaVersion -isnot [string]',
+    '$lease.active -isnot [bool]',
+    '$lease.processName -isnot [string]',
+    '$lease.profileName -isnot [string]',
+    '$lease.createdAtUtc -isnot [string]',
+    '$lease.expiresAtUtc -isnot [string]',
+    '$created -gt $nowUtc.AddSeconds(5)',
+    '$expiry -le $created',
+    '$expiry -gt $created.AddMinutes(2)',
+    '$nowUtc -ge $expiry',
+    'Clear-PrepareLease',
+  ]) assert.ok(reader.includes(literal), 'missing lease fail-closed guard: ' + literal);
+  const now = Date.now();
+  const good = {
+    schemaVersion: 'stephanos.gaming-resource-prepare.v1', active: true,
+    processName: 'SovereignReviewer', profileName: 'review-large-context',
+    createdAtUtc: new Date(now - 10000).toISOString(),
+    expiresAtUtc: new Date(now + 90000).toISOString(),
+  };
+  const admits = value => {
+    if (!value || Array.isArray(value) || typeof value !== 'object') return false;
+    if (typeof value.schemaVersion !== 'string'
+      || value.schemaVersion !== good.schemaVersion || typeof value.active !== 'boolean'
+      || value.active !== true || typeof value.processName !== 'string'
+      || !value.processName.trim() || typeof value.profileName !== 'string'
+      || typeof value.createdAtUtc !== 'string' || typeof value.expiresAtUtc !== 'string') return false;
+    const created = Date.parse(value.createdAtUtc), expires = Date.parse(value.expiresAtUtc);
+    return Number.isFinite(created) && Number.isFinite(expires)
+      && created <= now + 5000 && expires > created && expires <= created + 120000 && now < expires;
+  };
+  assert.equal(admits(good), true);
+  const rejected = [
+    [good], null, {}, { ...good, schemaVersion: [good.schemaVersion] },
+    { ...good, active: [true] }, { ...good, active: 'true' },
+    { ...good, processName: ['SovereignReviewer'] },
+    { ...good, profileName: ['review-large-context'] },
+    { ...good, createdAtUtc: [good.createdAtUtc] },
+    { ...good, expiresAtUtc: [good.expiresAtUtc] },
+    { ...good, createdAtUtc: new Date(now + 20000).toISOString() },
+    { ...good, expiresAtUtc: new Date(now + 300000).toISOString() },
+    { ...good, expiresAtUtc: new Date(now - 1000).toISOString() },
+    { ...good, createdAtUtc: 'not-a-date' },
+    { ...good, processName: '' },
+  ];
+  for (const bad of rejected) assert.equal(admits(bad), false, JSON.stringify(bad));
+});
+
+test('Windows PowerShell rejects malformed or overlong persisted reviewer leases before admission', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const fn = 'function Read-PrepareLease {' + (governor.split('function Read-PrepareLease {')[1]
+    ?.split('function Get-ProfileOverride {')[0] || '');
+  const now = Date.now();
+  const good = {
+    schemaVersion: 'stephanos.gaming-resource-prepare.v1', active: true,
+    processName: 'SovereignReviewer', profileName: 'review-large-context',
+    createdAtUtc: new Date(now - 10000).toISOString(),
+    expiresAtUtc: new Date(now + 90000).toISOString(),
+  };
+  const cases = [
+    [good, true], [[good], false], [null, false],
+    [{ ...good, schemaVersion: [good.schemaVersion] }, false],
+    [{ ...good, active: [true] }, false],
+    [{ ...good, active: 'true' }, false],
+    [{ ...good, processName: ['SovereignReviewer'] }, false],
+    [{ ...good, profileName: ['review-large-context'] }, false],
+    [{ ...good, expiresAtUtc: [good.expiresAtUtc] }, false],
+    [{ ...good, createdAtUtc: new Date(now + 20000).toISOString() }, false],
+    [{ ...good, expiresAtUtc: new Date(now + 300000).toISOString() }, false],
+    [{ ...good, expiresAtUtc: new Date(now - 1000).toISOString() }, false],
+  ];
+  const quote = s => "'" + String(s).replaceAll("'", "''") + "'";
+  const script = [
+    'Set-StrictMode -Version Latest',
+    "function Test-Path { param([string]$LiteralPath,[string]$PathType) return $true }",
+    "function Get-Content { param([string]$LiteralPath,[switch]$Raw) return $script:mockContent }",
+    'function Clear-PrepareLease { $script:cleared = $true }',
+    "$preparePath = 'mock-no-disk-access'",
+    fn,
+    ...cases.map(([obj, expected], index) => [
+      '$script:mockContent = ' + quote(JSON.stringify(obj)),
+      '$script:cleared = $false',
+      '$observed = Read-PrepareLease',
+      'if ($observed.active -ne 
+  // Exact-source control-flow verification, not a claim of installed PowerShell runtime.
+  const resolver = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  const forceOn = resolver.split("if ($override -eq 'FORCE_ON') {")[1]
+    ?.split('    # A reviewer reservation may not replace an unexpired gaming cooldown.')[0] || '';
+  for (const value of ["name = 'operator-forced-gaming'",'lightweightOnly = $true',
+    'parkAllModels = $true','customProfileApplied = $false','minFreeVramMiB = 12288']) {
+    assert.ok(forceOn.includes(value), 'forced gaming must retain ' + value);
+  }
+  assert.ok(forceOn.indexOf("name = 'operator-forced-gaming'") < forceOn.indexOf("phase = 'GAMING'"));
+  const reconcile = governor.split('function Invoke-Reconcile {')[1]
+    ?.split('function Invoke-CurrentReconcile {')[0] || '';
+  assert.ok(reconcile.includes('$parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)'));
+  assert.ok(reconcile.includes('$modelsToPark = if ($parkAllModels) { @($loadedBefore) } else { @($heavyBefore) }'));
+  for (const retired of ['cancelled','expired']) {
+    const prior = { leaseActive:false, profile:'review-large-context', retired };
+    const effective = { phase:'GAMING', active:true,
+      profile:{ name:'operator-forced-gaming', parkAllModels:true, lightweightOnly:true } };
+    const loaded = ['Qwen32B','Qwen3B'];
+    const parkAll = effective.active && effective.profile.parkAllModels;
+    assert.equal(parkAll,true,JSON.stringify(prior));
+    assert.deepEqual(parkAll ? loaded : ['Qwen32B'],loaded);
+    assert.equal(!effective.profile.lightweightOnly,false);
+    assert.equal(!parkAll,false);
+    assert.notEqual(effective.profile.name,prior.profile);
+  }
+});
+
+test('ForceOn source parses with Windows PowerShell AST without executing it', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const parse = "$t=$null; $e=$null; [void][System.Management.Automation.Language.Parser]::ParseInput([Console]::In.ReadToEnd(),[ref]$t,[ref]$e); if ($e.Count -ne 0) { $e | ForEach-Object { [Console]::Error.WriteLine($_.ToString()) }; exit 4 }";
+  const r = spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',parse],{
+    input:governor,encoding:'utf8',timeout:30000,
+  });
+  assert.equal(r.status,0,String(r.stderr || r.error || 'PowerShell parse failed'));
+});
+ + (expected ? 'true' : 'false') + ') { throw ' + quote('LEASE_ACTIVE_CASE_' + index) + ' }',
+      'if ($script:cleared -ne 
+  // Exact-source control-flow verification, not a claim of installed PowerShell runtime.
+  const resolver = governor.split('function Resolve-EffectiveState {')[1]
+    ?.split('function Invoke-Reconcile {')[0] || '';
+  const forceOn = resolver.split("if ($override -eq 'FORCE_ON') {")[1]
+    ?.split('    # A reviewer reservation may not replace an unexpired gaming cooldown.')[0] || '';
+  for (const value of ["name = 'operator-forced-gaming'",'lightweightOnly = $true',
+    'parkAllModels = $true','customProfileApplied = $false','minFreeVramMiB = 12288']) {
+    assert.ok(forceOn.includes(value), 'forced gaming must retain ' + value);
+  }
+  assert.ok(forceOn.indexOf("name = 'operator-forced-gaming'") < forceOn.indexOf("phase = 'GAMING'"));
+  const reconcile = governor.split('function Invoke-Reconcile {')[1]
+    ?.split('function Invoke-CurrentReconcile {')[0] || '';
+  assert.ok(reconcile.includes('$parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)'));
+  assert.ok(reconcile.includes('$modelsToPark = if ($parkAllModels) { @($loadedBefore) } else { @($heavyBefore) }'));
+  for (const retired of ['cancelled','expired']) {
+    const prior = { leaseActive:false, profile:'review-large-context', retired };
+    const effective = { phase:'GAMING', active:true,
+      profile:{ name:'operator-forced-gaming', parkAllModels:true, lightweightOnly:true } };
+    const loaded = ['Qwen32B','Qwen3B'];
+    const parkAll = effective.active && effective.profile.parkAllModels;
+    assert.equal(parkAll,true,JSON.stringify(prior));
+    assert.deepEqual(parkAll ? loaded : ['Qwen32B'],loaded);
+    assert.equal(!effective.profile.lightweightOnly,false);
+    assert.equal(!parkAll,false);
+    assert.notEqual(effective.profile.name,prior.profile);
+  }
+});
+
+test('ForceOn source parses with Windows PowerShell AST without executing it', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const parse = "$t=$null; $e=$null; [void][System.Management.Automation.Language.Parser]::ParseInput([Console]::In.ReadToEnd(),[ref]$t,[ref]$e); if ($e.Count -ne 0) { $e | ForEach-Object { [Console]::Error.WriteLine($_.ToString()) }; exit 4 }";
+  const r = spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',parse],{
+    input:governor,encoding:'utf8',timeout:30000,
+  });
+  assert.equal(r.status,0,String(r.stderr || r.error || 'PowerShell parse failed'));
+});
+ + (expected ? 'false' : 'true') + ') { throw ' + quote('LEASE_CLEANUP_CASE_' + index) + ' }',
+    ].join('\n')),
+    "'LEASE_TYPED_BOUND_CASES_PASSED'",
+  ].join('\n');
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8', timeout: 30000, windowsHide: true,
+  });
+  assert.equal(r.status, 0, String(r.stderr || r.error || 'PowerShell lease mock failed'));
+  assert.match(r.stdout, /LEASE_TYPED_BOUND_CASES_PASSED/);
 });
 
 test('ForceOn never inherits retired reviewer model permissions after cancellation or expiry', () => {

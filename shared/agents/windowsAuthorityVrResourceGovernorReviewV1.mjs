@@ -30,6 +30,7 @@ const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: '69c3396479d83e0f9521958f3f4dc13671863c68', size: 59353, reviewerReservation: true }),
   Object.freeze({ blobSha: '5a6b7672c406f941d06d1fabc2f7d31636122122', size: 59840, reviewerReservation: true, corruptOverrideFailClosed: true }),
   Object.freeze({ blobSha: 'c6ea953880d63b61d494259ccc8e8ecd423b14d0', size: 59891, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true }),
+  Object.freeze({ blobSha: '25d44f8d7a388a6117acbdb2c2bed145743fe852', size: 61073, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true }),
 ]);
 
 const text = (value) => String(value ?? '').trim();
@@ -271,6 +272,24 @@ function reviewGovernor(source, findings) {
       "return 'FORCE_ON'",
       'vr-governor-override-corrupt-failclosed-missing',
       'Unreadable or invalid persisted override must retain forced gaming protection.');
+  }
+  if (sourceContract.typedPrepareLease) {
+    const leaseReader = source.split('function Read-PrepareLease {')[1]
+      ?.split('function Get-ProfileOverride {')[0] || '';
+    for (const [required, code] of [
+      ['$lease -isnot [pscustomobject]', 'vr-governor-prepare-lease-object-type-unchecked'],
+      ["$raw -notmatch '^\\s*\\{'", 'vr-governor-prepare-lease-root-array-unchecked'],
+      ['$lease.schemaVersion -isnot [string]', 'vr-governor-prepare-lease-schema-type-unchecked'],
+      ['$lease.active -isnot [bool]', 'vr-governor-prepare-lease-active-type-unchecked'],
+      ['$lease.processName -isnot [string]', 'vr-governor-prepare-lease-principal-type-unchecked'],
+      ['$lease.profileName -isnot [string]', 'vr-governor-prepare-lease-profile-type-unchecked'],
+      ['$lease.createdAtUtc -isnot [string]', 'vr-governor-prepare-lease-created-type-unchecked'],
+      ['$lease.expiresAtUtc -isnot [string]', 'vr-governor-prepare-lease-expiry-type-unchecked'],
+      ['$expiry -gt $created.AddMinutes(2)', 'vr-governor-prepare-lease-unbounded-expiry'],
+      ['$created -gt $nowUtc.AddSeconds(5)', 'vr-governor-prepare-lease-future-created'],
+      ['Clear-PrepareLease', 'vr-governor-prepare-lease-corrupt-cleanup-missing'],
+    ]) requireLiteral(findings, leaseReader, required, code,
+      'A persisted reviewer reservation must remain a typed, bounded two-minute lease.');
   }
   requireLiteral(findings, source,
     'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',
