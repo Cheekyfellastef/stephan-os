@@ -178,9 +178,11 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     const passed = observations.length > 0
       && observations.every(gate => gateLive(gate) && ownGateValue(gate, 'status') === 'PASS')
       && causalClosure && (id !== 'pickup' || Boolean(signedPickup));
+    // Gate 19 remains diagnostic: worker-scoped STARTED has not been proven.
+    const diagnosticPickup = id === 'pickup' && passed;
     const stale = ledgerSourceQualified && observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && proofRef(gate));
     const waiting = ledgerLive && observations.some(gate => gate?.status === 'WAITING_FOR_PREREQUISITE');
-    const state = failure ? 'BLOCKED' : passed ? 'PROVEN' : stale ? 'STALE' : waiting ? 'WAITING' : 'UNKNOWN';
+    const state = failure ? 'BLOCKED' : diagnosticPickup ? 'DIAGNOSTIC' : passed ? 'PROVEN' : stale ? 'STALE' : waiting ? 'WAITING' : 'UNKNOWN';
     const historicalGate = trackKnown && Number.isFinite(time(trackAt)) && time(trackAt) <= nowMs
       ? array(track.gates).find(gate => gate.id === traceGateByStage[id]) : null;
     const traceGate = trackLive ? historicalGate : null;
@@ -196,7 +198,7 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       trafficLight: !trackLive ? 'AMBER' : ['FAIL', 'BLOCKED'].includes(historicalGate.state) ? 'RED'
         : historicalGate.state === 'WAITING' || (id === 'pickup' && historicalGate.state === 'PASS') ? 'AMBER'
           : historicalGate.state === 'PASS' ? 'AMBER' : 'GREY' } : null;
-    return { id, label, state, trafficLight: failure ? 'RED' : passed ? 'GREEN' : stale || waiting ? 'AMBER' : 'GREY',
+    return { id, label, state, trafficLight: failure ? 'RED' : diagnosticPickup ? 'AMBER' : passed ? 'GREEN' : stale || waiting ? 'AMBER' : 'GREY',
       operational,
       traceState: traceGate?.state || '', traceReason: traceGate?.reason || '',
       gateIds, expiresAtUtc: passed || failure ? new Date(Math.min(time(ledger.observedAtUtc),
@@ -204,7 +206,8 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       proofRefs: observations.flatMap(gate => proofRef(gate) ? [proofRef(gate)] : []),
       reason: failure?.typedBlocker || (id === 'commit' ? 'No distinct commit receipt is published by the current feed.'
         : id === 'edit' || id === 'test' ? 'Gate 20 proves source diff and tests together.'
-          : passed ? 'Current signed checkpoint proof.' : 'Awaiting current signed checkpoint proof.') };
+          : diagnosticPickup ? 'Signed gate 19 is diagnostic-only; an authenticated worker-scoped STARTED receipt is absent.'
+            : passed ? 'Current signed checkpoint proof.' : 'Awaiting current signed checkpoint proof.') };
   });
   const build = projection.stephanosBuildTruth;
   const buildKnown = build?.schemaVersion === 'stephanos.sovereign-build-truth.v1';

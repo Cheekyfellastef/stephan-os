@@ -130,7 +130,7 @@ test('keeps unsigned goal-to-worker attribution separate from generic signed sta
   assert.equal(result.materialLanes, 2);
   assert.equal(result.targetMaterialLanes, 15);
   assert.equal(result.stages.find(s => s.id === 'commit').state, 'UNKNOWN');
-  assert.equal(result.stages.find(s => s.id === 'pickup').state, 'PROVEN');
+  assert.equal(result.stages.find(s => s.id === 'pickup').state, 'DIAGNOSTIC');
   assert.equal(result.stages.find(s => s.id === 'edit').proofRefs[0], result.stages.find(s => s.id === 'test').proofRefs[0]);
   assert.equal(result.queueCounts.open, 9);
   assert.equal(result.uncertainGoalCount, 1);
@@ -213,7 +213,7 @@ test('Goal #2002: one diagnostic pickup cannot be replayed across goals, workers
   data.controllerFleet.controllers[0].proofRefs = [ref];
   data.controllerFleet.controllers[0].materialActionsSucceeded = 9;
   const duplicated = project(data, signedOptions);
-  assert.equal(duplicated.stages.find(stage => stage.id === 'pickup').state, 'PROVEN',
+  assert.equal(duplicated.stages.find(stage => stage.id === 'pickup').state, 'DIAGNOSTIC',
     'the separately signed diagnostic stage stays visible');
   assert.equal(duplicated.state, 'UNKNOWN');
   assert.equal(duplicated.buildingGoalCount, 0);
@@ -232,7 +232,7 @@ test('Goal #2002: one diagnostic pickup cannot be replayed across goals, workers
 });
 test('Goal #2002: pickup stage requires a current, successful claim without any gate veto', () => {
   const valid = input();
-  assert.equal(project(valid, signedOptions).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  assert.equal(project(valid, signedOptions).stages.find(stage => stage.id === 'pickup').state, 'DIAGNOSTIC');
   const noClaim = structuredClone(valid);
   noClaim.goalBuildGateObservatory.gates = noClaim.goalBuildGateObservatory.gates.filter(gate => gate.id !== 18);
   assert.notEqual(project(noClaim, signedOptions).stages.find(stage => stage.id === 'pickup').state, 'PROVEN');

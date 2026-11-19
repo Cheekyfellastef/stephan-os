@@ -67,7 +67,7 @@ test('Goal #2002: a reusable gate-19 proof cannot certify controller BUILDING', 
   };
   const output = overview(input, { nowMs: NOW, statusRecords: [sourceWitness()] });
   assert.deepEqual(output.controllers.map(c => c.trafficLight), ['AMBER', 'AMBER']);
-  assert.equal(output.stages.find(stage => stage.id === 'pickup').state, 'PROVEN');
+  assert.equal(output.stages.find(stage => stage.id === 'pickup').state, 'DIAGNOSTIC');
 });
 
 const signedGate = (id, status = 'PASS', extra = {}) => ({
@@ -85,6 +85,14 @@ const physicalStage = signedGates => {
   return overview(input, { nowMs: NOW, statusRecords: [sourceWitness()] }).stages.find(stage => stage.id === 'pickup');
 };
 
+test('Goal #2961: gate 19 cannot certify worker-scoped STARTED', () => {
+  const stage = physicalStage([4, 5, 7, 6, 18, 19].map(id => signedGate(id)));
+  assert.equal(stage.state, 'DIAGNOSTIC');
+  assert.equal(stage.trafficLight, 'AMBER');
+  assert.ok(stage.reason.includes('worker-scoped STARTED'));
+  assert.ok(stage.proofRefs.includes('workspace:proof/gate-19'));
+});
+
 test('Goal #2961: gate-19 signed diagnostic requires an independent current-head witness', () => {
   const gates = [4, 5, 7, 6, 18, 19].map(id => signedGate(id));
   const stage = (sourceHead, witnesses = []) => overview({
@@ -95,7 +103,7 @@ test('Goal #2961: gate-19 signed diagnostic requires an independent current-head
     },
   }, { nowMs: NOW, statusRecords: witnesses }).stages.find(value => value.id === 'pickup');
   const head = 'a'.repeat(40);
-  assert.equal(stage(head, [sourceWitness(head)]).trafficLight, 'GREEN',
+  assert.equal(stage(head, [sourceWitness(head)]).trafficLight, 'AMBER',
     'independent source-matched witness preserves a proven diagnostic');
   for (const [label, ledgerHead, witnesses] of [
     ['cross-head diagnostic one', head, [sourceWitness('b'.repeat(40))]],
@@ -118,8 +126,8 @@ test('Goal #2961: gate-19 signed diagnostic requires an independent current-head
 test('Goal #2002: signed pickup requires admission, SELECT, CLAIM and pickup proofs', () => {
   const validIds = [4, 5, 7, 6, 18, 19];
   const valid = validIds.map(id => signedGate(id));
-  assert.equal(physicalStage(valid).state, 'PROVEN');
-  assert.equal(physicalStage(valid).trafficLight, 'GREEN');
+  assert.equal(physicalStage(valid).state, 'DIAGNOSTIC');
+  assert.equal(physicalStage(valid).trafficLight, 'AMBER');
   for (const missing of validIds) {
     const stage = physicalStage(valid.filter(gate => gate.id !== missing));
     assert.notEqual(stage.state, 'PROVEN', 'missing required gate ' + missing);
@@ -146,7 +154,7 @@ test('Goal #2002: WAITING, STALE and proofless SELECT cannot certify pickup', ()
 test('Goal #2002: prerequisite proofRef aliasing cannot certify physical pickup', () => {
   const ids = [4, 5, 7, 6, 18, 19];
   const valid = ids.map(id => signedGate(id));
-  assert.equal(physicalStage(valid).trafficLight, 'GREEN', 'distinct gate records remain accepted');
+  assert.equal(physicalStage(valid).trafficLight, 'AMBER', 'diagnostic gate records cannot certify worker STARTED');
   const corruptions = [
     ['all prerequisites share one reference', valid.map(gate => ({ ...gate, proofRef: valid[0].proofRef }))],
     ['SELECT reuses CLAIM reference', valid.map(gate => gate.id === 6
@@ -169,7 +177,7 @@ test('Goal #2002: duplicate signed gate identities cannot independently certify 
   const valid = [4, 5, 7, 6, 18, 19].map(id => signedGate(id));
   const duplicatedSelect = [...valid, signedGate(6)];
   assert.notEqual(physicalStage(duplicatedSelect).trafficLight, 'GREEN');
-  assert.equal(physicalStage(valid).state, 'PROVEN');
+  assert.equal(physicalStage(valid).state, 'DIAGNOSTIC');
 });
 
 const signedDisplayStages = gateRecords => overview({
@@ -185,7 +193,7 @@ test('Goal #2961: non-pickup signed stage cards require own nonblank string proo
   const all = [4, 5, 7, 6, 18, 19, 20, 21, 22].map(id => signedGate(id));
   const accepted = signedDisplayStages(all);
   for (const name of ['admission', 'select', 'claim', 'pickup', 'edit', 'test', 'proof', 'merge']) {
-    assert.equal(accepted.find(stage => stage.id === name).trafficLight, 'GREEN',
+    assert.equal(accepted.find(stage => stage.id === name).trafficLight, name === 'pickup' ? 'AMBER' : 'GREEN',
       'valid distinct proof stays eligible: ' + name);
   }
   for (const [id, invalid, stageNames] of [
@@ -229,7 +237,8 @@ test('Goal #2961: review and merge display require a causally complete signed ch
   const ids = [4, 5, 7, 6, 18, 19, 20, 21, 22];
   const valid = ids.map(id => signedGate(id));
   for (const name of ['admission', 'select', 'claim', 'pickup', 'edit', 'test', 'proof', 'merge']) {
-    assert.equal(signedDisplayStages(valid).find(stage => stage.id === name).trafficLight, 'GREEN',
+    assert.equal(signedDisplayStages(valid).find(stage => stage.id === name).trafficLight,
+      name === 'pickup' ? 'AMBER' : 'GREEN',
       'complete distinct chain remains green: ' + name);
   }
   const wrong = [
@@ -663,7 +672,7 @@ test('Goal #2961: inherited signed diagnostic wrapper provenance cannot greenlig
   const pickup = ledger => overview({ goalBuildGateObservatory: ledger }, {
     nowMs: NOW, statusRecords: [sourceWitness()],
   }).stages.find(stage => stage.id === 'pickup');
-  assert.equal(pickup(valid).state, 'PROVEN', 'own current proof remains admitted');
+  assert.equal(pickup(valid).state, 'DIAGNOSTIC', 'own diagnostic proof remains visible');
   for (const field of ['schemaVersion', 'diagnosticOnly', 'approvalAuthority',
     'mergeAuthority', 'sourceHead', 'observedAtUtc', 'observationStatus', 'gates']) {
     const inherited = Object.assign(Object.create({ [field]: valid[field] }),
@@ -696,7 +705,7 @@ test('Goal #2961: inherited canonical status identity cannot greenlight signed p
     nowMs: NOW, statusRecords: records,
   }).stages.find(value => value.id === 'pickup');
   const valid = sourceWitness(head);
-  assert.equal(stage([valid]).state, 'PROVEN', 'owned, current Core identity admits diagnostic');
+  assert.equal(stage([valid]).state, 'DIAGNOSTIC', 'owned, current Core identity admits diagnostic');
   const inherited = Object.assign(Object.create({ statusId: valid.statusId }), {
     timestampUtc: valid.timestampUtc, sourceHead: valid.sourceHead,
   });
