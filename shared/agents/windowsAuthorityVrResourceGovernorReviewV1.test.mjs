@@ -827,15 +827,16 @@ test('PowerShell engine checks valid reviewer and game leases plus malformed per
     'Set-StrictMode -Version Latest',
     'function Test-Path { param([string]$LiteralPath,[string]$PathType) return $true }',
     'function Get-Content { param([string]$LiteralPath,[switch]$Raw) return $script:mockContent }',
-    'function Clear-PrepareLease { $script:cleared = $true }',
+    'function Clear-PrepareLease { $script:cleared = $true; $script:leaseError = [string]$Error[0] }',
     "$preparePath = 'mock-no-disk-access'",
     reader,
     ...cases.map(([obj, expected], n) => [
       '$script:mockContent = ' + quote(JSON.stringify(obj)),
       '$script:cleared = $false',
+      "$script:leaseError = ''",
       '$observed = Read-PrepareLease',
       'if ($observed.active -ne ' + (expected ? '$true' : '$false')
-        + ') { throw ' + quote('ACTIVE_CASE_' + n) + ' }',
+        + ') { throw (' + quote('ACTIVE_CASE_' + n) + " + ': ' + $script:leaseError) }',
       'if ($script:cleared -ne ' + (expected ? '$false' : '$true')
         + ') { throw ' + quote('CLEAR_CASE_' + n) + ' }',
     ].join('\n')),
