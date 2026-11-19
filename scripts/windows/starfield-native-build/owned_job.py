@@ -18,6 +18,7 @@ import hashlib
 import math
 import ntpath
 import os
+from pathlib import Path
 import subprocess
 import time
 from types import MappingProxyType
@@ -31,6 +32,47 @@ DRAIN_SECONDS = 5.0
 ROOT_EXIT_ACCOUNTING_SECONDS = 1.0
 PROCESS_LIMIT = 16
 POLL_SECONDS = 0.01
+
+# This optional internal profile admits only the separately pinned installed
+# compiler helper. It is not a caller-selected process-name cleanup policy.
+COMPLETED_HELPER_IMAGE = (r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
+                          r"\VC\Tools\MSVC\14.44.35207\bin\Hostx64\x64\vctip.exe")
+COMPLETED_HELPER_SHA256 = "be4e7b09df1e23f386eb610b76ed45272b9fed03ab001ddf0b1d9675f8989437"
+
+
+class _PinnedCompletedHelper:
+    def __init__(self, stream, pins):
+        self.stream = stream
+        self.pins = pins  # retain the original namespace and file pins
+        self.image = COMPLETED_HELPER_IMAGE
+        self.sha256 = COMPLETED_HELPER_SHA256
+
+    def verified(self):
+        try:
+            if self.stream.closed or self.stream not in self.pins.streams or not self.pins.directories:
+                return False
+            position = self.stream.tell()
+            try:
+                self.stream.seek(0)
+                raw = self.stream.read(8 * 1024 * 1024 + 1)
+            finally:
+                self.stream.seek(position)
+            return (self.image == COMPLETED_HELPER_IMAGE and self.sha256 == COMPLETED_HELPER_SHA256
+                    and 0 < len(raw) <= 8 * 1024 * 1024
+                    and hashlib.sha256(raw).hexdigest() == self.sha256)
+        except Exception:
+            return False
+
+
+def pin_completed_toolchain_helper(pins):
+    """Use the build's canonical NativePins; retain them through native Job zero."""
+    raw = pins.read(Path(COMPLETED_HELPER_IMAGE), 8 * 1024 * 1024)
+    if hashlib.sha256(raw).hexdigest() != COMPLETED_HELPER_SHA256:
+        raise ValueError("COMPLETED_HELPER_BINARY_UNQUALIFIED")
+    helper = _PinnedCompletedHelper(pins.streams[-1], pins)
+    if not helper.verified():
+        raise ValueError("COMPLETED_HELPER_PIN_UNPROVEN")
+    return helper
 
 DWORD = ctypes.c_uint32
 WORD = ctypes.c_uint16
@@ -62,6 +104,10 @@ STARTF_USESTDHANDLES = 0x100
 
 class _FILETIME(ctypes.Structure):
     _fields_ = [("low", DWORD), ("high", DWORD)]
+
+
+class _JOB_PROCESS_IDS(ctypes.Structure):
+    _fields_ = [("assigned", DWORD), ("count", DWORD), ("ids", ULONG_PTR * PROCESS_LIMIT)]
 
 
 class _SECURITY_ATTRIBUTES(ctypes.Structure):
@@ -264,7 +310,8 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
                     parent_pid: int, parent_birth_filetime: int | str,
                     cancel_requested: Callable[[], bool] | None = None,
                     running_cancel_requested: Callable[[], bool] | None = None,
-                    on_suspended: Callable[[Mapping], bool] | None = None) -> dict:
+                    on_suspended: Callable[[Mapping], bool] | None = None,
+                    completed_helper: _PinnedCompletedHelper | None = None) -> dict:
     """Execute one internally selected stage; never call with public input.
 
     The deadline is an absolute monotonic time within the caller's aggregate
@@ -280,6 +327,9 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
         raise ValueError("OWNED_STAGE_RUNNING_CANCEL_CALLBACK_INVALID")
     if on_suspended is not None and not callable(on_suspended):
         raise ValueError("OWNED_STAGE_BIND_CALLBACK_INVALID")
+    if completed_helper is not None and (type(completed_helper) is not _PinnedCompletedHelper
+                                         or not completed_helper.verified()):
+        raise ValueError("COMPLETED_HELPER_PIN_UNPROVEN")
     api = _Win32()
     k = api.k
     started = time.monotonic()
@@ -292,6 +342,7 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
         "parent_identity_verified": False, "parent_alive_at_completion": False,
         "parent_binding_accepted": on_suspended is None,
         "cancelled": False, "timed_out": False, "termination_requested": False,
+        "completed_helper_retirement": None,
         "zero_active_processes_observed": False, "active_processes": None,
         "prelaunch_excluded": True, "custody_released": False, "custody_error": None,
         "pipe_eof_observed": False, "output_complete": False, "output_overflow": False,
@@ -306,6 +357,8 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
     pi = _PROCESS_INFORMATION()
     captured = bytearray()
     pipe_failed = False
+    latest_total_processes = None
+    retirement_total_processes = None
 
     def fail(code, *, custody=False, winerror=None):
         if code not in result["failures"] and len(result["failures"]) < 16:
@@ -374,6 +427,7 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
         return True
 
     def job_active():
+        nonlocal latest_total_processes
         if not job:
             return None
         accounting = _ACCOUNTING()
@@ -381,6 +435,10 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
             fail("JOB_ACCOUNTING_UNPROVEN", custody=True, winerror=ctypes.get_last_error())
             return None
         result["active_processes"] = int(accounting.active_processes)
+        latest_total_processes = int(accounting.total_processes)
+        if (retirement_total_processes is not None
+                and latest_total_processes != retirement_total_processes):
+            fail("HELPER_RETIREMENT_PROCESS_SET_CHANGED")
         if accounting.active_processes == 0:
             result["zero_active_processes_observed"] = True
         return int(accounting.active_processes)
@@ -430,6 +488,64 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
         result["termination_requested"] = True
         if not k.TerminateJobObject(job, 79):
             fail("JOB_TERMINATION_UNPROVEN", custody=True, winerror=ctypes.get_last_error())
+
+    def retire_completed_helper():
+        """Retire one qualified ancillary process, then use ordinary native drain.
+
+        Root success is distinct from helper retirement and native Job zero.
+        No process outside this non-inherited Job is opened for termination.
+        A cumulative native process count detects new members even if they
+        race retirement and disappear before the final zero observation.
+        """
+        nonlocal retirement_total_processes
+        if (completed_helper is None or result["root_exit_code"] != 0
+                or result["failures"] or not completed_helper.verified()):
+            return False
+        helper_handle = None
+        try:
+            def sole_member():
+                members = _JOB_PROCESS_IDS()
+                if not k.QueryInformationJobObject(job, 3, ctypes.byref(members), ctypes.sizeof(members), None):
+                    raise _NativeFailure("HELPER_MEMBERSHIP_UNPROVEN", ctypes.get_last_error())
+                if members.assigned != 1 or members.count != 1 or not members.ids[0]:
+                    raise _NativeFailure("HELPER_MEMBERSHIP_NOT_EXCLUSIVE")
+                return int(members.ids[0])
+
+            if job_active() != 1:
+                return False
+            before_total = latest_total_processes
+            pid = sole_member()
+            if pid == result["root_pid"]:
+                return False
+            helper_handle = k.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+            api.require(helper_handle, "HELPER_PROCESS_OPEN_UNPROVEN")
+            birth = api.birth(helper_handle)
+            image = api.image(helper_handle)
+            member = BOOL()
+            api.require(k.IsProcessInJob(helper_handle, job, ctypes.byref(member)), "HELPER_JOB_QUERY_UNPROVEN")
+            if (k.GetProcessId(helper_handle) != pid or not member.value
+                    or birth < int(result["root_created_filetime"])
+                    or ntpath.normcase(ntpath.normpath(image)) != ntpath.normcase(ntpath.normpath(completed_helper.image))
+                    or k.WaitForSingleObject(helper_handle, 0) != WAIT_TIMEOUT):
+                return False
+            if (interrupted() or not completed_helper.verified() or sole_member() != pid
+                    or job_active() != 1 or latest_total_processes != before_total):
+                return False
+            retirement_total_processes = before_total
+            result["completed_helper_retirement"] = {
+                "profile": "pinned-msvc-telemetry-v1", "pid": pid, "created_filetime": str(birth),
+                "image_sha256": completed_helper.sha256, "job_total_processes": before_total,
+                "root_exit_zero_observed": True, "sole_native_job_member_observed": True,
+                "requested": True,
+            }
+            # Existing Job termination authority; never terminate a PID/name.
+            terminate_owned_job()
+            return True
+        except _NativeFailure as error:
+            fail(error.code, winerror=error.winerror)
+            return False
+        finally:
+            close(helper_handle)
 
     def close(handle):
         if handle and handle != INVALID_HANDLE_VALUE:
@@ -564,7 +680,8 @@ def run_owned_stage(*, executable: str, args: Sequence[str], cwd: str,
                     root_exit_observation_deadline = min(
                         deadline_monotonic, time.monotonic() + ROOT_EXIT_ACCOUNTING_SECONDS)
                 if time.monotonic() >= root_exit_observation_deadline:
-                    fail("ROOT_EXITED_WITH_LIVE_DESCENDANTS")
+                    if not retire_completed_helper():
+                        fail("ROOT_EXITED_WITH_LIVE_DESCENDANTS")
                     break
             time.sleep(POLL_SECONDS)
     except _NativeFailure as error:

@@ -743,6 +743,15 @@ def run_build(packet, verified):
         verify_originals(original, records, pins)
         receipt["originalSourceVerified"] = True
         compiler, observed_tools = toolchain(pins)
+        # Optional toolchain work has a separate, source-qualified lifetime.
+        # Canonical pins protect its binary and ancestors until Job zero.
+        if compiler.parent != Path(job.COMPLETED_HELPER_IMAGE).parent:
+            raise BuildBlocked("TOOLCHAIN_HELPER_PROFILE_UNQUALIFIED")
+        try:
+            completed_helper = job.pin_completed_toolchain_helper(pins)
+        except (OSError, ValueError) as error:
+            raise BuildBlocked("TOOLCHAIN_HELPER_PROFILE_UNQUALIFIED") from error
+        observed_tools["vctip.exe"] = completed_helper.sha256
         receipt["toolchainObserved"] = True
         overlay = {path[len(PACKAGE):]: raw for path, raw in verified.items()
                    if path.startswith(PACKAGE) and path != RECIPE}
@@ -795,7 +804,7 @@ def run_build(packet, verified):
             cwd=str(staged), env=environment, deadline_monotonic=deadline, output_limit=256 * 1024,
             parent_pid=packet["parentPid"], parent_birth_filetime=packet["parentBirthFileTime"],
             cancel_requested=cancelled, running_cancel_requested=lambda: cancelled(allow_continuation=True),
-            on_suspended=active.bind)
+            on_suspended=active.bind, completed_helper=completed_helper)
         receipt["allJobsEmpty"] = stage_result.get("zero_active_processes_observed") is True
         receipt["executionCustodyReleased"] = stage_result.get("custody_released") is True and receipt["allJobsEmpty"]
         receipt["outputComplete"] = stage_result.get("output_complete") is True
