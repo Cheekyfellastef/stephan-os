@@ -18,6 +18,20 @@ function canonicalWindowsOptions(overrides = {}) {
   };
 }
 
+test('sync preflight preserves only closed typed sync refusal reasons without treating them as startup permission', async () => {
+  for (const reason of ['SYNC_ALREADY_RUNNING', 'LOCK_ACQUISITION_FAILED', 'C:\\private\\path', 'SECRET_TOKEN']) {
+    const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
+      syncAndRefreshFn: async () => ({ ok: false, blocker: 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED',
+        syncClassification: 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED', syncBlockerReason: reason,
+        finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' }),
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED');
+    assert.equal(result.syncBlockerReason, ['SYNC_ALREADY_RUNNING', 'LOCK_ACQUISITION_FAILED'].includes(reason) ? reason : '');
+    assert.doesNotMatch(JSON.stringify(result), /private|SECRET_TOKEN/);
+  }
+});
+
 test('non-Windows ignition sync preflight skips without invoking the Battle Bridge updater', async () => {
   let invoked = false;
   const result = await runBattleBridgeIgnitionSyncPreflight({

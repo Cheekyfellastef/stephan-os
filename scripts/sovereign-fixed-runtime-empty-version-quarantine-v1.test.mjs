@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync, linkSync, rmdirSync, rmSync, realpathSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { resolve, join, sep } from 'node:path';
@@ -283,9 +283,12 @@ function Open-EmptyVersionDirectory($Path,$Rename=$false){
 }
 function Get-EmptyVersionSecurity($Handle){return [pscustomobject]@{sha256='acl'}}
 function Assert-EmptyVersionProtectedSecurity($Security,$Ancestor=$false){}
+function Read-EmptyVersionInstalledLeaf($RootContext,$ParentContext,$Name){
+ if($Name -ceq 'pending.json'){return ,$pending}
+ if($Name -ceq 'host.exe'){return ,$hostBytes}
+ throw 'EMPTY_VERSION_UNEXPECTED_INSTALLED_LEAF'
+}
 function Read-EmptyVersionPinnedFile($Path,$Maximum,$Protected=$false){
- if($Path.EndsWith('pending.json')){return ,$pending}
- if($Path.EndsWith('host.exe')){return ,$hostBytes}
  if($Path.EndsWith('.git\\HEAD')){return ,([Text.Encoding]::UTF8.GetBytes('ref: refs/heads/main'))}
  if($Path.EndsWith('.git\\refs\\heads\\main')){return ,([Text.Encoding]::UTF8.GetBytes($bootstrap.SourceHead))}
  throw 'EMPTY_VERSION_UNEXPECTED_FILE_READ'
@@ -393,4 +396,173 @@ for($i=$script:emptyPins.Count-1;$i -ge 0;$i--){[void](Invoke-EmptyVersionNative
     assert.equal(r.record.runtimeQualificationGranted,false);
     assert.equal(JSON.parse(readFileSync(path,'utf8')).state,'QUARANTINED');
   }finally{assert.equal(realpathSync(dir),real);rmSync(dir,{recursive:true,force:true});}
+});
+
+// Real handle, inheritance and ACL fixtures additionally admit the ordinary
+// fixture owner, retaining SY/BA for administrative runners. Production readers,
+// reference checks and protected bits stay real.
+function installedLeafFixture(root, body) {
+  const config=Buffer.from(JSON.stringify({root,version:INSTALLED})).toString('base64');
+  return powershell(`
+$c=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${config}'))|ConvertFrom-Json
+Initialize-EmptyVersionNative
+$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+foreach($name in @('Assert-EmptyVersionProtectedSecurity','Assert-EmptyVersionInstalledLeafSecurity')){
+ $node=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$false)
+ . ([scriptblock]::Create($node.Extent.Text.Replace("'S-1-5-32-544'",("'S-1-5-32-544','"+$sid+"'"))))
+}
+$protectedRoot=$c.root;$installedVersion=$c.version
+function Set-FixtureDirectoryAcl([string]$Path,[bool]$Protected=$true){
+ $acl=[Security.AccessControl.DirectorySecurity]::new()
+ $acl.SetOwner([Security.Principal.SecurityIdentifier]::new($sid));$acl.SetAccessRuleProtection($Protected,$false)
+ foreach($owner in @($sid,'S-1-5-18')){
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+   [Security.Principal.SecurityIdentifier]::new($owner),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))
+ }
+ $access=[Security.AccessControl.AccessControlSections]::Access
+ $existing=[IO.Directory]::GetAccessControl($Path,$access)
+ $existing.SetSecurityDescriptorSddlForm($acl.GetSecurityDescriptorSddlForm($access),$access)
+ [IO.Directory]::SetAccessControl($Path,$existing)
+}
+function Test-FixtureRefusal([scriptblock]$Action){
+ try{[void](& $Action);return $false}catch{return $_.Exception.Message -like 'EMPTY_VERSION_*'}
+}
+$parentPath=[IO.Path]::Combine($protectedRoot,$installedVersion)
+Set-FixtureDirectoryAcl $protectedRoot
+Set-FixtureDirectoryAcl $parentPath
+try{
+ ${body}
+}finally{
+ foreach($stream in $script:emptyStreams){$stream.Dispose()}
+ for($i=$script:emptyPins.Count-1;$i -ge 0;$i--){[void](Invoke-EmptyVersionNative 'CloseHandle' @($script:emptyPins[$i]))}
+}
+`);
+}
+function withInstalledLeafFixture(run) {
+  const dir=mkdtempSync(join(tmpdir(),'stephanos-empty-version-leaf-test-'));
+  const real=realpathSync(dir),temp=realpathSync(tmpdir());
+  assert.ok(real.toLowerCase().startsWith((temp+sep).toLowerCase()));
+  const parent=join(dir,INSTALLED);mkdirSync(parent);
+  try{return run(dir,parent);}finally{assert.equal(realpathSync(dir),real);rmSync(dir,{recursive:true,force:true});}
+}
+
+test('real installer-shaped inherited leaves require genuine live fixed-parent contexts, including recycled handles',windows,()=>{
+  const r=withInstalledLeafFixture(dir=>installedLeafFixture(dir,`
+[IO.File]::WriteAllBytes([IO.Path]::Combine($parentPath,'pending.json'),[Text.Encoding]::UTF8.GetBytes('pending fixture'))
+[IO.File]::WriteAllBytes([IO.Path]::Combine($parentPath,'host.exe'),[Text.Encoding]::UTF8.GetBytes('host fixture'))
+$root=Open-EmptyVersionDirectory $protectedRoot
+$parent=Open-EmptyVersionDirectory $parentPath
+$bytes=Read-EmptyVersionInstalledLeaf $root $parent 'pending.json'
+$hostBytes=Read-EmptyVersionInstalledLeaf $root $parent 'host.exe'
+$acl=Get-EmptyVersionSecurity $script:emptyStreams[0].SafeFileHandle.DangerousGetHandle()
+$result=[ordered]@{pending=([Text.Encoding]::UTF8.GetString($bytes));host=([Text.Encoding]::UTF8.GetString($hostBytes));
+ inherited=(-not [bool]($acl.descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected))}
+# Canonical administrative owners remain valid on elevated Windows runners.
+# This descriptor makes replacing (rather than extending) BA fail locally too.
+$adminLeaf=[pscustomobject]@{descriptor=[Security.AccessControl.RawSecurityDescriptor]::new('O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)');sha256='fixture-admin-leaf'}
+$adminDirectory=[pscustomobject]@{descriptor=[Security.AccessControl.RawSecurityDescriptor]::new('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)');sha256='fixture-admin-directory'}
+Assert-EmptyVersionInstalledLeafSecurity $adminLeaf
+Assert-EmptyVersionProtectedSecurity $adminDirectory
+$result.canonicalAdminOwners=$true
+$result.realOwnerAllowed=$acl.descriptor.Owner.Value -cin @($sid,'S-1-5-18','S-1-5-32-544')
+$result.strictDirectoryRefusesInherited=Test-FixtureRefusal {Assert-EmptyVersionProtectedSecurity $acl}
+$result.forged=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root ([pscustomobject]@{handle=$parent.handle;info=$parent.info}) 'pending.json'}
+$result.unpinned=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root $null 'pending.json'}
+$wrongPath=[IO.Path]::Combine($protectedRoot,'wrong-parent');[void][IO.Directory]::CreateDirectory($wrongPath);Set-FixtureDirectoryAcl $wrongPath
+$wrong=Open-EmptyVersionDirectory $wrongPath
+$result.wrongParent=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root $wrong 'pending.json'}
+$result.wrongRoot=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $wrong $parent 'pending.json'}
+$result.names=@('other','../pending.json','PENDING.JSON','host.exe:extra')|ForEach-Object{
+ $name=$_;Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root $parent $name}
+}
+[void](Invoke-EmptyVersionNative 'CloseHandle' @($parent.handle));[void]$script:emptyPins.Remove($parent.handle)
+$result.closed=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root $parent 'pending.json'}
+$reopened=Open-EmptyVersionDirectory $parentPath
+$result.reopened=([Text.Encoding]::UTF8.GetString((Read-EmptyVersionInstalledLeaf $root $reopened 'pending.json')) -ceq 'pending fixture')
+# Deterministically model OS numeric-handle recycling. The closed original
+# token must remain invalid even with a live same-directory handle.
+$oldRecord=@($script:emptyDirectoryContexts|Where-Object{[object]::ReferenceEquals($_.Context,$parent)})[0]
+$oldRecord.Handle=$reopened.handle
+$result.recycled=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root $parent 'pending.json'}
+$result|ConvertTo-Json -Compress
+`));
+  assert.equal(r.pending,'pending fixture');assert.equal(r.host,'host fixture');assert.equal(r.inherited,true);
+  for(const k of ['canonicalAdminOwners','realOwnerAllowed','strictDirectoryRefusesInherited','forged','unpinned','wrongParent','wrongRoot','closed','reopened','recycled'])assert.equal(r[k],true,k);
+  assert.deepEqual(r.names,[true,true,true,true]);
+});
+
+test('real leaf ACL, ADS, hardlink, unprotected parent and parent drift remain refusals',windows,()=>{
+  const results=[];
+  for(const mode of ['unsafeGrant','ads','hardlink','unprotectedParent','parentDrift']){
+    results.push(withInstalledLeafFixture((dir,parent)=>{
+      if(mode==='ads'){writeFileSync(join(parent,'pending.json'),'pending fixture');writeFileSync(join(parent,'pending.json')+':held-data','preserve');}
+      if(mode==='hardlink'){
+        writeFileSync(join(parent,'pending.json'),'pending fixture');linkSync(join(parent,'pending.json'),join(parent,'alias'));
+      }
+      return installedLeafFixture(dir,`
+$mode='${mode}'
+$file=[IO.Path]::Combine($parentPath,'pending.json')
+if($mode -cnotin @('hardlink','ads')){[IO.File]::WriteAllBytes($file,[Text.Encoding]::UTF8.GetBytes('pending fixture'))}
+if($mode -ceq 'unsafeGrant'){
+ $acl=[IO.File]::GetAccessControl($file)
+ $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+  [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),'Write','Allow'))
+ [IO.File]::SetAccessControl($file,$acl)
+}
+if($mode -ceq 'unprotectedParent'){Set-FixtureDirectoryAcl $parentPath $false}
+$root=Open-EmptyVersionDirectory $protectedRoot;$parent=Open-EmptyVersionDirectory $parentPath
+if($mode -ceq 'parentDrift'){
+ $node=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-EmptyVersionInstalledFileStreams'},$false)
+ . ([scriptblock]::Create($node.Extent.Text.Replace('function Assert-EmptyVersionInstalledFileStreams','function Invoke-FixtureFileStreams')))
+ $script:streamCalls=0
+ function Assert-EmptyVersionInstalledFileStreams([IntPtr]$Handle,[long]$ExpectedLength){
+  Invoke-FixtureFileStreams $Handle $ExpectedLength
+  $script:streamCalls++
+  if($script:streamCalls -eq 2){
+   $acl=[IO.Directory]::GetAccessControl($parentPath)
+   $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),'ReadAndExecute','Allow'))
+   [IO.Directory]::SetAccessControl($parentPath,$acl)
+  }
+ }
+}
+$refused=Test-FixtureRefusal {Read-EmptyVersionInstalledLeaf $root $parent 'pending.json'}
+@{mode=$mode;refused=$refused;preserved=[IO.File]::Exists($file);driftAfterRead=($script:streamCalls -eq 2)}|ConvertTo-Json -Compress
+`);
+    }));
+  }
+  for(const r of results){assert.equal(r.refused,true,r.mode);assert.equal(r.preserved,true,r.mode);}
+  assert.equal(results.find(x=>x.mode==='parentDrift').driftAfterRead,true);
+});
+
+test('inherited leaf policy retains complete owner and ACL validation without granting directory inheritance',windows,()=>{
+  const r=powershell(`
+$values=@();$directory=@()
+foreach($sddl in @('O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)',
+ 'O:SYG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)',
+ 'O:BUG:BUD:(A;;FA;;;BU)','O:BAG:BAD:(A;;FA;;;BU)',
+ 'O:BAG:BAD:NO_ACCESS_CONTROL','O:BAG:BAD:(A;ID;FW;;;BU)',
+ 'O:BAG:BAD:(XA;;FA;;;BA;(Exists @User.Department))')){
+ try{$security=[pscustomobject]@{descriptor=[Security.AccessControl.RawSecurityDescriptor]::new($sddl);sha256='x'};
+  Assert-EmptyVersionInstalledLeafSecurity $security;$values+=$true}catch{$values+=$false}
+ try{Assert-EmptyVersionProtectedSecurity $security;$directory+=$true}catch{$directory+=$false}
+}
+@{leaf=$values;directory=$directory}|ConvertTo-Json -Compress
+`);
+  assert.deepEqual(r.leaf,[true,true,false,false,false,false,false]);assert.deepEqual(r.directory,Array(7).fill(false));
+});
+
+test('actual reparse installed-parent route is refused before an inherited leaf can be read',windows,()=>{
+  const r=withInstalledLeafFixture((dir,parent)=>{
+    const target=join(dir,'junction-target');mkdirSync(target);writeFileSync(join(target,'pending.json'),'preserve');
+    rmdirSync(parent);symlinkSync(target,parent,'junction');
+    const result=installedLeafFixture(dir,`
+[IO.File]::WriteAllBytes([IO.Path]::Combine($parentPath,'host.exe'),[Text.Encoding]::UTF8.GetBytes('host fixture'))
+$root=Open-EmptyVersionDirectory $protectedRoot
+$refused=Test-FixtureRefusal {$parent=Open-EmptyVersionDirectory $parentPath;Read-EmptyVersionInstalledLeaf $root $parent 'pending.json'}
+@{refused=$refused}|ConvertTo-Json -Compress
+`);
+    assert.equal(readFileSync(join(target,'pending.json'),'utf8'),'preserve');return result;
+  });
+  assert.equal(r.refused,true);
 });
