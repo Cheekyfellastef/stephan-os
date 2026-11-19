@@ -346,7 +346,18 @@ function validateOpenClawOc2GatewayPayload(payload, grant) {
   const sourceHead = text(grant?.sourceRevision).toLowerCase();
   const providerInstance = text(payload?.providerInstance);
   const result = payload?.result;
-  return payload?.schemaVersion === OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA
+  // Bind the Gateway's reported proof location and receipt IDs to the
+  // trusted action-grant identity. A merely well-formed OC2 path is not
+  // evidence for this exact grant, task and source revision.
+  const grantId = text(grant?.grantId);
+  const taskHash = createHash('sha256')
+    .update(JSON.stringify([missionId, taskId, grantId, sourceHead]), 'utf8')
+    .digest('hex').slice(0, 32);
+  const proofRef = `proofs/openclaw-oc2/oc2-${taskHash}.json`;
+  const resultReceiptId = `openclaw-oc2-result-${taskHash.slice(0, 20)}`;
+  const proofReceiptId = `openclaw-oc2-proof-${createHash('sha256').update(proofRef, 'utf8').digest('hex').slice(0, 20)}`;
+  return Boolean(grantId)
+    && payload?.schemaVersion === OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA
     && payload?.success === true
     && payload?.qualificationEligible === true
     && text(payload?.missionId).toLowerCase() === missionId
@@ -380,16 +391,18 @@ function validateOpenClawOc2GatewayPayload(payload, grant) {
     && /^[a-f0-9]{64}$/.test(text(result?.exactInputIdentity))
     && /^[a-f0-9]{64}$/.test(text(result?.exactOutputIdentity))
     && result?.receipt?.verified === true
+    && text(result?.receipt?.receiptId) === resultReceiptId
     && result?.receipt?.source === 'openclaw-standalone-oc2'
     && result?.receipt?.evidenceType === 'provider-neutral-task-result'
     && result?.receipt?.commandOutputHash === result?.exactOutputIdentity
     && Array.isArray(result?.evidenceReceipts)
     && result.evidenceReceipts.length === 1
     && result.evidenceReceipts.every((receipt) => receipt?.verified === true
+      && text(receipt?.receiptId) === proofReceiptId
       && receipt?.sha256 === result?.exactOutputIdentity
       && receipt?.source === 'openclaw-standalone-oc2'
       && receipt?.evidenceType === 'shared-workspace-proof'
-      && /^proofs\/openclaw-oc2\/oc2-[a-f0-9]{32}\.json$/.test(text(receipt?.receiptPath)));
+      && text(receipt?.receiptPath) === proofRef);
 }
 
 async function groundedOpenClawEvidence(action, finalOutput, options, timestamp) {

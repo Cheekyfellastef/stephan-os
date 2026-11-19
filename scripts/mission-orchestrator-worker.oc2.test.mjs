@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 
 import {
   executeOpenClawReadonlyAction,
@@ -18,6 +19,11 @@ import {
 const HEAD = 'c'.repeat(40);
 const MISSION = 'openclaw-oc2-worker-mission';
 const TASK = 'openclaw-oc2-worker-task-0001';
+const CLAIM_HASH = createHash('sha256')
+  .update(JSON.stringify([MISSION, TASK, `grant-${TASK}`, HEAD]), 'utf8')
+  .digest('hex').slice(0, 32);
+const PROOF_REF = `proofs/openclaw-oc2/oc2-${CLAIM_HASH}.json`;
+const PROOF_RECEIPT_ID = `openclaw-oc2-proof-${createHash('sha256').update(PROOF_REF, 'utf8').digest('hex').slice(0, 20)}`;
 
 function grant(overrides = {}) {
   return {
@@ -75,18 +81,18 @@ function gatewayResult() {
       exactInputIdentity: 'a'.repeat(64),
       exactOutputIdentity: 'b'.repeat(64),
       receipt: {
-        receiptId: 'openclaw-oc2-result-1234567890',
+        receiptId: `openclaw-oc2-result-${CLAIM_HASH.slice(0, 20)}`,
         source: 'openclaw-standalone-oc2',
         evidenceType: 'provider-neutral-task-result',
         commandOutputHash: 'b'.repeat(64),
         verified: true,
       },
       evidenceReceipts: [{
-        receiptId: 'openclaw-oc2-proof-1234567890',
+        receiptId: PROOF_RECEIPT_ID,
         source: 'openclaw-standalone-oc2',
         evidenceType: 'shared-workspace-proof',
         sha256: 'b'.repeat(64),
-        receiptPath: `proofs/openclaw-oc2/oc2-${'a'.repeat(32)}.json`,
+        receiptPath: PROOF_REF,
         verified: true,
       }],
     },
@@ -211,6 +217,9 @@ test('OC2 result-consumer rejects contradictory producer and receipt lineage', a
     ['proof type mismatch', (value) => { value.result.evidenceReceipts[0].evidenceType = 'other-type'; }],
     ['proof digest mismatch', (value) => { value.result.evidenceReceipts[0].sha256 = 'e'.repeat(64); }],
     ['proof path outside canonical scope', (value) => { value.result.evidenceReceipts[0].receiptPath = '../other.json'; }],
+    ['plausible proof path for another grant', (value) => { value.result.evidenceReceipts[0].receiptPath = `proofs/openclaw-oc2/oc2-${'d'.repeat(32)}.json`; }],
+    ['result receipt ID for another task', (value) => { value.result.receipt.receiptId = 'openclaw-oc2-result-competing'; }],
+    ['proof receipt ID for another task', (value) => { value.result.evidenceReceipts[0].receiptId = 'openclaw-oc2-proof-competing'; }],
     ['multiple proof receipts', (value) => { value.result.evidenceReceipts.push({ ...value.result.evidenceReceipts[0] }); }],
   ];
   for (const [name, mutate] of corruptions) {
