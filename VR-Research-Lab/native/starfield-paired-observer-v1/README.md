@@ -81,6 +81,64 @@ Portable model tests, source reconstruction tests, real Windows Job and file-pin
 
 A successful build produces three model test executables, the native ABI/FLS self-test executable and the separate observation DLL. It grants no injection or headset readiness. A fresh reviewed loader/capture session and original-owner source review are still required before any installed-game experiment. The next renderer stages remain actual source-image copies with legal state and lifetime evidence, persistent per-eye histories, tracked poses, one-update stereo identity, FrameStore integration and OpenXR presentation.
 
+## Qualified compiler-helper retirement
+
+The fresh build at `4cd9b4e26d2c166f40bfd29816c6989bc84995a1` still
+refused consumption as `NATIVE_BUILD_CHILD_EXIT_UNPROVEN`. Its compiler and
+self-test output passed, its root exited zero, and the resource governor did
+not cancel it. The build boundary stopped the remaining owned process and
+proved zero before releasing custody. That failed receipt remains immutable.
+
+A separate generic C++ compile, using the unchanged Job boundary and native
+Job member enumeration, identified `vctip.exe` as the sole remaining process.
+It also survived a 25-second idle observation. This is a different helper
+from the optional developer-shell PowerShell telemetry disabled above.
+Setup-only proof was insufficient to qualify the complete compiler lifecycle.
+
+The structural correction separates three facts: workload completion,
+qualified ancillary-helper retirement, and positive native process exclusion.
+The ordinary one-second accounting interval and five-second drain remain
+unchanged. Unknown descendants still fail. Only the existing private build
+adapter can select the optional retirement profile; the mailbox accepts no
+helper, path, hash, command, timeout or termination selector.
+
+The profile pins the exact installed VS2022 MSVC `14.44.35207` x64
+`vctip.exe`, SHA-256
+`be4e7b09df1e23f386eb610b76ed45272b9fed03ab001ddf0b1d9675f8989437`,
+through the existing `NativePins` file and ancestor exclusion. An unqualified
+toolchain version or changed helper refuses before compilation. The retained
+bytes are revalidated before launch and before retirement.
+
+After the root has exited zero, retirement requires exactly one native Job
+member, its retained live process handle, matching native image path, a birth
+no earlier than the root, and positive membership in this exact non-inherited
+Job. Membership and cumulative native process accounting are checked again.
+The existing `TerminateJobObject` authority is then used on that Job alone;
+there is no process-name kill, system-wide cleanup or unrelated process handle
+with termination rights. A new cumulative process count during retirement
+remains a failure even if the new member disappears before final observation.
+
+Success still requires native Job zero, complete pipe output, retained parent
+identity, uninterrupted gaming permission, the original finite deadline and
+unchanged source. Failed root, changed or closed helper pin, unknown image,
+extra member, query failure, cancellation, process-set growth, failed native
+termination or incomplete drain cannot become success. The private native
+receipt explicitly records the retirement request, helper identity and
+cumulative process count; requested termination never itself proves exclusion.
+The authenticated worker response remains the only artifact-consumption gate.
+
+Actual generic compiler proof with this profile completed in 2,388 ms with
+root exit zero, the qualified helper retirement recorded, native Job zero,
+complete output and released custody. It executed no private Starfield source
+or observation DLL. The affected Windows suites passed 71 tests with six
+existing context-specific skips; real disposable descendants and adversarial
+faults cover the refusal rules. A fresh protected-main Starfield build is
+still required after independent review and deployment.
+
+Reusable invariant: ancillary toolchain lifetime must be represented explicitly;
+neither successful compiler output nor a process name establishes safe terminal
+ownership. A future compiler/helper version requires fresh qualification.
+
 ## Reuse for other games
 
 The source verification, isolated build, owned-process boundary, paired observation model and typed readiness receipts are reusable machinery. Resource discovery, native draw scopes, simulation identity and engine history ownership belong to each game adapter. Future games should extend the existing provider/catalogue and splash contracts after their own renderer evidence exists. Adding a splash entry alone does not establish VR compatibility.
