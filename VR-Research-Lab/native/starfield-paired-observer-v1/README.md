@@ -139,6 +139,51 @@ Reusable invariant: ancillary toolchain lifetime must be represented explicitly;
 neither successful compiler output nor a process name establishes safe terminal
 ownership. A future compiler/helper version requires fresh qualification.
 
+## Private loader preparation for the next capture
+
+The authenticated build at `db730e7f9a83e2f5a053b63e89163189acec9719`
+passed the complete native build and self-tests, with positive Job zero,
+complete output and released custody. Its five artifacts were independently
+rehashed. [The terminal build receipt](https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-6995753681)
+admits the observer artifact, not a loader or installed-game experiment.
+
+`reconstruct_paired_loader.py` is a pure offline preparation function. It
+authenticates ten original private loader/dependency/manifest inputs and the
+exact admitted observer bytes, then returns private candidate bytes and an
+explicitly non-authoritative review packet. It neither reads/writes files nor
+imports the private loader, opens a process, executes native code or changes
+a session. Private game code and instruction manifests remain local.
+
+The generated candidate has one paired-source probe and requires the exact
+process creation FileTime. It snapshots and hashes all eight private manifests
+before process access, uses those same bytes throughout admission, and checks
+the extra draw hook, fourteen allocation spans and original render-target
+provenance before remote allocation, writes or loading. Synthetic tests cover
+source/artifact substitution, malformed manifests, changed live bytes,
+out-of-bounds spans, duplicate anchors and hook collisions. The original
+controller's retained input pins and fresh-session checks remain prerequisites
+for any eventual execution; this offline function does not supply them.
+
+Actual private preparation authenticated the original closure, parsed the new
+loader and checked ordering of the three remote mutation calls without
+executing it. The candidate loader is 26,084 bytes, SHA-256
+`8bb4794f07a8a5bf3d7726f96e211035c2508fd0ec0bc82e81a42cabebff28fd`.
+This identity needs independent private source review; it is not an approval.
+
+The original monitor attempt is consumed. Its November 16 capture passed the
+native-output analysis, but the saved outcome remains
+`CAPTURE_PASSED_CLEANUP_OR_EXIT_PROVENANCE_INCOMPLETE`; the starter records game
+exit and proxy restoration without proving the historical normal exit code.
+Preserve these records and their verdict. The next step must extend the existing
+Hybrid session owner with a reviewed successor and fresh current-state proof.
+Deleting an old session, changing its outcome or merely replacing DLL hashes
+cannot authorize another capture. No new launcher or capture route is enabled
+by this preparation change.
+
+Reusable invariant: artifact availability, private loader qualification,
+one-attempt session admission and headset readiness are separate facts. A
+successful native build never reopens a consumed experiment.
+
 ## Reuse for other games
 
 The source verification, isolated build, owned-process boundary, paired observation model and typed readiness receipts are reusable machinery. Resource discovery, native draw scopes, simulation identity and engine history ownership belong to each game adapter. Future games should extend the existing provider/catalogue and splash contracts after their own renderer evidence exists. Adding a splash entry alone does not establish VR compatibility.

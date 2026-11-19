@@ -165,6 +165,8 @@ export const STARFIELD_NATIVE_BUILD_ACTIVATION = Object.freeze({
   'VR-Research-Lab/native/starfield-paired-observer-v1/paired-observer-recipe.json',
   'VR-Research-Lab/native/starfield-paired-observer-v1/paired-source-observation.h',
   'VR-Research-Lab/native/starfield-paired-observer-v1/reconstruct_paired_observer.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/reconstruct_paired_loader.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test_paired_loader_preparation.py',
   'VR-Research-Lab/native/starfield-paired-observer-v1/scoped-eye-ledger.h',
   'VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-scoped-eye-ledger.cpp',
   'VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observation.cpp',
