@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import types
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +26,9 @@ def main():
             unchanged_manifest_name = 'native-eye-output-code.json'
             contents = Path(__file__).with_name("native-trace-manifest.json").read_text()
             raw = Path(__file__).with_name('native-eye-output-code.json').read_bytes()
+            native_manifest = "native-view-manifest.json"
+            camera_manifest = json.loads(Path(__file__).with_name(native_manifest).read_text())
+            manifest["hooks"].update(camera_manifest["hooks"])
         if manifest["exeSha256"] != GAME_HASH:
             raise ValueError("Manifest identity differs")
         allocate()
@@ -105,6 +109,54 @@ class PreparationTests(unittest.TestCase):
         self.assertNotIn('"native-eye-output"', source)
         self.assertIn("paired_manifest_bytes['native-trace-manifest.json'].decode('utf-8')", source)
         self.assertIn("paired_manifest_bytes['native-eye-output-code.json']", source)
+        self.assertIn("paired_manifest_bytes[native_manifest].decode('utf-8')", source)
+
+    def test_selected_view_manifest_cannot_reread_changed_disk(self):
+        # Execute only the synthetic fixture's main. No private loader or native
+        # API is imported. Any pathname read after snapshot creation must fail.
+        source = m._transform(SYNTHETIC_LOADER).decode()
+        main = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        snapshots = {"native-trace-manifest.json": b"{}", "native-eye-output-code.json": b"{}",
+                     "native-view-manifest.json": b'{"hooks":{"authenticated":{"rva":1}}}'}
+        disk = dict(snapshots)
+        order = []
+        def read_snapshots():
+            disk["native-view-manifest.json"] = b'{"hooks":{"substituted":{"rva":2}}}'
+            order.append("snapshots")
+            return snapshots
+        def forbidden_path(*_):
+            self.fail("A manifest was reread after authentication")
+        def verify(*_): order.append("verify")
+        def allocate(): order.append("allocate")
+        parser = types.SimpleNamespace(add_argument=lambda *a, **k: None,
+                                       parse_args=lambda: types.SimpleNamespace(probe=m.PROBE))
+        manifest = {"exeSha256": GAME, "hooks": {}}
+        namespace = {"parser": parser, "PROBES": {}, "Path": forbidden_path, "__file__": "synthetic.py",
+                     "read_paired_manifest_bytes": read_snapshots, "json": json,
+                     "manifest": manifest, "GAME_HASH": GAME, "process": object(),
+                     "target_base": 0, "verify_paired_owner_code": verify, "allocate": allocate}
+        exec(compile(ast.Module(body=[main], type_ignores=[]), "synthetic-loader-main", "exec"), namespace)
+        namespace["main"]()
+        self.assertEqual(manifest["hooks"], {"authenticated": {"rva": 1}})
+        self.assertNotEqual(disk["native-view-manifest.json"], snapshots["native-view-manifest.json"])
+        self.assertEqual(order, ["snapshots", "verify", "allocate"])
+
+    def test_manifest_rewrite_refuses_unknown_selected_name_or_read_options(self):
+        for source in (
+            SYNTHETIC_LOADER.replace("with_name(native_manifest)", "with_name(other_manifest)"),
+            SYNTHETIC_LOADER.replace("with_name(native_manifest).read_text()", "with_name(native_manifest).read_text(encoding='utf-8')"),
+            SYNTHETIC_LOADER.replace("with_name(native_manifest).read_text()", "with_name('native-view-manifest.json').read_text()"),
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "manifest"):
+                m._transform(source)
+
+    def test_manifest_ast_spans_preserve_unicode_and_multiline_source(self):
+        source = SYNTHETIC_LOADER.replace('            camera_manifest =', '            label = "π"; camera_manifest =')
+        source = source.replace('with_name(native_manifest).read_text()', 'with_name(\n                native_manifest\n            ).read_text()')
+        transformed = m._transform(source).decode()
+        self.assertIn('label = "π";', transformed)
+        self.assertIn("paired_manifest_bytes[native_manifest].decode('utf-8')", transformed)
+        ast.parse(transformed)
 
     def test_missing_or_duplicate_transform_anchors_refuse(self):
         for source in (SYNTHETIC_LOADER.replace("def main():", "def changed():"),
