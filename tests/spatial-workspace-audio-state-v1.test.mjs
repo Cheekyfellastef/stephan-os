@@ -130,7 +130,7 @@ function audioContextHarness({sink=null,resume=null,failAnalyser=false}={}){
   class FakeContext {
     constructor(){this.state=resume?'suspended':'running';this.currentTime=0;this.destination={speaker:true};this.closes=0;this.starts=0;this.connections=[];contexts.push(this);}
     close(){this.closes++;this.state='closed';return Promise.resolve();}
-    setSinkId(id){this.sink=id;return sink?.promise??Promise.resolve();}
+    setSinkId(id){this.sink=id;this.sinkId=id;return sink?.promise??Promise.resolve();}
     resume(){return resume?.promise??Promise.resolve();}
     createMediaStreamSource(){return {connect:node=>this.connections.push(node),disconnect(){}};}
     createAnalyser(){if(failAnalyser)throw Error('analysis unavailable');return {fftSize:0,getByteTimeDomainData:values=>values.fill(192),disconnect(){}};}
@@ -178,6 +178,30 @@ test('local audio tests cannot bypass explicitly selected headset routes',async(
   assert.equal(context.contexts.length,1);assert.equal(context.contexts[0].sink,'quest-a');
   assert.equal(context.contexts[0].starts,1);
   audio.stopSpeakers();assert.equal(context.contexts[0].closes,1);audio.dispose();
+});
+
+test('a resolved sink request must verify the intended Quest speaker before sounding a tone',async()=>{
+  for(const reportedSink of ['different-output',undefined]){
+    let closes=0,starts=0;
+    class UnverifiedSinkContext {
+      constructor(){this.state='running';this.currentTime=0;this.destination={};this.sinkId=reportedSink;}
+      setSinkId(){return Promise.resolve();}
+      createOscillator(){starts++;throw Error('Unverified speaker must not play.');}
+      close(){closes++;return Promise.resolve();}
+    }
+    const audio=createHolodeckAudioControls({AudioContextCtor:UnverifiedSinkContext,
+      navigatorRef:{mediaDevices:{enumerateDevices:async()=>[
+        {kind:'audiooutput',deviceId:'quest-output',label:'Quest headset'},
+      ]}}});
+    await audio.listDevices();assert.equal(audio.setOutput('quest-output'),true);
+    const refused=await audio.testSpeakers();
+    assert.equal(refused.ok,false,'setSinkId resolving cannot substitute for verified output identity');
+    assert.match(refused.reason,/route could not be verified/i);
+    assert.equal(starts,0,'never play a tone on a different or unknown audio route');
+    assert.equal(closes,1,'release the uncertain audio context');
+    assert.equal(audio.getState().outputId,'quest-output','do not silently select a different output');
+    audio.dispose();assert.equal(closes,1);
+  }
 });
 
 test('live microphone meter stays local and device loss closes its owned audio resources',async()=>{
