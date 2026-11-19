@@ -71,3 +71,19 @@ This work contributes to **#1591 — Starfield VR: reach Skyrim VR parity in sta
 slices** and **#1769 — Goal: Starfield VR Operator Test Readiness Mission
 Orchestrator V1**. Connecting this monitor continuation does not close the
 headset or Skyrim-parity goals.
+
+## Paired successor evidence adapter
+
+`analyze_paired_source_session.py` is a read-only prerequisite for the next
+attempt within this owner. It consumes bounded immutable journal bytes, the
+reviewed draw manifest, the loader receipt and separately supplied PID/creation
+FileTime observations. It checks all seven exact hooks, native record types,
+terminal accounting, page-restoration policy and the pinned paired diagnostic
+model. Its output keeps process-exit and all rendering/headset claims explicitly
+false, including missing or malformed receipt paths.
+
+This adapter is not yet selected by the splash and grants no runtime admission.
+The same owner must still bind snapshot provenance, the fresh physical Save
+loaded event, common predecessor/successor exclusion, immutable package pins,
+invocation consumption, child completion, normal game exit and proxy restoration.
+The legacy consumed attempt and its incomplete normal-exit verdict remain intact.
