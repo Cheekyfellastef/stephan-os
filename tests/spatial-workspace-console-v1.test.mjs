@@ -141,4 +141,6 @@ test('desktop Disconnect and hidden/page-exit routes release room-local audio wi
     'backgrounding must release the local audio test independently of ChatGPT Voice');
   assert.match(entry,/window\.addEventListener\('pagehide', event => \{[^}]*stopMicTest\(\);audio\.stopSpeakers\(\);cubeScene\.stop\(\);void client\.pagehide\(event\)/,
     'page exit must revoke local audio even with an in-flight speaker selection');
+  assert.match(entry,/onReload:async\(\)=>\{[\s\S]{0,240}stopMicTest\(\);audio\.stopSpeakers\(\);await client\.stop\(\);location\.reload\(\)/,
+    'room reload must synchronously stop local tests before awaiting native connection cleanup');
 });
