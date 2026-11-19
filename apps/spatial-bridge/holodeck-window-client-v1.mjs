@@ -12,8 +12,10 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       const data=await response.json();
       if(data?.schema!=='stephanos.spatial-window-health.v1')
         return {ok:false,reason:'Unexpected local capture helper identity.'};
-      if(data.readinessOnly===true)
-        return {ok:false,reason:'The helper is running an installation check only. Launch the normal Spatial Workspace shortcut to connect a window.'};
+      if(data.readinessOnly!==false)
+        return {ok:false,reason:data.readinessOnly===true
+          ?'The helper is running an installation check only. Launch the normal Spatial Workspace shortcut to connect a window.'
+          :'The local helper has not affirmed an interactive native session. Use the reviewed Spatial Workspace shortcut.'};
       if(locationRef?.port!=='4174'&&(typeof data.buildId!=='string'||!/^[a-f0-9]{64}$/.test(data.buildId)))
         return {ok:false,reason:'The local helper has no valid installed build identity. Use the reviewed Spatial Workspace shortcut.'};
       return {ok:true,reason:'Local Spatial helper responds.'};
