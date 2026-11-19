@@ -418,3 +418,27 @@ test('native helper probe requires affirmative interactive identity before adver
     assert.equal(client.getState().status,'idle',name+' must not claim a bound native session');
   }
 });
+
+test('a denied native stop remains a local reconnect fence without sessionStorage',async()=>{
+  let permitStop=false;
+  const h=clientFixture(({path})=>{
+    if(path==='/session')return {token};
+    if(path==='/windows')return {windows:[windowOne]};
+    if(path==='/stop'){
+      if(!permitStop)throw Error('Native capture stop refused (403)');
+      return {status:'stopped'};
+    }
+    throw Error('Unexpected native request '+path);
+  });
+  await h.client.discover();
+  assert.equal(h.calls.filter(call=>call.path==='/session').length,1);
+  assert.equal(await h.client.stop(),false,'refused native stop is not an acknowledged release');
+  assert.match(h.client.getState().message,/did not confirm capture release/);
+  assert.equal(await h.client.discover(),false,'no sessionStorage must not erase an unverified native session');
+  assert.equal(h.calls.filter(call=>call.path==='/session').length,1,'no second session before verified stop');
+  permitStop=true;
+  await h.client.discover();
+  assert.equal(h.calls.filter(call=>call.path==='/session').length,2,'retry can reconnect after actual stop acknowledgment');
+  assert.equal(h.client.getState().status,'selecting');
+  await h.client.stop();
+});
