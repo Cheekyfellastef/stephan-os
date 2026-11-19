@@ -88,8 +88,8 @@ function input(overrides = {}) {
 test('router preserves exact governor specialist source pin after metadata fail-closed correction', async () => {
   const reviewerSource = await readFile(new URL('./windowsAuthorityVrResourceGovernorReviewV1.mjs', import.meta.url), 'utf8');
   const routerSource = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.equal(gitBlobSha(reviewerSource), 'a196afaa97c0153fa8f00e82a40a7e69e3006bbd');
-  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = 'a196afaa97c0153fa8f00e82a40a7e69e3006bbd';"));
+  assert.equal(gitBlobSha(reviewerSource), '56976555d9aafb27dd0c52b9cd97a28afb905169');
+  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = '56976555d9aafb27dd0c52b9cd97a28afb905169';"));
   assert.ok(reviewerSource.includes('counts.P0 === 1'));
   assert.ok(reviewerSource.includes("analysis?.verdict === 'findings'"));
 });
@@ -150,7 +150,7 @@ test('registry source pins the current bounded mailbox recovery blobs and grants
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
   assert.match(source, /f66cc26ef865bb840522b16cbb53f830f9499838/);
-  assert.match(source, /a196afaa97c0153fa8f00e82a40a7e69e3006bbd/);
+  assert.match(source, /56976555d9aafb27dd0c52b9cd97a28afb905169/);
   assert.match(source, /1b103fda85c371a218f38f20fe5163ca3f5042bf/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
@@ -299,6 +299,52 @@ test('composes exact Starfield VR splash and AER Observe escalations without wid
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_CLEAN');
 });
 
+
+test('composite reviewer rejects inherited P0 summaries behind unrelated three-key counts', async () => {
+  const splashPath = WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.find((path) =>
+    path.endsWith('launch-starfield-vr-with-splash.ps1'));
+  for (const [partnerPath, partnerFile] of [
+    [WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0], 'launch-starfield-vr.ps1'],
+    [WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0], 'run-starfield-aer-stabilizer-observe.ps1'],
+  ]) {
+    const content = await Promise.all([
+      readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1', import.meta.url), 'utf8'),
+      readFile(new URL('../../scripts/windows/' + partnerFile, import.meta.url), 'utf8'),
+    ]);
+    const paths = [splashPath, partnerPath];
+    const sources = content.map((bytes, index) => ({
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path: paths[index],
+      ref: HEAD,
+      exists: true,
+      size: Buffer.byteLength(bytes, 'utf8'),
+      blobSha: gitBlobSha(bytes),
+      content: bytes,
+    }));
+    const baseAnalysis = {
+      findings: paths.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+      counts: { P0: 2, P1: 0, P2: 0 },
+      verdict: 'findings',
+    };
+    const review = (analysis) => analyzeWindowsAuthoritySpecialistReview({
+      repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD, analysis, sources,
+    });
+    assert.equal(review(baseAnalysis).clean, true, 'unchanged real source must remain eligible');
+    const inheritedCounts = Object.assign(Object.create({ P0: 2, P1: 0, P2: 0 }), {
+      other1: 0, other2: 0, other3: 0,
+    });
+    const denied = review({ ...baseAnalysis, counts: inheritedCounts });
+    assert.equal(denied.eligible, true, 'malformed exact path set must be explicitly rejected');
+    assert.equal(denied.clean, false);
+    assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID');
+    assert.deepEqual(denied.proofRefs, [], 'no positive source proof from inherited count claims');
+    for (const key of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(denied[key], false, key);
+    }
+  }
+});
 
 test('routes exact #3362 fixed-runtime Windows escalation through the sovereign specialist', () => {
   const head = 'a'.repeat(40);

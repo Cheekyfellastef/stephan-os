@@ -50,6 +50,7 @@ function exactEscalation(analysis = {}) {
     && typeof counts === 'object'
     && !Array.isArray(counts)
     && Object.keys(counts).length === 3
+    && ['P0', 'P1', 'P2'].every((key) => Object.hasOwn(counts, key))
     && counts.P0 === 1
     && counts.P1 === 0
     && counts.P2 === 0

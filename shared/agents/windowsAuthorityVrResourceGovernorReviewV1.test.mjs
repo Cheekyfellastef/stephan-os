@@ -139,6 +139,10 @@ test('direct governor specialist refuses contradictory or noncanonical upstream 
     ['array severity', {
       ...baseline, findings: [{ ...baseline.findings[0], severity: ['P0'] }],
     }],
+    ['inherited P0/P1/P2 count aliases hidden behind unrelated own keys', {
+      ...baseline,
+      counts: Object.assign(Object.create({ P0: 1, P1: 0, P2: 0 }), { x: 0, y: 0, z: 0 }),
+    }],
     ['contradictory clean verdict', { ...baseline, verdict: 'clean' }],
   ]) {
     const result = analyzeWindowsAuthorityVrResourceGovernorReviewV1(
