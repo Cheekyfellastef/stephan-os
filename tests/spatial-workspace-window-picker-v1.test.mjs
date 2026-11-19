@@ -13,9 +13,11 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
 function fixture({status='idle',windows=choices,onStatus=()=>{},binding}={}){
   const calls=[],inputs=[],contexts=[];
+  // A live native frame has stable identity until a genuinely new picture arrives.
+  const frame={naturalWidth:1920,naturalHeight:1080};
   let state={status,revision:0,message:'Synthetic window fixture.',windows:status==='selecting'?windows:[],inputStatus:'',title:''};
   const publish=changes=>{state={...state,...changes,revision:state.revision+1};};
-  const client={getState:()=>state,getFrame:()=>['live','view-only'].includes(state.status)?{naturalWidth:1920,naturalHeight:1080}:null,
+  const client={getState:()=>state,getFrame:()=>['live','view-only'].includes(state.status)?frame:null,
     input:value=>{inputs.push(value);return true;},
     discover:async()=>{calls.push(['discover']);publish({status:'selecting',windows,message:'Select an open window.'});},
     connect:async id=>{
