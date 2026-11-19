@@ -4,20 +4,46 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1 } from './windowsAuthorityStephanosNativeCapacityPublisherReviewV1.mjs';
 
 const sourcePath = fileURLToPath(new URL('../../scripts/windows/install-stephanos-native-capacity-publisher.ps1', import.meta.url));
 const source = readFileSync(sourcePath, 'utf8');
 const reviewer = readFileSync(new URL('./windowsAuthorityStephanosNativeCapacityPublisherReviewV1.mjs', import.meta.url), 'utf8');
 const BLOB = '24a4a9d1124da84dc99f34ba61fb3e6ed7d3153e';
 
-test('source updater preserves original exact qualification and only the candidate installer is pinned', () => {
+test('candidate installer is exact-blob pinned but remains UNQUALIFIED by incumbent specialist', () => {
   const bytes = Buffer.from(source, 'utf8');
   const gitBlob = createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
   assert.equal(gitBlob, BLOB);
-  assert.ok(reviewer.includes("'" + BLOB + "'"));
-  assert.match(reviewer, /native-capacity-recovery-repetition-missing/);
-  assert.match(reviewer, /native-capacity-recovery-must-reuse-task/);
-  assert.match(reviewer, /native-capacity-registered-recovery-unverified/);
+  assert.ok(!reviewer.includes("'" + BLOB + "'"), 'unreviewed Windows installer must not silently enter the qualified allowlist');
+  assert.match(reviewer, /'65253e069c91414bfe24cec8fc0db6ad14d9371c'/);
+  assert.match(reviewer, /'8d3c7a8c528a62011967b986e3d87b8675810b5a'/);
+
+  const sourceHead = 'a'.repeat(40);
+  const path = 'scripts/windows/install-stephanos-native-capacity-publisher.ps1';
+  const result = analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead,
+    analysis: {
+      counts: { P0: 1, P1: 0, P2: 0 },
+      findings: [{ severity: 'P0', code: 'unsupported-high-risk-surface', path }],
+    },
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path,
+      ref: sourceHead,
+      exists: true,
+      size: bytes.length,
+      blobSha: BLOB,
+      content: source,
+    }],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.equal(result.findings[0]?.code, 'windows-authority-source-evidence-invalid');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAllowed, false);
 });
 
 test('one existing task retains sign-in and bounded five-minute recovery admission', () => {
