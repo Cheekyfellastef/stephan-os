@@ -86,15 +86,19 @@ test('Quest and Xbox ray hits match the visible raised key surfaces at every til
 
 test('selecting a key or Shift animates the real cap, then releases without additional input authority', () => {
   let timestamp = 100, inputs = [];
+  const frame = { naturalWidth: 1920, naturalHeight: 1080 };
   const client = {
     getState: () => ({ status: 'live', revision: 0, message: '' }),
-    getFrame: () => ({ naturalWidth: 1920, naturalHeight: 1080 }),
+    getFrame: () => frame,
     input: value => { inputs.push(value); return true; },
   };
   const screen = createHolodeckScreen({
     client, now: () => timestamp,
-    documentRef: { createElement: () => ({ getContext: () => ({}) }) },
+    documentRef: { createElement: () => ({ getContext: () => ({
+      clearRect(){}, fillRect(){}, strokeRect(){}, fillText(){}, drawImage(){},
+    }) }) },
   });
+  screen.render(); // Synthetic key presses need the same painted-frame proof as the actual hologram.
   assert.equal(screen.getKeycapMotion(), null);
   screen.action('key:g');
   assert.deepEqual(inputs.at(-1), { kind: 'text', text: 'g' });
