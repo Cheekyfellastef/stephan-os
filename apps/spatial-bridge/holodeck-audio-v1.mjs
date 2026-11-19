@@ -199,6 +199,17 @@ export function createHolodeckAudioControls({
       if(stream===cancelled||!ownsMic(owner))return stoppedResult('Microphone');
       const tracks=stream?.getAudioTracks?.()??stream?.getTracks?.()??[];
       if(!tracks.length||tracks.every(track=>track.readyState==='ended'))throw new Error('No live microphone track');
+      // Browser permission is not proof that an explicit Quest microphone was
+      // adopted. Check the granted track's current physical device identity
+      // before marking the local test live; never fall back to another mic.
+      if(deviceId&&!tracks.every(track=>{
+        try{return track.getSettings?.().deviceId===deviceId;}catch{return false;}
+      })){
+        releaseMicrophone();
+        const reason='Selected microphone identity could not be verified. Local capture stopped; re-select the intended headset microphone.';
+        publish({microphoneActive:false,microphonePending:false,status:reason});
+        return {ok:false,reason};
+      }
       for(const track of tracks){
         const ended=()=>{if(ownsMic(owner)){
           releaseMicrophone();publish({microphoneActive:false,microphonePending:false,status:'Microphone test ended. Start a new test when ready.'});
