@@ -75,7 +75,12 @@ export function createHolodeckAudioControls({
   const stoppedResult=kind=>({ok:false,cancelled:true,reason:kind+' test was stopped.'});
   // A failed refresh must not leave an old device list usable for a new
   // microphone permission request or speaker test. Keep saved hints inert.
-  function invalidateDevices(reason){
+  // A failed enumeration may conceal a replaced/reused headset device ID.
+  // Preserve inert preferences, but never reselect the old physical route.
+  let deviceRecoveryCause='';
+  function invalidateDevices(reason,cause='discovery'){
+    deviceRecoveryCause=cause;
+    hotplugInputNeedsSelection=true;hotplugOutputNeedsSelection=true;
     deviceRefreshFailed=true;statusIntent++;
     releaseMicrophone();releaseSpeaker();
     const message=reason+' Refresh devices before starting another local audio test.';
@@ -91,8 +96,7 @@ export function createHolodeckAudioControls({
     deviceChangeListener=()=>{
       if(disposed)return;
       ++listVersion; // An enumeration begun before the change must not restore old devices.
-      hotplugInputNeedsSelection=true;hotplugOutputNeedsSelection=true;
-      invalidateDevices('Audio devices changed.');
+      invalidateDevices('Audio devices changed.','hotplug');
     };
     try{deviceService.addEventListener('devicechange',deviceChangeListener);}
     catch{deviceChangeListener=null;}
@@ -139,7 +143,8 @@ export function createHolodeckAudioControls({
       if(outputId!==state.outputId)releaseSpeaker();
       const missingInput=Boolean(wantedInput&&!inputId),missingOutput=Boolean(wantedOutput&&!outputId);
       const reason=hotplugInputNeedsSelection||hotplugOutputNeedsSelection
-        ?'Audio devices changed. Re-select the intended microphone and speaker; neither local test nor ChatGPT Voice has started.'
+        ?(deviceRecoveryCause==='hotplug'?'Audio devices changed.':'Audio device discovery previously failed.')+
+          ' Re-select the intended microphone and speaker; neither local test nor ChatGPT Voice has started.'
         :missingInput||missingOutput
           ?'Previous '+(missingInput&&missingOutput?'microphone and speaker':missingInput?'microphone':'speaker')+
             ' unavailable. Re-select the intended device; no test or ChatGPT Voice session started.'
