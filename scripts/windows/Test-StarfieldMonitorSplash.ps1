@@ -16,7 +16,7 @@ if ($parseErrors.Count -ne 0) { throw ($parseErrors | Out-String) }
 $functionNames = @('Enter-StarfieldSplashOwner', 'Exit-StarfieldSplashOwner', 'New-MonitorProcessStartInfo', 'Start-MonitorProcess',
     'Read-MonitorProbeResult', 'Find-MonitorPython', 'Get-MonitorCustodyPaths', 'Test-MonitorCustodyPathPresent',
     'Read-MonitorCustodyReceipt', 'Test-MonitorProviderCustody', 'Add-MonitorDetail',
-    'Get-MonitorDiagnosticField', 'Get-MonitorCleanupDiagnostics', 'Update-HybridButton',
+    'Get-MonitorDiagnosticField', 'Get-MonitorCleanupDiagnostics', 'Invoke-MonitorWaitingGameFocus', 'Update-HybridButton',
     'Set-MonitorProviderControls', 'Stop-MonitorTransport', 'Send-MonitorCommand',
     'Test-MonitorBooleanFields', 'Receive-MonitorEvent')
 $definitions = @{}
@@ -83,9 +83,12 @@ function Reset-MonitorFixture {
         ClosedReceived = $false; TransportFailed = $false; ProviderSlotReleased = $true; SafeToClose = $true
         DurableCustodyReleased = $true; DurableCustodyReason = 'fixture-no-custody'
         Busy = $false; Mode = 'ready'; AllowedActions = @('prepare', 'close'); ConfirmationToken = $null
-        RunId = $null; GameProcess = $null; Result = $null; DetailText = ''; FocusAttemptedRunId = ''; LastCleanupDiagnosticKey = ''
-        StartedAtUtc = $null; ExitedAtUtc = $null
+        RunId = $null; GameProcess = $null; Result = $null; DetailText = ''; FocusAttemptedRunId = ''; FocusAttemptCount = 0
+        LastCleanupDiagnosticKey = ''; StartedAtUtc = $null; ExitedAtUtc = $null
     }
+    $script:focusRetryTimer = [pscustomobject]@{ StartCalls = 0; StopCalls = 0 }
+    $focusRetryTimer | Add-Member -MemberType ScriptMethod -Name Start -Value { $this.StartCalls += 1 }
+    $focusRetryTimer | Add-Member -MemberType ScriptMethod -Name Stop -Value { $this.StopCalls += 1 }
     $script:vorpxProfileConfigured = $true
     $script:mutarProfileConfigured = $true
     $script:mutarPackageStaged = $true
@@ -185,6 +188,7 @@ try {
     Invoke-Fixture 'waiting receipt requires the actual confirmation dispatch' {
         Reset-MonitorFixture
         Send-FixtureFrame (New-StateFrame 'waiting')
+        Assert-True ($monitorState.FocusAttemptCount -eq 1 -and $focusRetryTimer.StartCalls -eq 0) 'Unknown HWND identity caused an unbounded retry'
         Assert-True ($monitorState.Process.StandardInput.ToString().Length -eq 0) 'Waiting synthesized confirmation'
         Assert-True (Send-MonitorCommand -Command 'confirm') 'Explicit confirmation was refused'
         $sent = $monitorState.Process.StandardInput.ToString() | ConvertFrom-Json
