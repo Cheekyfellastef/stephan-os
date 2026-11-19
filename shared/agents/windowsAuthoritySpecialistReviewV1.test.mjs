@@ -88,8 +88,8 @@ function input(overrides = {}) {
 test('router preserves exact governor specialist source pin after metadata fail-closed correction', async () => {
   const reviewerSource = await readFile(new URL('./windowsAuthorityVrResourceGovernorReviewV1.mjs', import.meta.url), 'utf8');
   const routerSource = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.equal(gitBlobSha(reviewerSource), 'eb82827e329218a43b9fe0caaacb103e2d503f5b');
-  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = 'eb82827e329218a43b9fe0caaacb103e2d503f5b';"));
+  assert.equal(gitBlobSha(reviewerSource), '52c94b778f0412d278c34a37950aa3cb529eba2d');
+  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = '52c94b778f0412d278c34a37950aa3cb529eba2d';"));
   assert.ok(reviewerSource.includes('counts.P0 === 1'));
   assert.ok(reviewerSource.includes("analysis?.verdict === 'findings'"));
 });
