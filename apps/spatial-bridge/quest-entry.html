@@ -383,7 +383,7 @@
     document.getElementById('share-window').addEventListener('click',()=>{void client.shareScreen();});
     windowSelector.addEventListener('change',()=>{screen.selectWindow(windowSelector.value?Number(windowSelector.value):null);});
     connectWindowButton.addEventListener('click',()=>screen.action('connect-window'));
-    document.getElementById('disconnect-window').addEventListener('click',()=>client.stop());
+    document.getElementById('disconnect-window').addEventListener('click',()=>screen.action('disconnect-window'));
     document.getElementById('audio-refresh').addEventListener('click',()=>audio.listDevices());
     document.getElementById('audio-microphone').addEventListener('change',event=>audio.setInput(event.target.value));
     document.getElementById('audio-speakers').addEventListener('change',event=>audio.setOutput(event.target.value));
@@ -461,10 +461,10 @@
       previewFrame = requestAnimationFrame(animatePreview);
     }
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) { comfort.flush();furniture.flush();stopMicTest();cubeScene.stop(); previewTime = null; }
+      if (document.hidden) { comfort.flush();furniture.flush();stopMicTest();audio.stopSpeakers();cubeScene.stop(); previewTime = null; }
       else if (!immersiveActive) playPreview();
     });
-    window.addEventListener('pagehide', event => {workspaceEntry.stop();comfort.flush();furniture.flush();stopMicTest();cubeScene.stop();void client.pagehide(event);});
+    window.addEventListener('pagehide', event => {workspaceEntry.stop();comfort.flush();furniture.flush();stopMicTest();audio.stopSpeakers();cubeScene.stop();void client.pagehide(event);});
     window.addEventListener('pageshow', event => {if(event.persisted&&!immersiveActive){playPreview();void refreshCapabilities();}});
     document.getElementById('preview-cube').addEventListener('change', playPreview);
     for (const [id,action] of Object.entries({
