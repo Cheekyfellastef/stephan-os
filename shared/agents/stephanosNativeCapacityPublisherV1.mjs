@@ -181,7 +181,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
   }
 }
 
-export async function publishStephanosNativeCapacityV1(options = {}) {
+async function publishQualifiedNativeCapacityV1(options = {}) {
   const observedAtUtc = text(options.observedAtUtc) || new Date().toISOString();
   const observedAtMs = timestamp(observedAtUtc);
   const repository = text(options.repository);
@@ -197,6 +197,8 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
 
   const cleared = await clearStephanosNativeCapacityStatus({ workspaceRoot, repoRoot });
   if (!cleared.ok) return frozen({ ok: false, reason: cleared.reason });
+  const checking=await publishStephanosNativeCapacityObservationV1(options,{phase:'CHECKING',reason:'native-capacity-probe-in-progress'});
+  if(!checking.ok)return frozen({ok:false,reason:'native-capacity-diagnostic-unwritable',cleared:true,diagnosticPublished:false});
 
   try {
     const privateKeyPem = text(options.privateKeyPem)
@@ -375,4 +377,49 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
     if (error instanceof GamingAdmissionHold) return frozen({ ...error.admission, ...clearState });
     return frozen({ ok: false, reason: 'native-capacity-publication-failed', errorCode: text(error?.code || error?.message).slice(0, 80), ...clearState });
   }
+}
+
+// Advisory facts in the SAME canonical slot. No signed capacity or execution
+// authority can be derived from a checking/blocked/stopped observation.
+const NATIVE_DIAGNOSTIC_REASONS=new Set([
+  'native-capacity-probe-in-progress','native-capacity-publisher-stopped','native-capacity-canonical-reload-required',
+  'native-capacity-source-identity-read-failed','native-capacity-source-not-main','native-capacity-source-head-invalid',
+  'native-capacity-source-dirty','native-capacity-launch-head-mismatch','native-capacity-key-root-missing',
+  'native-capacity-signing-key-missing','native-capacity-signing-key-unavailable','native-capacity-publication-failed',
+  'native-local-transport-invalid','native-model-not-installed','native-model-substitution-detected',
+  'native-source-qualification-failed','native-model-load-unproven','native-model-probe-timeout','native-model-probe-failed',
+  'native-capacity-queue-unproven','native-capacity-queue-depth-invalid','native-capacity-signing-failed',
+  'native-source-authority-derivation-failed','native-capacity-proof-publication-failed','native-capacity-observation-unclassified',
+]);
+function diagnosticReason(reason){
+  if(typeof reason!=='string')return 'native-capacity-observation-unclassified';
+  if(NATIVE_DIAGNOSTIC_REASONS.has(reason))return reason;
+  if(/^native-capacity-gaming-(workspace-unproved|workspace-mismatch|prepare-pending|override-unproved|state-invalid|observation-stale|observation-future|permission-denied|clock-unproved|evidence-unavailable)$/.test(reason))return reason;
+  return reason.startsWith('native-capacity-proof:')?'native-capacity-proof-publication-failed':'native-capacity-observation-unclassified';
+}
+export async function publishStephanosNativeCapacityObservationV1(options={},observation={}){
+  const phase=observation.phase;
+  if(!['CHECKING','BLOCKED','STOPPED'].includes(phase)||typeof options.workspaceRoot!=='string'||typeof options.repoRoot!=='string'||!options.workspaceRoot||!options.repoRoot)
+    return frozen({ok:false,reason:'native-capacity-diagnostic-input-invalid'});
+  const reason=diagnosticReason(observation.reason),timestampUtc=new Date().toISOString();
+  const record=frozen({...createSharedWorkspaceStatusRecord({statusId:STEPHANOS_NATIVE_CAPACITY_STATUS_ID,
+    participantId:STEPHANOS_NATIVE_CAPACITY_WORKER_ID,timestampUtc,relatedIssue:'#2008',status:phase,
+    summary:'Native capacity '+phase.toLowerCase()+': '+reason+'. No execution authority.',proofRefs:[]}),
+    diagnostic:frozen({schemaVersion:'stephanos.native-capacity-observation.v1',phase,reason,
+      sourceHead:typeof options.sourceHead==='string'&&SHA40.test(options.sourceHead)?options.sourceHead:null,
+      expiresAtUtc:new Date(Date.parse(timestampUtc)+180000).toISOString(),qualificationProven:false}),
+    sourceMutationAllowed:false,supportedOperations:frozen([]),arbitraryCommandAllowed:false,
+    mergeAuthority:false,leaseSeizureAllowed:false,duplicateDispatchAllowed:false});
+  try{const written=await writeAtomicJson(options.workspaceRoot,['status',STEPHANOS_NATIVE_CAPACITY_STATUS_ID+'.json'],record,{repoRoot:options.repoRoot});
+    return frozen({ok:written.ok===true,reason:written.ok?'STEPHANOS_NATIVE_CAPACITY_OBSERVATION_PUBLISHED':'native-capacity-diagnostic-unwritable',...(written.ok?{statusRecord:record}:{})});
+  }catch{return frozen({ok:false,reason:'native-capacity-diagnostic-unwritable'});}
+}
+export async function publishStephanosNativeCapacityV1(options={}){
+  let result;try{result=await publishQualifiedNativeCapacityV1(options);}catch{return frozen({ok:false,reason:'native-capacity-status-clear-failed',diagnosticPublished:false});}
+  if(result.ok)return result;
+  // Never recursively depend on a status sink that just refused publication.
+  if(result.cleared!==true||result.reason==='native-capacity-diagnostic-unwritable'||result.reason.startsWith('native-capacity-status:'))
+    return frozen({...result,diagnosticPublished:false});
+  const diagnostic=await publishStephanosNativeCapacityObservationV1(options,{phase:'BLOCKED',reason:result.reason});
+  return frozen({...result,diagnosticPublished:diagnostic.ok,diagnosticReason:diagnostic.reason});
 }
