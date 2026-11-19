@@ -835,3 +835,49 @@ test('unsolicited draft text is held until the original app editor is explicitly
     }finally{await h.close();}
   }
 });
+
+test('newer deliberate editor click supersedes draft queued for the previous target',async()=>{
+  const observed=[];
+  const h=captureTransitionHarness({inputOutcome:body=>{
+    observed.push(body);
+    return body.kind==='click'?'editor-accessibility-selected':'editor-value-readback';
+  }});
+  try{
+    await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+    assert.equal(h.client.input({kind:'click',x:.2,y:.5}),true);
+    assert.equal(h.client.input({kind:'text',text:'old target draft'}),true);
+    assert.equal(h.client.input({kind:'click',x:.8,y:.5}),true,
+      'a fresh explicit target replaces the older pending click and draft');
+    await h.tick();await h.tick();
+    assert.deepEqual(observed.map(body=>body.kind),['click'],
+      'no obsolete click or queued text may be forwarded to native input');
+    assert.equal(observed[0].x,.8,'the latest deliberate target is retained');
+    assert.equal(h.client.input({kind:'text',text:'deliberate fresh draft'}),true);
+    await h.tick();
+    assert.deepEqual(observed.map(body=>body.kind),['click','text']);
+    assert.equal(observed[1].text,'deliberate fresh draft');
+  }finally{await h.close();}
+});
+
+test('a second click during a native click response revokes text queued for the first editor',async()=>{
+  let h;const observed=[];
+  h=captureTransitionHarness({inputOutcome:body=>{
+    observed.push(body);
+    if(body.kind==='click'&&body.x===.2){
+      assert.equal(h.client.input({kind:'text',text:'queued behind old click'}),true);
+      assert.equal(h.client.input({kind:'click',x:.8,y:.5}),true);
+    }
+    return body.kind==='click'?'editor-accessibility-selected':'editor-value-readback';
+  }});
+  try{
+    await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+    assert.equal(h.client.input({kind:'click',x:.2,y:.5}),true);
+    await h.tick();await h.tick();await h.tick();
+    assert.deepEqual(observed.map(body=>body.kind),['click','click'],
+      'in-flight click is not replayed, and old queued draft is discarded');
+    assert.deepEqual(observed.map(body=>body.x),[.2,.8]);
+    assert.equal(h.client.input({kind:'text',text:'freshly selected editor only'}),true);
+    await h.tick();
+    assert.deepEqual(observed.map(body=>body.kind),['click','click','text']);
+  }finally{await h.close();}
+});
