@@ -1,22 +1,34 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { createExecutionReceipt, toSharedWorkspaceExecutionReceipt } from '../../../shared/agents/executionReceiptV1.mjs';
+import { acquireSharedWorkspaceOperationLock } from '../../../shared/agents/executionReceiptV1.mjs';
 
 import {
   OPENCLAW_OC2_FIXED_PLAN,
   OPENCLAW_OC2_OPERATION,
   OPENCLAW_OC2_TASK_CLASS,
-  executeClaimedOpenClawOc2DeterministicTestBuild,
+  executeClaimedOpenClawOc2DeterministicTestBuild as executeOc2Production,
   validateOpenClawOc2QualificationContext,
-  writeExclusiveOpenClawOc2StartedReceipt,
 } from './lib/oc2-deterministic-test-build.mjs';
 
 const HEAD = 'a'.repeat(40);
 const MISSION = 'openclaw-oc2-mission';
 const TASK = 'openclaw-oc2-task-0001';
+
+// Test-only owner-verified operation lock. Real production never accepts a
+// caller-provided lock; the Gateway supplies only a fixed grant packet.
+async function executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options = {}) {
+  return executeOc2Production(action, claim, {
+    acquireOc2PublicationLockFn: async () => ({
+      ok: true,
+      verifyOwnership: async () => true,
+      release: async () => true,
+    }),
+    ...options,
+  });
+}
 
 function fixture(overrides = {}) {
   const action = {
@@ -647,53 +659,31 @@ test('OC2 refuses a retained STARTED/COMPLETED receipt or unreadable prior custo
 });
 
 
-test('OC2 initial STARTED receipt rejects concurrent native writers using OS exclusive create', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'stephanos-oc2-exclusive-'));
-  const receiptId = 'oc2-receipt-' + 'f'.repeat(32);
-  const now = new Date();
-  const pending = toSharedWorkspaceExecutionReceipt(createExecutionReceipt({
-    receiptId,
-    repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1725,
-    prNumber: 0,
-    branch: 'main',
-    sourceHead: HEAD,
-    workerId: 'openclaw-native-oc2-test',
-    workerType: 'openclaw',
-    executionId: 'oc2-exclusive-fixture',
-    leaseKey: 'oc2-' + 'f'.repeat(32),
-    state: 'started',
-    phase: OPENCLAW_OC2_TASK_CLASS,
-    sequence: 1,
-    predecessorReceiptId: '',
-    timestampUtc: now.toISOString(),
-    heartbeatExpiresAtUtc: new Date(now.getTime() + 120000).toISOString(),
-    blocker: '',
-    operatorActionRequired: false,
-    proofRefs: ['proofs/openclaw-oc2/oc2-exclusive-fixture.json'],
-    expectedNextAction: 'Publish fixed test proof, then complete receipt.',
-  }));
-  assert.equal(pending.ok, true);
-  const segments = ['receipts', receiptId + '.json'];
-  const opts = { repoRoot: path.join(root, '..', 'unrelated-source-tree') };
+test('OC2 existing operation lock permits exactly one concurrent publisher and safe subsequent release', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'stephanos-oc2-operation-lock-'));
+  const segments = ['receipt-locks', 'openclaw-oc2', 'oc2-' + 'f'.repeat(32) + '.lock'];
+  const options = {
+    repoRoot: path.join(root, '..', 'unrelated-source-tree'),
+    operationLockTimeoutMs: 0,
+  };
+  let winner;
   try {
-    await mkdir(path.join(root, 'receipts'), { recursive: true });
-    const attempts = await Promise.allSettled(Array.from({ length: 3 }, () =>
-      writeExclusiveOpenClawOc2StartedReceipt(root, segments, pending.record, opts)));
-    const winners = attempts.filter((item) => item.status === 'fulfilled' && item.value.ok);
-    const losers = attempts.filter((item) => item.status === 'rejected');
-    assert.equal(winners.length, 1, 'only one process may create the original grant custody');
-    assert.equal(losers.length, 2, 'other writers must never overwrite the first receipt');
-    assert.ok(losers.every((item) => item.reason?.code === 'EEXIST'));
-    const stored = JSON.parse(await readFile(path.join(root, 'receipts', receiptId + '.json'), 'utf8'));
-    assert.deepEqual(stored, pending.record, 'winner custody must be intact');
-    const bad = await writeExclusiveOpenClawOc2StartedReceipt(root, ['proofs', receiptId + '.json'], pending.record, opts);
-    assert.equal(bad.ok, false, 'exclusive receipt writer must not accept a different path class');
-    await assert.rejects(
-      writeExclusiveOpenClawOc2StartedReceipt(root, segments, pending.record, opts),
-      { code: 'EEXIST' },
-    );
+    const contenders = await Promise.all(Array.from({ length: 3 }, () =>
+      acquireSharedWorkspaceOperationLock(root, segments, options)));
+    const successes = contenders.filter((value) => value.ok === true);
+    const blocked = contenders.filter((value) => value.ok !== true);
+    assert.equal(successes.length, 1, 'only the original current writer can own the fixed grant lock');
+    assert.equal(blocked.length, 2, 'competing contenders must be held, not allowed to write proof');
+    assert.equal(await successes[0].verifyOwnership(), true);
+    winner = successes[0];
+    assert.equal(await winner.release(), true);
+    winner = null;
+    const successor = await acquireSharedWorkspaceOperationLock(root, segments, options);
+    assert.equal(successor.ok, true, 'normal release permits subsequent verified admission');
+    assert.equal(await successor.verifyOwnership(), true);
+    assert.equal(await successor.release(), true);
   } finally {
+    if (winner) await winner.release();
     await rm(root, { recursive: true, force: true });
   }
 });
