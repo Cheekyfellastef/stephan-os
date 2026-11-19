@@ -104,7 +104,9 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     if(current===epoch&&capture===keepCapture)
       publish({status:'idle',windows:[],title:'',inputStatus:'',
         message:old?'Window disconnected locally; verifying native capture release.':'Window disconnected.'});
-    const stopped=revokeNativeToken(old).then(released=>{
+    // Preserve the original one-hop, token-free disconnect timing: a room
+    // with no native session must not delay an explicitly requested discovery.
+    const stopped=old?revokeNativeToken(old).then(released=>{
       // A late revocation must never overwrite a newer native bind or view.
       if(old&&currentEpoch(current)&&capture===keepCapture&&state.status==='idle'){
         publish({status:released?'idle':'unavailable',
@@ -112,7 +114,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
           inputStatus:released?'':'Native capture release unverified. Do not assume the original app is no longer shared.'});
       }
       return released;
-    });
+    }):Promise.resolve(true);
     return Object.freeze({epoch:current,stopped});
   }
   // Local browser capture remains an explicit view-only alternative. A display
