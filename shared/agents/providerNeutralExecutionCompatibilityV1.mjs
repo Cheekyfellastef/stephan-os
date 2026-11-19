@@ -26,6 +26,7 @@ export const PROVIDER_NEUTRAL_EXECUTION_ADAPTERS_V1 = Object.freeze([
   'openclaw-local',
   'openclaw-standalone',
   'desktop-commander',
+  'sovereign-commander',
   'stephanos-native',
 ]);
 

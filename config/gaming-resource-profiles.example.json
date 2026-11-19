@@ -6,6 +6,7 @@
       "name": "heavy-game-maximum",
       "minFreeVramMiB": 10240,
       "lightweightOnly": true,
+      "parkAllModels": true,
       "cooldownSeconds": 90
     },
     {

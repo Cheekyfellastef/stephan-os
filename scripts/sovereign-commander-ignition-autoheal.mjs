@@ -12,7 +12,7 @@ const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL = '2025-11-25';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const REQUIRED_COMMANDER_CAPABILITY_VERSION = '2026-10-01-control-plane-repair-v1';
+const REQUIRED_COMMANDER_CAPABILITY_VERSION = '2026-10-18-island-action-contract-v6';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -40,6 +40,12 @@ async function health(fetchFn) {
   }
 }
 
+export async function probeSovereignCommanderRuntimeCompatibility({
+  fetchFn = globalThis.fetch,
+} = {}) {
+  return health(fetchFn);
+}
+
 async function post(fetchFn, token, message, sessionId = '') {
   const headers = { authorization: 'Bearer ' + token, 'content-type': 'application/json' };
   if (sessionId) headers['mcp-session-id'] = sessionId;
@@ -59,10 +65,10 @@ async function post(fetchFn, token, message, sessionId = '') {
   });
 }
 
-async function ensureCommander({
-  fetchFn,
-  spawnSyncFn,
-  repoRoot,
+export async function ensureSovereignCommanderRuntime({
+  fetchFn = globalThis.fetch,
+  spawnSyncFn = spawnSync,
+  repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
 } = {}) {
   const beforeHealth = await health(fetchFn);
   if (beforeHealth.ok) return Object.freeze({ ok: true, bootstrapAttempted: false, staleCapabilityRecycleRequested: false });
@@ -70,6 +76,7 @@ async function ensureCommander({
   const started = spawnSyncFn(POWERSHELL, [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', runner,
     '-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION,
+    '-SkipCoreDaemonLifecycle',
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
@@ -99,7 +106,7 @@ export async function runSovereignCommanderIgnitionAutoheal({
   spawnSyncFn = spawnSync,
 } = {}) {
   const normalizedRepoRoot = resolve(repoRoot);
-  const commander = await ensureCommander({ fetchFn, spawnSyncFn, repoRoot: normalizedRepoRoot });
+  const commander = await ensureSovereignCommanderRuntime({ fetchFn, spawnSyncFn, repoRoot: normalizedRepoRoot });
   if (!commander.ok) {
     return Object.freeze({
       schemaVersion: SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_SCHEMA,
@@ -153,37 +160,67 @@ export async function runSovereignCommanderIgnitionAutoheal({
   }, sessionId);
   const maintenance = (listed.body?.result?.tools || []).find((tool) => tool?.name === 'maintenance_action');
   const actions = maintenance?.inputSchema?.properties?.actionId?.enum || [];
-  if (!initialized.ok || !listed.ok || !actions.includes('repair-control-plane')) {
+  const requiredActions = ['repair-control-plane', 'ignite-stephanos'];
+  const missingActions = requiredActions.filter((actionId) => !actions.includes(actionId));
+  if (!initialized.ok || !listed.ok || missingActions.length > 0) {
     return Object.freeze({
       schemaVersion: SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_SCHEMA,
       ok: false,
-      blocker: 'SOVEREIGN_COMMANDER_CONTROL_PLANE_ACTION_UNAVAILABLE',
+      blocker: missingActions.includes('repair-control-plane')
+        ? 'SOVEREIGN_COMMANDER_CONTROL_PLANE_ACTION_UNAVAILABLE'
+        : 'SOVEREIGN_COMMANDER_IGNITION_ACTION_UNAVAILABLE',
+      missingActions: Object.freeze(missingActions),
       commanderBootstrapAttempted: commander.bootstrapAttempted,
       finalVerdict: 'SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_BLOCKED',
     });
   }
 
-  const called = await post(fetchFn, token, {
-    jsonrpc: '2.0',
-    id: 3,
-    method: 'tools/call',
-    params: { name: 'maintenance_action', arguments: { actionId: 'repair-control-plane' } },
-  }, sessionId);
-  const result = called.body?.result?.structuredContent || {};
-  const ok = called.ok
-    && called.body?.result?.isError !== true
-    && result?.ok === true
-    && result?.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED';
+  const callMaintenance = async (id, actionId) => {
+    const called = await post(fetchFn, token, {
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/call',
+      params: { name: 'maintenance_action', arguments: { actionId } },
+    }, sessionId);
+    const result = called.body?.result?.structuredContent || {};
+    const ok = called.ok
+      && called.body?.result?.isError !== true
+      && result?.ok === true
+      && result?.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED';
+    return Object.freeze({ called, result, ok });
+  };
+
+  const controlPlane = await callMaintenance(3, 'repair-control-plane');
+  if (!controlPlane.ok) {
+    return Object.freeze({
+      schemaVersion: SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_SCHEMA,
+      ok: false,
+      blocker: text(controlPlane.result?.blocker || 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_FAILED'),
+      commanderBootstrapAttempted: commander.bootstrapAttempted,
+      staleCapabilityRecycleRequested: commander.staleCapabilityRecycleRequested === true,
+      proofHash: text(controlPlane.result?.proofHash),
+      controlPlaneProofHash: text(controlPlane.result?.proofHash),
+      commandFinalVerdict: text(controlPlane.result?.finalVerdict),
+      repairOutput: text(controlPlane.result?.contentText).slice(0, 8000),
+      finalVerdict: 'SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_BLOCKED',
+    });
+  }
+
+  const ignition = await callMaintenance(4, 'ignite-stephanos');
+  const ok = ignition.ok;
 
   return Object.freeze({
     schemaVersion: SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_SCHEMA,
     ok,
-    blocker: ok ? '' : text(result?.blocker || 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_FAILED'),
+    blocker: ok ? '' : text(ignition.result?.blocker || 'SOVEREIGN_COMMANDER_IGNITION_REPAIR_FAILED'),
     commanderBootstrapAttempted: commander.bootstrapAttempted,
     staleCapabilityRecycleRequested: commander.staleCapabilityRecycleRequested === true,
-    proofHash: text(result?.proofHash),
-    commandFinalVerdict: text(result?.finalVerdict),
-    repairOutput: text(result?.contentText).slice(0, 8000),
+    proofHash: text(ignition.result?.proofHash || controlPlane.result?.proofHash),
+    controlPlaneProofHash: text(controlPlane.result?.proofHash),
+    ignitionProofHash: text(ignition.result?.proofHash),
+    commandFinalVerdict: text(ignition.result?.finalVerdict),
+    repairOutput: text(controlPlane.result?.contentText).slice(0, 4000),
+    ignitionOutput: text(ignition.result?.contentText).slice(0, 8000),
     finalVerdict: ok
       ? 'SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_GREEN'
       : 'SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_BLOCKED',

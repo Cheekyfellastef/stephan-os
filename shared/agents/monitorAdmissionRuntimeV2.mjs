@@ -6,6 +6,7 @@ import {
 } from './monitorAdmissionBridge.mjs';
 import {
   MONITOR_MULTIPLEXER_MAX_CONCURRENCY,
+  MONITOR_MULTIPLEXER_MAX_MONITORS,
   MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE,
   runMonitorMultiplexerTick,
 } from './monitorMultiplexer.mjs';
@@ -16,12 +17,19 @@ import {
   resolveSharedWorkspacePath,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
+import {
+  LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
+  LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA,
+  buildLogicalGoalControllerMonitorProposals,
+} from './logicalGoalControllerFabricV1.mjs';
 
 export const MONITOR_ADMISSION_RUNTIME_V2_SCHEMA = 'stephanos.monitor-admission-runtime.v2';
 export const MONITOR_ADMISSION_RUNTIME_V2_PARTICIPANT = 'monitor-admission-runtime-v2';
 export const LOGICAL_CONTROLLER_SCOPE_PREFIX = 'controller:';
 export const MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_SCHEMA = 'stephanos.monitor-admission-registry-bootstrap.v1';
 export const MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_FILE = 'monitor-admission-registry-bootstrap.json';
+export const LOGICAL_GOAL_CONTROLLER_FABRIC_MAX_AGE_MS = 15 * 60 * 1000;
+export const LOGICAL_GOAL_CONTROLLER_FABRIC_MAX_FUTURE_SKEW_MS = 60 * 1000;
 
 const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value) => String(value ?? '').trim();
@@ -203,6 +211,45 @@ export async function loadMonitorAdmissionRegistryV2(input = {}) {
   }
 }
 
+export async function loadLogicalGoalControllerFabricForMonitorRuntimeV2(input = {}) {
+  const layout = await ensureSharedWorkspaceLayout({ root: input.root, repoRoot: input.repoRoot });
+  if (!layout.ok) return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_WORKSPACE_UNAVAILABLE', fabric: null });
+  const resolved = resolveSharedWorkspacePath({
+    root: layout.root,
+    repoRoot: input.repoRoot,
+    segments: ['status', LOGICAL_GOAL_CONTROLLER_FABRIC_FILE],
+  });
+  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_PATH_BLOCKED', fabric: null });
+  try {
+    const fabric = JSON.parse(await readFile(resolved.path, 'utf8'));
+    if (fabric?.schemaVersion !== LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA
+      || fabric?.valid !== true
+      || !Array.isArray(fabric?.controllers)
+      || fabric.controllers.some((controller) => !safeId(controller?.logicalControllerId))) {
+      return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_MALFORMED', fabric: null });
+    }
+    const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+    const observedAtMs = Date.parse(text(fabric?.observedAtUtc));
+    if (!Number.isFinite(observedAtMs)) {
+      return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_OBSERVATION_INVALID', fabric: null });
+    }
+    const ageMs = nowMs - observedAtMs;
+    if (ageMs > LOGICAL_GOAL_CONTROLLER_FABRIC_MAX_AGE_MS
+      || ageMs < -LOGICAL_GOAL_CONTROLLER_FABRIC_MAX_FUTURE_SKEW_MS) {
+      return Object.freeze({
+        ok: true,
+        reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE',
+        fabric: null,
+        ageMs,
+      });
+    }
+    return Object.freeze({ ok: true, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY', fabric, ageMs });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return Object.freeze({ ok: true, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_NOT_YET_PUBLISHED', fabric: null });
+    return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READ_FAILED', fabric: null });
+  }
+}
+
 export function isLogicalControllerPulseProposalV2(proposal = {}) {
   return proposal?.handlerType === 'SCHEDULED_SUMMARY'
     && typeof proposal?.boundedSubject?.scope === 'string'
@@ -210,11 +257,58 @@ export function isLogicalControllerPulseProposalV2(proposal = {}) {
     && Boolean(text(proposal?.boundedSubject?.topic));
 }
 
-export function buildMonitorRuntimeProjectionV2(registry = {}) {
+export function buildMonitorRuntimeProjectionV2(registry = {}, options = {}) {
   const monitorRecords = plainObject(registry?.monitors) ? Object.values(registry.monitors) : [];
+  const logicalGoalProposals = buildLogicalGoalControllerMonitorProposals(options.logicalGoalControllerFabric, {
+    nowMs: options.nowMs,
+  });
+  const syntheticGoalRecords = logicalGoalProposals.map((proposal) => Object.freeze({
+    monitorId: proposal.monitorId,
+    proposal,
+    definition: proposalToMonitorDefinition(proposal),
+    updatedAtUtc: new Date(Number.isFinite(options.nowMs) ? options.nowMs : Date.now()).toISOString(),
+    syntheticLogicalGoalController: true,
+  }));
+  const existingIds = new Set(monitorRecords.map((record) => record?.monitorId).filter(Boolean));
+  const logicalControllerCollisions = syntheticGoalRecords
+    .filter((record) => existingIds.has(record.monitorId))
+    .map((record) => record.monitorId);
+  const collisionFreeSyntheticGoalRecords = syntheticGoalRecords
+    .filter((record) => !existingIds.has(record.monitorId));
+  const logicalControllerPriority = new Map(
+    (Array.isArray(options.logicalGoalControllerFabric?.controllers)
+      ? options.logicalGoalControllerFabric.controllers
+      : [])
+      .map((controller, index) => [
+        text(controller?.logicalControllerId),
+        Object.freeze({
+          selected: controller?.selectedForAdmission === true,
+          active: text(controller?.continuityState).toUpperCase() === 'ACTIVE',
+          index,
+        }),
+      ])
+      .filter(([monitorId]) => Boolean(monitorId)),
+  );
+  const prioritizedSyntheticGoalRecords = [...collisionFreeSyntheticGoalRecords]
+    .sort((left, right) => {
+      const leftPriority = logicalControllerPriority.get(left.monitorId) || {};
+      const rightPriority = logicalControllerPriority.get(right.monitorId) || {};
+      return Number(rightPriority.selected === true) - Number(leftPriority.selected === true)
+        || Number(rightPriority.active === true) - Number(leftPriority.active === true)
+        || Number(leftPriority.index ?? Number.MAX_SAFE_INTEGER) - Number(rightPriority.index ?? Number.MAX_SAFE_INTEGER);
+    });
+  const syntheticCapacity = Math.max(0, MONITOR_MULTIPLEXER_MAX_MONITORS - monitorRecords.length);
+  const admittedSyntheticGoalRecords = prioritizedSyntheticGoalRecords.slice(0, syntheticCapacity);
+  const logicalControllerOverflow = prioritizedSyntheticGoalRecords
+    .slice(syntheticCapacity)
+    .map((record) => record.monitorId);
+  const combinedMonitorRecords = [
+    ...monitorRecords,
+    ...admittedSyntheticGoalRecords,
+  ];
   const monitors = [];
   const controllerRecords = new Map();
-  for (const record of monitorRecords) {
+  for (const record of combinedMonitorRecords) {
     if (!plainObject(record) || !plainObject(record.definition) || !plainObject(record.proposal)) continue;
     monitors.push(runtimeMonitorInput(record.definition));
     if (isLogicalControllerPulseProposalV2(record.proposal)) controllerRecords.set(record.monitorId, record);
@@ -249,6 +343,10 @@ export function buildMonitorRuntimeProjectionV2(registry = {}) {
     handlers: Object.freeze(handlers),
     monitorCount: monitors.length,
     logicalControllerCount: controllerRecords.size,
+    logicalGoalControllerCount: admittedSyntheticGoalRecords.length,
+    logicalControllerCollisions: Object.freeze(logicalControllerCollisions),
+    logicalControllerOverflowCount: logicalControllerOverflow.length,
+    logicalControllerOverflow: Object.freeze(logicalControllerOverflow),
     externalTaskSlotsRequired: monitors.length ? 1 : 0,
     notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE,
     maximumConcurrency: MONITOR_MULTIPLEXER_MAX_CONCURRENCY,
@@ -263,7 +361,11 @@ export function buildMonitorRuntimeProjectionV2(registry = {}) {
 export async function runMonitorAdmissionRuntimeV2(input = {}) {
   const loaded = await loadMonitorAdmissionRegistryV2(input);
   if (!loaded.ok) return Object.freeze({ ...loaded, schemaVersion: MONITOR_ADMISSION_RUNTIME_V2_SCHEMA, finalVerdict: 'MONITOR_ADMISSION_RUNTIME_BLOCKED' });
-  const projection = buildMonitorRuntimeProjectionV2(loaded.registry);
+  const logicalGoalControllerFabric = await loadLogicalGoalControllerFabricForMonitorRuntimeV2(input);
+  const projection = buildMonitorRuntimeProjectionV2(loaded.registry, {
+    logicalGoalControllerFabric: logicalGoalControllerFabric.fabric,
+    nowMs: input.nowMs,
+  });
   const tick = await runMonitorMultiplexerTick({
     root: input.root,
     repoRoot: input.repoRoot,
@@ -280,6 +382,11 @@ export async function runMonitorAdmissionRuntimeV2(input = {}) {
     reason: tick.reason,
     monitorCount: projection.monitorCount,
     logicalControllerCount: projection.logicalControllerCount,
+    logicalGoalControllerCount: projection.logicalGoalControllerCount,
+    logicalGoalControllerFabricReason: logicalGoalControllerFabric.reason,
+    logicalControllerCollisions: projection.logicalControllerCollisions,
+    logicalControllerOverflowCount: projection.logicalControllerOverflowCount,
+    logicalControllerOverflow: projection.logicalControllerOverflow,
     externalTaskSlotsRequired: projection.externalTaskSlotsRequired,
     notificationSurface: projection.notificationSurface,
     maximumConcurrency: projection.maximumConcurrency,

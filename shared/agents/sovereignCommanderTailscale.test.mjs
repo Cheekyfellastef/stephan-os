@@ -29,5 +29,12 @@ test('tailnet configuration requires healthy local Sovereign Commander and runni
   assert.match(source, /TAILSCALE_NOT_RUNNING/);
   assert.match(source, /TAILSCALE_DNS_NAME_REQUIRED/);
   assert.match(source, /TAILSCALE_SERVE_PROOF_FAILED/);
-  assert.match(source, /https:\/\/\$\{dnsName\}:\$servePort\/ignite/);
+});
+
+test('native Tailscale configuration cannot contaminate its single JSON proof with a CLI banner', () => {
+  assert.match(source, /&\s+\$tailscale\.Source serve --bg --https=\$servePort \$target\s*\|\s*Out-Null/);
+  assert.match(source, /if \(\$LASTEXITCODE -ne 0\) \{ throw 'TAILSCALE_SERVE_CONFIGURATION_FAILED' \}/);
+  assert.match(source, /\$serveJson = @\(& \$tailscale\.Source serve status --json 2>\$null\)/);
+  assert.match(source, /Get-SovereignCommanderPrivateOriginObservationV1/);
+  assert.match(source, /publicFunnelEnabledByThisAction = \$false/);
 });

@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { ERROR_CODES } from '../../errors.js';
 import { sanitizeProviderConfig } from '../utils/providerUtils.js';
-import { resolveOllamaLoadGovernorPolicy } from '../../../../shared/ai/ollamaLoadGovernor.mjs';
+import { resolveOllamaLoadGovernorPolicy, projectVrGovernorExecutionPermissionsV1 } from '../../../../shared/ai/ollamaLoadGovernor.mjs';
 
 const OLLAMA_STATE = {
   CONNECTED: 'CONNECTED',
@@ -17,13 +17,15 @@ const OLLAMA_ROUTE_NOTE_PREFIX = '[OLLAMA ROUTE]';
 const OLLAMA_MODEL_POLICY = Object.freeze({
   lightweight: 'llama3.2:3b',
   defaultReasoning: 'qwen:14b',
-  deepReasoning: 'qwen:32b',
+  deepReasoning: 'qwen3.5:27b',
+  deepFallback: 'qwen:32b',
   fallback: 'gpt-oss:20b',
 });
 const SAFE_OLLAMA_TIMEOUT_MS = 8000;
 const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
   'qwen:14b': 75000,
   'gpt-oss:20b': 75000,
+  'qwen3.5:27b': 120000,
   'qwen:32b': 120000,
 });
 const OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS = 30000;
@@ -32,22 +34,31 @@ function readVrResourceGovernorState() {
   const statePath = resolve(homedir(), 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'vr-resource-governor-current.json');
   try {
     const parsed = JSON.parse(readFileSync(statePath, 'utf8'));
-    if (parsed?.schemaVersion === 'stephanos.vr-resource-governor.v1' && parsed?.active === true) {
-      const heavyModelAllowed = parsed?.heavyModelAllowed === true;
+    const permission = projectVrGovernorExecutionPermissionsV1(parsed);
+    {
+      const heavyModelAllowed = permission.heavyModelAllowed;
+      const localModelAllowed = permission.localModelAllowed;
       return {
-        active: true,
+        active: parsed?.active === true,
         protectHeavy: !heavyModelAllowed,
         heavyModelAllowed,
-        phase: String(parsed?.phase || 'GAMING').trim() || 'GAMING',
+        localModelAllowed,
+        phase: String(parsed?.phase || 'UNKNOWN').trim() || 'UNKNOWN',
         preferredModel: String(parsed?.preferredModel || OLLAMA_MODEL_POLICY.lightweight).trim() || OLLAMA_MODEL_POLICY.lightweight,
-        reason: String(parsed?.reason || 'gaming-resource-governor-active').trim(),
+        reason: permission.reason || String(parsed?.reason || '').trim(),
       };
     }
-  } catch {}
+  } catch (error) {
+    if (error?.code !== 'ENOENT' || process.platform === 'win32') return {
+      active: false, protectHeavy: true, heavyModelAllowed: false, localModelAllowed: false,
+      phase: 'UNKNOWN', preferredModel: OLLAMA_MODEL_POLICY.lightweight, reason: 'GOVERNOR_STATE_UNPROVEN',
+    };
+  }
   return {
     active: false,
     protectHeavy: false,
     heavyModelAllowed: true,
+    localModelAllowed: true,
     phase: 'NORMAL',
     preferredModel: OLLAMA_MODEL_POLICY.lightweight,
     reason: '',
@@ -66,10 +77,19 @@ function inferOllamaReasoningProfile(request = {}) {
     .find((message) => String(message?.role || '').toLowerCase() === 'user');
   const userText = String(latestUserMessage?.content || '').trim();
   const normalizedUserText = userText.toLowerCase();
+  const evidenceDrivenEscalation = Number(routeDecision?.recurringFailureCount || 0) >= 2
+    || Number(routeDecision?.capabilityGapCount || 0) > 0
+    || ['UNKNOWN', 'CONFLICTING'].includes(String(routeDecision?.rootCauseState || '').trim().toUpperCase())
+    || routeDecision?.conflictingEvidence === true
+    || routeDecision?.upliftRequired === true
+    || routeDecision?.reasoningPressure === 'uplift';
+  const sovereignRepairIntent = /\b(?:fix|repair|restore|self-heal|debug)\b.{0,160}\b(?:stephanos|goal builder|builder|controller|flywheel|daemon|openclaw)\b|\b(?:stephanos|goal builder|builder|controller|flywheel|daemon|openclaw)\b.{0,160}\b(?:fix|repair|restore|self-heal|debug)\b/i.test(userText);
   const explicitDeepReasoning = /\b(deep|hard|multi[- ]step|architecture|root cause|debug plan|escalate)\b/i.test(userText)
     || routeDecision?.selectedAnswerMode === 'deep-local'
     || routeDecision?.localReasoningTier === 'deep'
-    || routeDecision?.operatorDeepReasoning === true;
+    || routeDecision?.operatorDeepReasoning === true
+    || evidenceDrivenEscalation
+    || sovereignRepairIntent;
   const explicitLightweight = /\b(quick|brief|tiny|short answer|minimal)\b/i.test(userText)
     || routeDecision?.localReasoningTier === 'lightweight';
   const complexitySignals = [
@@ -85,6 +105,8 @@ function inferOllamaReasoningProfile(request = {}) {
     promptWordCount: userText ? userText.split(/\s+/).filter(Boolean).length : 0,
     explicitDeepReasoning,
     explicitLightweight,
+    evidenceDrivenEscalation,
+    sovereignRepairIntent,
     autoEscalate,
     preferredTier: explicitLightweight
       ? 'lightweight'
@@ -116,26 +138,36 @@ function chooseOllamaModel({
     && String(resolvedModel || '').trim().toLowerCase() === OLLAMA_MODEL_POLICY.lightweight;
   const explicitOverrideModel = explicitRequestModel || (explicitFastLaneOverride ? String(resolvedModel || '').trim() : '');
   const explicitOverrideAvailable = explicitOverrideModel && available.includes(explicitOverrideModel);
-  const policyCandidates = explicitOverrideAvailable
-    ? uniqueModels([
-      explicitOverrideModel,
-      preferredModelByTier,
+  const tierCandidates = profile.preferredTier === 'deep'
+    ? [
+      OLLAMA_MODEL_POLICY.deepReasoning,
+      OLLAMA_MODEL_POLICY.deepFallback,
       OLLAMA_MODEL_POLICY.defaultReasoning,
       OLLAMA_MODEL_POLICY.fallback,
       OLLAMA_MODEL_POLICY.lightweight,
-      requestedModel,
-      resolvedModel,
-      ...available,
-    ])
-    : uniqueModels([
-      preferredModelByTier,
-      OLLAMA_MODEL_POLICY.defaultReasoning,
-      OLLAMA_MODEL_POLICY.fallback,
-      OLLAMA_MODEL_POLICY.lightweight,
-      requestedModel,
-      resolvedModel,
-      ...available,
-    ]);
+    ]
+    : profile.preferredTier === 'lightweight'
+      ? [
+        OLLAMA_MODEL_POLICY.lightweight,
+        OLLAMA_MODEL_POLICY.defaultReasoning,
+        OLLAMA_MODEL_POLICY.fallback,
+        OLLAMA_MODEL_POLICY.deepReasoning,
+        OLLAMA_MODEL_POLICY.deepFallback,
+      ]
+      : [
+        OLLAMA_MODEL_POLICY.defaultReasoning,
+        OLLAMA_MODEL_POLICY.fallback,
+        OLLAMA_MODEL_POLICY.deepReasoning,
+        OLLAMA_MODEL_POLICY.deepFallback,
+        OLLAMA_MODEL_POLICY.lightweight,
+      ];
+  const policyCandidates = uniqueModels([
+    ...(explicitOverrideAvailable ? [explicitOverrideModel] : []),
+    ...tierCandidates,
+    requestedModel,
+    resolvedModel,
+    ...available,
+  ]);
 
   const selectedModel = policyCandidates.find((candidate) => available.includes(candidate))
     || explicitOverrideModel
@@ -144,16 +176,21 @@ function chooseOllamaModel({
     || available[0]
     || OLLAMA_MODEL_POLICY.fallback;
   const fallbackModelUsed = selectedModel === OLLAMA_MODEL_POLICY.fallback && selectedModel !== preferredModelByTier;
-  const escalatedToDeepModel = selectedModel === OLLAMA_MODEL_POLICY.deepReasoning && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
+  const escalatedToDeepModel = [OLLAMA_MODEL_POLICY.deepReasoning, OLLAMA_MODEL_POLICY.deepFallback].includes(selectedModel)
+    && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
+  const deepFallbackModelUsed = selectedModel === OLLAMA_MODEL_POLICY.deepFallback
+    && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
   const policyReason = explicitOverrideAvailable
     ? `Explicit request model ${explicitOverrideModel} honored.`
     : available.includes(preferredModelByTier)
-    ? `Policy selected ${preferredModelByTier} for ${profile.preferredTier} local reasoning.`
-    : available.includes(OLLAMA_MODEL_POLICY.defaultReasoning)
-      ? `Preferred model unavailable; defaulted to ${OLLAMA_MODEL_POLICY.defaultReasoning}.`
-      : available.includes(OLLAMA_MODEL_POLICY.fallback)
-        ? `${preferredModelByTier} unavailable; used compatibility fallback ${OLLAMA_MODEL_POLICY.fallback}.`
-        : `Policy model unavailable; used first reachable model ${selectedModel}.`;
+      ? `Policy selected ${preferredModelByTier} for ${profile.preferredTier} local reasoning.`
+      : profile.preferredTier === 'deep' && selectedModel === OLLAMA_MODEL_POLICY.deepFallback
+        ? `Preferred deep model ${OLLAMA_MODEL_POLICY.deepReasoning} unavailable; used deep compatibility fallback ${OLLAMA_MODEL_POLICY.deepFallback}.`
+        : selectedModel === OLLAMA_MODEL_POLICY.defaultReasoning
+          ? `Preferred model unavailable; defaulted to ${OLLAMA_MODEL_POLICY.defaultReasoning}.`
+          : selectedModel === OLLAMA_MODEL_POLICY.fallback
+            ? `${preferredModelByTier} unavailable; used compatibility fallback ${OLLAMA_MODEL_POLICY.fallback}.`
+            : `Policy model unavailable; used reachable model ${selectedModel}.`;
   const latestUserMessage = [...(Array.isArray(request?.messages) ? request.messages : [])]
     .reverse()
     .find((message) => String(message?.role || '').toLowerCase() === 'user');
@@ -161,7 +198,9 @@ function chooseOllamaModel({
     ollamaLoadMode: String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase(),
     requestedModel: selectedModel,
     prompt: String(latestUserMessage?.content || ''),
-    forceHeavyModel: config?.forceHeavyModel === true,
+    forceHeavyModel: config?.forceHeavyModel === true
+      || (String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase() === 'balanced'
+        && (profile.evidenceDrivenEscalation || profile.sovereignRepairIntent)),
     availableModels: available,
   });
 
@@ -171,6 +210,8 @@ function chooseOllamaModel({
     availableModels: available,
     preferredModel: preferredModelByTier,
     fallbackModel: OLLAMA_MODEL_POLICY.fallback,
+    deepFallbackModel: OLLAMA_MODEL_POLICY.deepFallback,
+    deepFallbackModelUsed,
     fallbackModelUsed,
     fallbackReason: fallbackModelUsed ? `${preferredModelByTier} unavailable in local Ollama catalog.` : '',
     escalatedToDeepModel,
@@ -331,6 +372,10 @@ function resolveOllamaRouteDecision(baseURL, runtimeContext = {}) {
 }
 
 function classifyOllamaFailure(error) {
+  if (error?.code === 'OLLAMA_RESOURCE_GOVERNOR_HELD') return {
+    failureType: 'resource_hold', reason: 'Local inference is paused by the resource governor.',
+    governorReason: error.governorReason,
+  };
   if (error?.name === 'AbortError') {
     return { failureType: 'timeout', reason: 'Ollama took too long to respond.' };
   }
@@ -372,6 +417,11 @@ function classifyOllamaFailurePhase({ error, phase = '', abortedBy = '' } = {}) 
   const normalizedPhase = String(phase || '').trim().toLowerCase();
   const normalizedAbort = String(abortedBy || '').trim().toLowerCase();
   const base = classifyOllamaFailure(error);
+
+  if (base.failureType === 'resource_hold') return {
+    ...base, failureLayer: 'resource-governor', failureLabel: 'resource-governor-hold',
+    failurePhase: 'before-model-post', timeoutCategory: null, modelWarmupLikely: false,
+  };
 
   if (normalizedAbort === 'external-signal') {
     return {
@@ -736,6 +786,13 @@ async function runOllamaChatAttempt({
   let ollamaFetchAborted = false;
 
   try {
+    const permission = readVrResourceGovernorState();
+    const lightweight = String(modelToUse || '').trim().toLowerCase() === OLLAMA_MODEL_POLICY.lightweight;
+    if (!permission.localModelAllowed || (!permission.heavyModelAllowed && !lightweight)) {
+      throw Object.assign(new Error('Local inference is paused by the resource governor.'), {
+        code: 'OLLAMA_RESOURCE_GOVERNOR_HELD', governorReason: permission.reason,
+      });
+    }
     const { response, abortedBy } = await fetchWithTimeout(resolved.endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -921,7 +978,28 @@ export async function checkOllamaHealth(config = {}) {
 
 export async function runOllamaProvider(request, config = {}) {
   const vrResourceGovernor = readVrResourceGovernorState();
-  if (vrResourceGovernor.active && vrResourceGovernor.protectHeavy) {
+  if (vrResourceGovernor.localModelAllowed === false) {
+    return {
+      ok: false,
+      provider: 'ollama',
+      model: '',
+      outputText: '',
+      error: {
+        code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
+        message: 'Local Ollama inference is paused by the resource governor.',
+        retryable: false,
+      },
+      diagnostics: {
+        ollama: {
+          loadMode: 'off',
+          localModelAllowed: false,
+          governorPhase: vrResourceGovernor.phase,
+          governorReason: vrResourceGovernor.reason,
+        },
+      },
+    };
+  }
+  if (vrResourceGovernor.protectHeavy) {
     config = { ...config, ollamaLoadMode: 'cool', forceHeavyModel: false };
   }
   const resolved = resolveOllamaConfig(config);
@@ -1080,7 +1158,9 @@ export async function runOllamaProvider(request, config = {}) {
 
     if (!finalAttempt.ok) {
       const failure = finalAttempt.failure || classifyOllamaFailure(finalAttempt.error);
-      const message = failure.failureType === 'timeout'
+      const message = failure.failureType === 'resource_hold'
+        ? 'Local inference is paused by the resource governor.'
+        : failure.failureType === 'timeout'
         ? 'Cannot connect to Ollama: it took too long to respond.'
         : failure.failureType === 'connection_refused'
           ? 'Cannot connect to Ollama: nothing answered at that address.'
@@ -1110,7 +1190,7 @@ export async function runOllamaProvider(request, config = {}) {
         error: {
           code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
           message: `${message}${timeoutHint}`.trim(),
-          retryable: true,
+          retryable: failure.failureType !== 'resource_hold',
           details: {
             ...failure,
             timeoutMs: finalAttempt.diagnostics.timeoutMs,
@@ -1159,6 +1239,8 @@ export async function runOllamaProvider(request, config = {}) {
             heavyModelAllowed: modelSelection.loadGovernor?.heavyModelAllowed === true,
             modelBeforeLoadPolicy: modelSelection.loadGovernor?.modelBeforePolicy || modelSelection.selectedModel,
             modelAfterLoadPolicy: modelSelection.loadGovernor?.modelAfterPolicy || modelSelection.selectedModel,
+            deepFallbackModel: modelSelection.deepFallbackModel,
+            deepFallbackModelUsed: modelSelection.deepFallbackModelUsed,
             fallbackModel: modelSelection.fallbackModel,
             fallbackModelUsed: modelSelection.fallbackModelUsed,
             fallbackReason: modelSelection.fallbackReason,
@@ -1259,6 +1341,8 @@ export async function runOllamaProvider(request, config = {}) {
           heavyModelAllowed: modelSelection.loadGovernor?.heavyModelAllowed === true,
           modelBeforeLoadPolicy: modelSelection.loadGovernor?.modelBeforePolicy || modelSelection.selectedModel,
           modelAfterLoadPolicy: modelSelection.loadGovernor?.modelAfterPolicy || modelSelection.selectedModel,
+          deepFallbackModel: modelSelection.deepFallbackModel,
+          deepFallbackModelUsed: modelSelection.deepFallbackModelUsed,
           fallbackModel: modelSelection.fallbackModel,
           fallbackModelUsed: modelSelection.fallbackModelUsed,
           fallbackReason: modelSelection.fallbackReason,

@@ -26,7 +26,7 @@ const TIMEOUT_MS = 90_000;
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
-const REQUIRED_CAPABILITY_VERSION = '2026-10-01-tailnet-remote-ignition-v1';
+const REQUIRED_CAPABILITY_VERSION = '2026-10-18-island-action-contract-v6';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -227,9 +227,10 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
   let installerRun = false;
   let receipt = null;
 
-  // An existing scheduled task may be stale or half-installed. If runtime health is absent,
-  // re-run the idempotent installer so it can repair the task, token and ACL before retrying.
-  if (!taskAlreadyInstalled || !preHealth.ok) {
+  // Reinstall only when the scheduled task is missing. A present task with stale or
+  // unhealthy runtime should be recycled through the bounded watchdog below; reinstalling
+  // needlessly re-enters privileged ACL/task setup and can fail under a non-elevated session.
+  if (!taskAlreadyInstalled) {
     const installer = resolve(repositoryRoot, 'scripts', 'windows', 'install-sovereign-commander.ps1');
     const install = run(spawnSyncFn, POWERSHELL, [
       '-NoProfile',
@@ -387,13 +388,13 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
     healthReady: true,
     capabilityVersion: REQUIRED_CAPABILITY_VERSION,
     authenticatedMcpReady: true,
-    negotiatedProtocolVersion: PROTOCOL_VERSION,
     tailnetIgnitionReady: true,
     remoteIgnitionPath: '/ignite',
     remoteIgnitionAction: 'ignite-stephanos',
     remoteIgnitionCsrfProtected: true,
     remoteIgnitionTailnetOnly: true,
     publicFunnelEnabled: false,
+    negotiatedProtocolVersion: PROTOCOL_VERSION,
     tools: Object.freeze(tools),
     taskName: text(receipt?.taskName || 'Stephanos Sovereign Commander'),
     startedNow: receipt?.startedNow === true || preHealth.ok !== true,

@@ -5,7 +5,59 @@ import {
   POST_SYNC_REFRESH_CLASSIFICATIONS,
   POST_SYNC_REFRESH_TARGETS,
   classifyPostSyncRefresh,
+  executePostSyncRefreshPlan,
 } from './postSyncRuntimeRefreshCoordinator.mjs';
+
+const invocationOnlyRecoveryPaths = [
+  'scripts/qwen35-canary.mjs',
+  'scripts/windows/read-sovereign-maintenance-owner-v2.ps1',
+  'scripts/windows/stephanos-core-process-observation.ps1',
+  'scripts/sovereign-fixed-runtime-empty-version-quarantine-v1.mjs',
+  'scripts/windows/quarantine-sovereign-fixed-runtime-empty-version-v1.ps1',
+];
+
+test('exact invocation-only recovery source uses only the established natural-adoption adapter', async () => {
+  const calls = [];
+  const forbidden = () => assert.fail('source adoption invoked a runtime or attended operation');
+  const afterHead = 'b'.repeat(40);
+  const result = await executePostSyncRefreshPlan({ beforeHead: 'a'.repeat(40), afterHead,
+    changedPaths: invocationOnlyRecoveryPaths,
+    adapters: {
+      confirmNaturalReload: async input => { calls.push(input.targetId); return { ok: true, exactHeadProofOk: true, sourceHead: afterHead }; },
+      refreshUi: forbidden, restartBackend: forbidden, restartMissionWorker: forbidden,
+      restartGitHubMailbox: forbidden, refreshSovereignCommander: forbidden,
+      quarantineEmptyVersion: forbidden, runCanary: forbidden,
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(result.plan.unknownPathCount, 0);
+  assert.equal(result.plan.pluginHostActivationRequired, false);
+  for (const path of invocationOnlyRecoveryPaths) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD], path);
+    const unknown = classifyPostSyncRefresh([path.replace(/\.(?:mjs|ps1)$/, '-unreviewed$&')]);
+    assert.equal(unknown.unknownPathCount, 1, 'no family-wide allow rule: ' + path);
+  }
+});
+
+test('natural helper adoption cannot discharge resident Governor, Spatial or desktop-plugin debt', async () => {
+  const governor = classifyPostSyncRefresh([...invocationOnlyRecoveryPaths, 'scripts/windows/run-vr-resource-governor.ps1']);
+  assert.equal(governor.governorRefreshRequired, true);
+  assert.deepEqual(governor.targetIds, ['sovereign-commander', 'natural-reload']);
+  const denied = await executePostSyncRefreshPlan({ beforeHead: 'a'.repeat(40), afterHead: 'b'.repeat(40),
+    changedPaths: [...invocationOnlyRecoveryPaths, 'scripts/windows/run-vr-resource-governor.ps1'],
+    adapters: { refreshSovereignCommander: async () => ({ ok: true, exactHeadProofOk: true, sourceHead: 'b'.repeat(40) }) },
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.blocker, 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN');
+  const spatial = classifyPostSyncRefresh([...invocationOnlyRecoveryPaths, 'scripts/spatial-window-host.mjs']);
+  assert.equal(spatial.spatialAdoptionRequired, true);
+  assert.equal(spatial.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED);
+  const plugin = classifyPostSyncRefresh([...invocationOnlyRecoveryPaths, 'plugins/sovereign-commander/plugin.json']);
+  assert.equal(plugin.pluginHostActivationRequired, true);
+  assert.ok(plugin.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
+});
 
 test('Recovery Mesh fixed probe naturally reloads instead of blocking post-sync refresh', () => {
   const plan = classifyPostSyncRefresh([
@@ -71,7 +123,10 @@ test('Desktop Commander watchdog self-heal naturally reloads through the Battle 
   ]);
 
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, 6);
   assert.equal(plan.noRuntimePathCount, 1);
   assert.equal(plan.openClawPathCount, 0);
@@ -95,7 +150,10 @@ test('worker watchdog and Recovery Mesh liveness repair coalesces as natural rel
   ]);
 
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, 9);
   assert.equal(plan.noRuntimePathCount, 5);
   assert.equal(plan.openClawPathCount, 0);
@@ -148,5 +206,102 @@ test('Lifeboat bounded-tail recovery consumer refreshes through the existing con
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.unsafePathCount, 0);
   assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+
+test('S4U recovery identity repair estate reaches bounded control-plane reconciliation automatically', () => {
+  const changedPaths = [
+    'scripts/battle-bridge-recovery-mesh-installer.test.mjs',
+    'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1',
+    'scripts/windows/request-battle-bridge-recovery-openclaw.ps1',
+    'scripts/windows/request-battle-bridge-recovery.ps1',
+    'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
+    'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs',
+    'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs',
+    'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.test.mjs',
+    'shared/agents/windowsAuthorityMobileRecoveryExecutorReviewV1.mjs',
+    'shared/agents/windowsAuthorityMobileRecoveryExecutorReviewV1.test.mjs',
+    'shared/agents/windowsAuthorityOpenClawRecoveryReviewV1.mjs',
+    'shared/agents/windowsAuthorityOpenClawRecoveryReviewV1.test.mjs',
+    'shared/agents/windowsAuthorityRecoveryMeshGuardianReviewV1.mjs',
+    'shared/agents/windowsAuthorityRecoveryMeshGuardianReviewV1.test.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewLegacyV1.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1Base.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1LegacyRouter.mjs',
+  ];
+
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.noRuntimePathCount, 7);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+
+test('Recovery Mesh installer change is a bounded natural reload target', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
+    'scripts/battle-bridge-recovery-mesh-installer.test.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 2);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+
+test('outbound beacon core telemetry change reaches the bounded natural reload path', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-outbound-health-beacon-core.mjs',
+    'scripts/battle-bridge-outbound-health-beacon.test.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 2);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('Virtual Air Link acceptance delivery is fully classified for bounded post-sync refresh', () => {
+  const changedPaths = [
+    'scripts/sovereign-commander-http.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.test.mjs',
+    'scripts/windows/run-vr-virtual-airlink-acceptance.ps1',
+    'shared/agents/sovereignCommanderBattleBridgeV1.mjs',
+    'shared/agents/sovereignCommanderBattleBridgeV1.test.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs',
+    'shared/agents/sovereignCommanderVrResourceGovernor.test.mjs',
+    'shared/agents/stephanosCoreDaemonSovereign.test.mjs',
+  ];
+
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.noRuntimePathCount, 5);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
 });

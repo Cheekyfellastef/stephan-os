@@ -6,6 +6,7 @@ import {
   buildCriticalBacklogMissionInput,
   buildCriticalBacklogProjection,
   validateCriticalBacklog,
+  projectElasticMissionExecutionObligation,
 } from './criticalBacklogConveyor.mjs';
 import {
   MISSION_CONTINUITY_PARKING_STATUS,
@@ -16,6 +17,53 @@ import {
   parkSafelyBlockedCriticalMission,
   readmitReentryReadyCriticalMission,
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
+
+test('elastic execution obligation separates runnable selection, occupied observation and unknown evidence', () => {
+  const fixture = () => {
+    const mission = { missionId: 'critical-2963-elastic-goal', revision: 5,
+      currentPhase: 'AGENT_IMPLEMENTATION', dispatch: { adapter: 'foundry-forge', status: 'running' },
+      continuity: { parkingStatus: 'ACTIVE' } };
+    return { schemaVersion: 'stephanos.elastic-goal-mission-admission.v1', ok: true,
+      classification: 'ELASTIC_GOAL_MISSIONS_OCCUPIED', selectedMission: mission,
+      runnableMissions: [], activeMissions: [structuredClone(mission)], elasticMissions: [structuredClone(mission)] };
+  };
+  const occupied = fixture();
+  const before = JSON.stringify(occupied);
+  assert.equal(projectElasticMissionExecutionObligation(occupied).state, 'OCCUPIED');
+  assert.equal(projectElasticMissionExecutionObligation(occupied).materialProgressRequired, false);
+  assert.equal(JSON.stringify(occupied), before);
+  for (const phase of ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION']) {
+    const admission = fixture();
+    for (const mission of [admission.selectedMission, ...admission.activeMissions, ...admission.elasticMissions]) mission.currentPhase = phase;
+    assert.equal(projectElasticMissionExecutionObligation(admission).state, 'OCCUPIED', phase);
+  }
+  for (const [label, change] of [
+    ['schema', a => { a.schemaVersion = 'unknown'; }],
+    ['missing inventory', a => { delete a.elasticMissions; }],
+    ['missing active', a => { a.activeMissions = []; }],
+    ['duplicate identity', a => { a.activeMissions.push(structuredClone(a.selectedMission)); }],
+    ['different revision', a => { a.elasticMissions[0].revision += 1; }],
+    ['different dispatch', a => { a.activeMissions[0].dispatch.status = 'complete'; }],
+    ['different phase', a => { a.selectedMission.currentPhase = 'VERIFYING'; }],
+    ['parked', a => { a.selectedMission.continuity.parkingStatus = 'PARKED_BLOCKED'; }],
+    ['missing adapter', a => { delete a.selectedMission.dispatch.adapter; }],
+    ['unrelated runnable', a => { a.runnableMissions.push({ missionId: 'critical-2964-elastic-goal' }); }],
+    ['inconsistent classification', a => { a.classification = 'ELASTIC_GOAL_MISSIONS_AVAILABLE'; }],
+  ]) {
+    const admission = fixture(); change(admission);
+    const result = projectElasticMissionExecutionObligation(admission);
+    assert.equal(result.state, 'UNKNOWN', label);
+    assert.equal(result.materialProgressRequired, true, label);
+  }
+  const runnable = fixture();
+  for (const mission of [runnable.selectedMission, ...runnable.activeMissions, ...runnable.elasticMissions]) mission.dispatch.status = 'pending';
+  runnable.runnableMissions = [structuredClone(runnable.selectedMission)];
+  runnable.classification = 'ELASTIC_GOAL_MISSIONS_AVAILABLE';
+  assert.equal(projectElasticMissionExecutionObligation(runnable).state, 'RUNNABLE');
+  assert.equal(projectElasticMissionExecutionObligation(runnable).materialProgressRequired, true);
+  const foreign = structuredClone(occupied.selectedMission); foreign.revision += 1;
+  assert.equal(projectElasticMissionExecutionObligation(occupied, foreign).state, 'UNKNOWN');
+});
 
 function deterministicReceipt(id, requirement = 'bounded continuity proof') {
   return {

@@ -18,6 +18,13 @@ export const STEPHANOS_MEMORY_RECORD_TYPES = Object.freeze([
   'simulation.result',
   'continuity.note',
   'note',
+  // Cognitive memory classes
+  'working.memory',
+  'episodic.memory',
+  'semantic.memory',
+  'procedural.memory',
+  'prospective.memory',
+  'reflective.memory',
 ]);
 
 const VALID_IMPORTANCE = new Set(['low', 'normal', 'high', 'critical']);

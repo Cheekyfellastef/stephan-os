@@ -122,6 +122,12 @@ test('completed Starfield AER session fans out to evidence, Flywheel lesson, VR 
     assert.equal(feed.flywheel.learningCandidateCount, 1);
     assert.equal(feed.flywheel.improvementCandidateCount, 1);
     assert.equal(feed.flywheel.latestProtectReady, true);
+    assert.equal(feed.intelligence.schemaVersion, 'stephanos.vr-canonical-evidence-fanout.v1');
+    assert.equal(feed.intelligence.referenceCorpus.sourceCount, 26);
+    assert.equal(feed.intelligence.latestEvidence.sessionId, sessionId);
+    assert.equal(feed.intelligence.vrResearchAgent.action, 'PROPOSE_CANONICAL_VR_CORRELATION');
+    assert.ok(feed.intelligence.correlationCandidates.length > 0);
+    assert.equal(feed.intelligence.authority.capabilityPromotionAllowed, false);
 
     const staleFeed = await readVrPlaytestFeed({
       root,
@@ -137,6 +143,8 @@ test('completed Starfield AER session fans out to evidence, Flywheel lesson, VR 
     assert.equal(staleFeed.starfieldReferenceLab.latest.nextMode, 'OBSERVE');
     assert.equal(staleFeed.starfieldReferenceLab.latest.recordedNextMode, 'PROTECT');
     assert.equal(staleFeed.flywheel.latestProtectReady, false);
+    assert.equal(staleFeed.intelligence.latestEvidence.current, false);
+    assert.notEqual(staleFeed.intelligence.vrResearchAgent.action, 'PROPOSE_CANONICAL_VR_CORRELATION');
 
     const second = await publishVrPlaytestSessionToFlywheelV1({
       sessionPath,

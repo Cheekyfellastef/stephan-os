@@ -30,8 +30,10 @@ function ensurePanel() {
   findings.appendChild(node('li', 'No Starfield evidence packet yet.'));
   const provenance = node('p', '', 'muted-copy');
   provenance.dataset.role = 'provenance';
+  const intelligence = node('p', 'Stephanos correlation view waiting for canonical evidence.', 'muted-copy');
+  intelligence.dataset.role = 'intelligence';
 
-  panel.append(kicker, title, status, summary, findings, provenance);
+  panel.append(kicker, title, status, summary, findings, provenance, intelligence);
 
   const shell = document.querySelector('.lab-shell') || document.querySelector('main') || document.body;
   const anchor = document.querySelector('.programme-strip');
@@ -74,6 +76,15 @@ function render(feed) {
     'Baseline ' + shortHash(latest.baselineDllSha256) +
     ' | experiment ' + shortHash(latest.experimentalDllSha256) +
     ' | ' + latest.provenanceRef;
+
+  const intelligence = feed?.intelligence;
+  const top = intelligence?.correlationCandidates?.slice(0, 3) || [];
+  panel.querySelector('[data-role="intelligence"]').textContent =
+    'Stephanos: ' + (intelligence?.vrResearchAgent?.action || 'NO_ACTION') +
+    ' | corpus ' + (intelligence?.referenceCorpus?.sourceCount || 0) +
+    ' | compare next: ' + (top.length
+      ? top.map((candidate) => candidate.sourceId).join(' · ')
+      : 'no current source correlation');
 }
 
 async function refresh() {

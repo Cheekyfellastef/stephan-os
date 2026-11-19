@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><EnableWindowsTargeting>true</EnableWindowsTargeting><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>
+  <ItemGroup><Compile Include="../Stephanos.OriginalR7CustodyWitness/ProspectiveProcessingClaimContext.cs" Link="ProspectiveProcessingClaimContext.cs" /><Compile Include="../Stephanos.OriginalR7CustodyWitness/ProspectiveNativeScopeCapture.cs" Link="ProspectiveNativeScopeCapture.cs" /></ItemGroup>
+</Project>

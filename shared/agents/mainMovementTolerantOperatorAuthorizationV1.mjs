@@ -60,7 +60,11 @@ function normalizeChangedFiles(values) {
   ))) return null;
   const paths = normalized.map((entry) => entry.path);
   if (new Set(paths).size !== paths.length) return null;
-  return Object.freeze([...normalized].sort((left, right) => left.path.localeCompare(right.path)));
+  // Use the same case-sensitive code-unit order as normalizePaths. Locale
+  // collation would make an identical mixed-case path estate compare unequal.
+  return Object.freeze([...normalized].sort((left, right) => (
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  )));
 }
 
 function filePaths(files) {
