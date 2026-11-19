@@ -281,6 +281,10 @@ export function createHolodeckAudioControls({
           throw new Error('Speaker selection is not supported here. Use Windows Sound output settings.');
         const selected=await Promise.race([Promise.resolve(testContext.setSinkId(deviceId)),owner.cancelled]);
         if(selected===cancelled||!ownsSpeaker(owner))return stoppedResult('Speaker');
+        // A resolved sink request is not proof that the headset was selected.
+        // An unverified route must not sound a tone on a different device.
+        if(testContext.sinkId!==deviceId)
+          throw new Error('Speaker output route could not be verified. No local tone was played.');
       }
       if(testContext.state==='suspended'){
         const resumed=await Promise.race([Promise.resolve(testContext.resume()),owner.cancelled]);
