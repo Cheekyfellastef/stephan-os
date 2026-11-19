@@ -172,9 +172,14 @@ function exactTwoP0CompositeEnvelope(analysis) {
   return counts !== null
     && typeof counts === 'object'
     && !Array.isArray(counts)
+    // Additional count categories are contradictory to an exact two-P0 envelope.
+    && Object.keys(counts).length === 3
     && counts.P0 === 2
     && counts.P1 === 0
     && counts.P2 === 0
+    // A contradictory or wrongly typed upstream "clean" claim is never
+    // repaired into a positive source proof by splitting child reviews.
+    && (analysis?.clean === undefined || analysis.clean === false)
     && analysis?.verdict === 'findings';
 }
 

@@ -475,6 +475,9 @@ test('composite review refuses contradictory typed counts and verdict before del
       ['extra P2', { counts: { P0: 2, P1: 0, P2: 1 } }],
       ['missing counts', { counts: undefined }],
       ['array counts', { counts: [2, 0, 0] }],
+      ['unexpected count category', { counts: { P0: 2, P1: 0, P2: 0, P3: 1 } }],
+      ['contradictory clean boolean', { clean: true }],
+      ['wrong-typed clean claim', { clean: 'false' }],
       ['false clean', { verdict: 'clean' }],
       ['missing verdict', { verdict: undefined }],
     ]) {
