@@ -34,6 +34,41 @@ The Python worker pins original and reconstructed source inputs, checks the exis
 
 Compiler logs and native process paths stay in the private experiment directory. Public receipts contain source identities, bounded result fields and artifact hashes. Changed inputs, uncertain process exclusion, incomplete output, an unresolved previous build or gaming preparation all refuse the operation. The helper does not reclaim an old lock or terminate an unrelated process. Artifact consumption requires the authenticated completed worker response; a private disk receipt alone cannot authorize it. Interrupted finalization and write failures remain held even when compiler outputs exist.
 
+### Build-tool helper lifetime
+
+The private build environment explicitly sets `VSCMD_SKIP_SENDTELEMETRY=1`
+before the fixed `vcvars64.bat` setup. The installed VS2022 `VsDevCmd.bat`
+otherwise launches a background PowerShell telemetry helper using `START /B`.
+That helper is unrelated to compilation and can outlive the recipe root. The
+setting is confined to this child environment; it changes no user or machine
+preference, and inherited values or compiler hooks cannot override it.
+
+A bounded actual Battle Bridge setup-only proof with this fixed environment
+completed in 1,018 ms: root exit zero, native Job zero, output EOF, released
+custody and no termination request. The installed setup-script hashes remained
+unchanged. This proof starts no compiler, game or observation DLL; it does not
+substitute for the complete protected native build.
+
+The 18 November build `starfield3536-paired-observer-build-92579c79-v1` completed
+all compiler/model/ABI self-test output and exited its root with code zero,
+without a gaming cancellation. The owned Job still had a live descendant after
+the existing one-second settling window, so it correctly rejected success and
+terminated its remaining members. Native zero and released custody were then
+proven. The original terminal remains failed and its artifacts are not admitted.
+Its receipt did not identify that descendant, so the installed setup's detached
+telemetry is an evidence-backed cause to test, not a retroactive success claim.
+
+The repair removes that unnecessary helper at its source. The Job boundary,
+settling interval, deadline, output drain, descendant-zero requirement and
+kill-on-close protection are unchanged. A repeated live-descendant refusal is
+reported as `NATIVE_BUILD_CHILD_EXIT_UNPROVEN`; unresolved custody still takes
+precedence as `NATIVE_JOB_TERMINAL_UNPROVEN`. Compiler failure and child-exit
+uncertainty must remain distinct. A fresh authenticated build is still required.
+
+Reusable invariant: a build recipe's completion includes every child it starts.
+Suppress optional detached setup work before execution instead of extending
+timeouts, accepting root exit alone or consuming outputs from a failed receipt.
+
 ## Qualification and result boundaries
 
 ### Terminal ownership protocol
@@ -45,6 +80,64 @@ Any write, flush, fsync, close or release failure retains the same owner when ex
 Portable model tests, source reconstruction tests, real Windows Job and file-pin fixtures, independent Windows/security review, protected merge, current-head sync and a genuine Battle Bridge build receipt are distinct gates. The workflow exercises generic models and disposable process fixtures; it cannot compile the private Starfield integration without the original local workbench.
 
 A successful build produces three model test executables, the native ABI/FLS self-test executable and the separate observation DLL. It grants no injection or headset readiness. A fresh reviewed loader/capture session and original-owner source review are still required before any installed-game experiment. The next renderer stages remain actual source-image copies with legal state and lifetime evidence, persistent per-eye histories, tracked poses, one-update stereo identity, FrameStore integration and OpenXR presentation.
+
+## Qualified compiler-helper retirement
+
+The fresh build at `4cd9b4e26d2c166f40bfd29816c6989bc84995a1` still
+refused consumption as `NATIVE_BUILD_CHILD_EXIT_UNPROVEN`. Its compiler and
+self-test output passed, its root exited zero, and the resource governor did
+not cancel it. The build boundary stopped the remaining owned process and
+proved zero before releasing custody. That failed receipt remains immutable.
+
+A separate generic C++ compile, using the unchanged Job boundary and native
+Job member enumeration, identified `vctip.exe` as the sole remaining process.
+It also survived a 25-second idle observation. This is a different helper
+from the optional developer-shell PowerShell telemetry disabled above.
+Setup-only proof was insufficient to qualify the complete compiler lifecycle.
+
+The structural correction separates three facts: workload completion,
+qualified ancillary-helper retirement, and positive native process exclusion.
+The ordinary one-second accounting interval and five-second drain remain
+unchanged. Unknown descendants still fail. Only the existing private build
+adapter can select the optional retirement profile; the mailbox accepts no
+helper, path, hash, command, timeout or termination selector.
+
+The profile pins the exact installed VS2022 MSVC `14.44.35207` x64
+`vctip.exe`, SHA-256
+`be4e7b09df1e23f386eb610b76ed45272b9fed03ab001ddf0b1d9675f8989437`,
+through the existing `NativePins` file and ancestor exclusion. An unqualified
+toolchain version or changed helper refuses before compilation. The retained
+bytes are revalidated before launch and before retirement.
+
+After the root has exited zero, retirement requires exactly one native Job
+member, its retained live process handle, matching native image path, a birth
+no earlier than the root, and positive membership in this exact non-inherited
+Job. Membership and cumulative native process accounting are checked again.
+The existing `TerminateJobObject` authority is then used on that Job alone;
+there is no process-name kill, system-wide cleanup or unrelated process handle
+with termination rights. A new cumulative process count during retirement
+remains a failure even if the new member disappears before final observation.
+
+Success still requires native Job zero, complete pipe output, retained parent
+identity, uninterrupted gaming permission, the original finite deadline and
+unchanged source. Failed root, changed or closed helper pin, unknown image,
+extra member, query failure, cancellation, process-set growth, failed native
+termination or incomplete drain cannot become success. The private native
+receipt explicitly records the retirement request, helper identity and
+cumulative process count; requested termination never itself proves exclusion.
+The authenticated worker response remains the only artifact-consumption gate.
+
+Actual generic compiler proof with this profile completed in 2,388 ms with
+root exit zero, the qualified helper retirement recorded, native Job zero,
+complete output and released custody. It executed no private Starfield source
+or observation DLL. The affected Windows suites passed 71 tests with six
+existing context-specific skips; real disposable descendants and adversarial
+faults cover the refusal rules. A fresh protected-main Starfield build is
+still required after independent review and deployment.
+
+Reusable invariant: ancillary toolchain lifetime must be represented explicitly;
+neither successful compiler output nor a process name establishes safe terminal
+ownership. A future compiler/helper version requires fresh qualification.
 
 ## Reuse for other games
 
