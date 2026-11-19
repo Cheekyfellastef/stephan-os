@@ -243,8 +243,19 @@ test('failed audio discovery revokes stale microphone and speaker selections wit
   assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
   assert.equal(micRequests,0);assert.equal(speakerContexts,0);
   assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'quest-mic',outputId:'quest-speaker'});
-  denied=false;assert.equal((await audio.listDevices()).ok,true);
+  denied=false;const recovered=await audio.listDevices();assert.equal(recovered.ok,true);
+  assert.match(recovered.reason,/Audio device discovery previously failed/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['',''],
+    'a successful retry must not silently reauthorize remembered device IDs');
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.deepEqual([micRequests,speakerContexts],[0,0]);
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'quest-mic',outputId:'quest-speaker'});
+  assert.equal(audio.setInput('quest-mic'),true);
+  assert.equal(audio.setOutput('quest-speaker'),true);
   assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['quest-mic','quest-speaker']);
+  assert.deepEqual([micRequests,speakerContexts],[0,0],
+    'explicit route reselection must not start a local test or ChatGPT Voice');
   audio.dispose();
 });
 
