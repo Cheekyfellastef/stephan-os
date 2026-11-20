@@ -418,13 +418,35 @@
     let inspectCube = false;
     let previewFrame = null;
     let previewTime = null;
+    // Loss of the flat WebGL preview is not successful Quest/room presentation.
+    // Do not reuse GPU objects after browser/Quest context restoration.
+    let previewContextLost = false;
+    canvas.addEventListener('webglcontextlost', event => {
+      event.preventDefault();
+      previewContextLost = true;
+      previewRenderer = null;
+      document.getElementById('preview-status').textContent =
+        'Room preview paused: graphics context lost. Waiting for restoration.';
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      previewContextLost = false;
+      previewRenderer = null;
+      if (!immersiveActive && !document.hidden) playPreview();
+    });
     function drawPreview() {
-      if (!previewReady || immersiveActive || document.hidden) return false;
+      if (!previewReady || immersiveActive || document.hidden || previewContextLost) return false;
       try {
         // The flat holographic pages remain useful even without a WebGL room.
         screen?.render();
         const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
         if (!gl) throw new Error('graphics unavailable');
+        if (gl.isContextLost?.()) {
+          previewContextLost = true;
+          previewRenderer = null;
+          document.getElementById('preview-status').textContent =
+            'Room preview paused: graphics context lost. Waiting for restoration.';
+          return false;
+        }
         previewRenderer ??= createHolodeckRoomRenderer({ gl,screen,comfort,furniture });
         const scale = Math.min(window.devicePixelRatio || 1, 2);
         const width = Math.max(1, Math.round(canvas.clientWidth * scale));
