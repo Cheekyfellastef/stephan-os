@@ -238,8 +238,8 @@ test('same-run game identity drift fails closed before foreground or confirmatio
   const receiver = functionSource('Receive-MonitorEvent');
   for (const identityCheck of [
     '$monitorState.RunId -ceq $event.runId',
-    '$monitorState.GameProcess.pid -ne $event.process.pid',
-    '$monitorState.GameProcess.createdFileTime -cne $event.process.createdFileTime',
+    '$monitorState.GameProcessIdentity.pid -ne $event.process.pid',
+    '$monitorState.GameProcessIdentity.createdFileTime -cne $event.process.createdFileTime',
     "throw 'monitor-state-game-identity-drift'",
   ]) {
     assert.ok(receiver.includes(identityCheck), 'Missing guard: ' + identityCheck);
@@ -247,6 +247,19 @@ test('same-run game identity drift fails closed before foreground or confirmatio
   assert.ok(receiver.indexOf("throw 'monitor-state-game-identity-drift'") <
     receiver.indexOf('$monitorState.GameProcess = $event.process'));
   assert.ok(!receiver.includes('Start-Process') && !receiver.includes('Stop-Process'));
+});
+
+test('same-run null game frames retain the original witnessed identity', () => {
+  const receiver = functionSource('Receive-MonitorEvent');
+  const initial = source.match(/\\$monitorState = \\[pscustomobject\\]@\\{([\\s\\S]*?)\\n\\}/)?.[1] || '';
+  assert.match(initial, /GameProcessIdentity = \\$null/);
+  assert.match(receiver, /\\$monitorState\\.GameProcessIdentity -and \\$event\\.process/);
+  assert.match(receiver, /if \\(\\$monitorState\\.RunId -cne \\$event\\.runId\\) \\{ \\$monitorState\\.GameProcessIdentity = \\$null \\}/);
+  assert.match(receiver, /if \\(\\$event\\.process -and -not \\$monitorState\\.GameProcessIdentity\\)/);
+  assert.ok(receiver.indexOf("throw 'monitor-state-game-identity-drift'") <
+    receiver.indexOf('$monitorState.GameProcessIdentity = $event.process'));
+  assert.ok(receiver.indexOf('$monitorState.GameProcessIdentity = $event.process') <
+    receiver.indexOf('$monitorState.GameProcess = $event.process'));
 });
 
 test('a broken monitor transport terminates all foreground retry work before closing child input', () => {
