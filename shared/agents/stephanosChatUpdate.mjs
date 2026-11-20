@@ -200,9 +200,16 @@ async function admitCanonicalUpdateRuntime({ repoRoot, sync, spawnSyncFn, adopti
   const hasReports = reports.some(key => Object.hasOwn(proof, key));
   if (hasReports) {
     const obligations = refresh && projectPostSyncRemainingIgnitionObligationsV1(refresh, sourceHead);
+    // Auxiliary control-plane failure occurs after canonical refresh settles.
+    // The producer can report its separate blocker without a latest-refresh
+    // row, but only when the independently read canonical debt is fully paid.
+    const settledAuxiliary = proof.classification === classifications[1] && afterEvidence.paid === true;
+    const reportsMatch = settledAuxiliary
+      ? proof.refreshBlocker === proof.controlPlaneBlocker
+        && (proof.refreshObligations === null || sameFrame(proof.refreshObligations, obligations))
+      : proof.refreshBlocker === refresh?.blocker && sameFrame(proof.refreshObligations, obligations);
     if (!reports.every(key => Object.hasOwn(proof, key)) || !obligations
-      || typeof proof.refreshBlocker !== 'string' || proof.refreshBlocker !== refresh.blocker
-      || !sameFrame(proof.refreshObligations, obligations))
+      || typeof proof.refreshBlocker !== 'string' || !reportsMatch)
       return result(false, 'CHAT_UPDATE_CANONICAL_PREFLIGHT_REPORT_MISMATCH');
   }
   if (scoped) {
