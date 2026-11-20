@@ -318,8 +318,13 @@ async function send(text) {
         addressedTargetLabel: activeTarget.label,
         addressedTargetKind: activeTarget.kind,
       },
-      routeMode: 'auto',
-      fallbackEnabled: true,
+      // Stephanos AI is the sovereign front door: local-only unless an
+      // operator explicitly chooses a separate specialist surface.
+      // A failed Ollama route must stay failed, never become mock/cloud success.
+      provider: 'ollama',
+      routeMode: 'explicit',
+      fallbackEnabled: false,
+      fallbackOrder: ['ollama'],
       runtimeContext: {
         surface: surfaceKind(), workspace: 'stephanos-ai',
         participantTarget: activeTarget.id,

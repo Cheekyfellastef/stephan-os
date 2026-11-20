@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { buildRouterConfig, resolveRoutingPlan } from '../stephanos-server/services/llm/utils/providerUtils.js';
 
 const read = (relative) => readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8');
 const css = read('apps/stephanos-ai/workspace.css');
@@ -65,4 +66,28 @@ test('long conversations window the UI and keep operator context on canonical ba
   assert.match(js, /historyFor\(selected\.id\)\.slice\(-64\)/);
   assert.match(js, /messages\.scrollHeight - messages\.scrollTop - messages\.clientHeight/);
   assert.match(continuity, /threadContextBlock\(projection\.thread, knowledgeTwin\)/);
+});
+
+test('Stephanos AI landing-page conversations select only local Ollama even if cloud and mock are healthy', () => {
+  // This is a bounded front-door default. A server-wide hard meter-off policy
+  // and physical zero-credit blackout drill are separately required.
+  assert.match(js, /provider: 'ollama',[\\s\\S]*?routeMode: 'explicit',[\\s\\S]*?fallbackEnabled: false,[\\s\\S]*?fallbackOrder: \\['ollama'\\]/);
+  for (const localAvailable of [true, false]) {
+    const route = resolveRoutingPlan(buildRouterConfig({
+      provider: 'ollama',
+      routeMode: 'explicit',
+      fallbackEnabled: false,
+      fallbackOrder: ['ollama'],
+    }), {
+      ollama: { ok: localAvailable },
+      groq: { ok: true },
+      gemini: { ok: true },
+      openrouter: { ok: true, config: { enabled: true } },
+      mock: { ok: true },
+    });
+    assert.deepEqual(route.attemptOrder, ['ollama']);
+    assert.equal(route.selectedProvider, 'ollama');
+    assert.equal(route.requestedRouteMode, 'explicit');
+    assert.equal(route.cloudAvailable, true, 'test should include healthy cloud options');
+  }
 });
