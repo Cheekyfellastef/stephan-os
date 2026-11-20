@@ -73,3 +73,15 @@ body.has-messages .welcome{display:none}
 .bridge-status[data-state="unavailable"]{color:#ffac96;border-color:rgba(255,140,110,.35)}
 @media(max-width:760px){.header-status{justify-content:flex-start}}
 .bridge-status[hidden]{display:none}
+
+/* Active chat must keep the composer in the visible cockpit on touch screens.
+   The initial welcome state still permits normal document scrolling. */
+@media(max-width:1120px){
+ body.has-messages .shell{height:100dvh;min-height:0}
+ body.has-messages .conversation-stage{height:calc(100dvh - 28px);min-height:0;overflow:hidden}
+ body.has-messages .messages{flex:1 1 auto;min-height:0;max-height:none;overflow-y:auto}
+ body.has-messages .composer{flex-shrink:0}
+}
+@media(max-width:760px){
+ body.has-messages .conversation-stage{height:calc(100dvh - 16px)}
+}
