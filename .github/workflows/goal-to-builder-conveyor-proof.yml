@@ -5,7 +5,19 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'shared/agents/programmeAuthorityV1.mjs'
+      - 'shared/agents/goalBuildingAgentV1.records.mjs'
+      - 'shared/agents/goalBuildingAgentV1.runtime-records.test.mjs'
       - 'shared/agents/programmeAuthorityV1.test.mjs'
+      - 'shared/agents/externalMergeObservationV1.mjs'
+      - 'shared/agents/externalMergeObservationV1.test.mjs'
+      - 'shared/agents/completionGuardianV1.mjs'
+      - 'shared/agents/completionGuardianV1.test.mjs'
+      - 'scripts/completion-guardian.mjs'
+      - 'scripts/completion-guardian.test.mjs'
+      - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
+      - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
+      - 'shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs'
+      - 'shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.test.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.test.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs'
@@ -18,6 +30,8 @@ on:
       - 'shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.js'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.test.js'
+      - 'stephanos-server/services/elasticPrHeadLeaseService.js'
+      - 'stephanos-server/services/elasticPrHeadLeaseService.test.js'
       - 'stephanos-server/services/criticalBacklogConveyorServiceCore.js'
       - 'stephanos-server/services/criticalBacklogConveyorService.test.js'
       - 'stephanos-server/services/missionOrchestratorWorkerService.js'
@@ -28,6 +42,8 @@ on:
       - 'stephanos-server/services/openClawProviderPoolAdmissionService.test.js'
       - 'stephanos-server/services/providerNeutralSourceBuilderService.js'
       - 'stephanos-server/services/providerNeutralSourceBuilderService.test.js'
+      - 'stephanos-server/services/sourceArtifactEscrowStore.js'
+      - 'stephanos-server/services/sourceArtifactEscrowStore.test.js'
       - 'stephanos-server/services/programmeAuthorityService.js'
       - 'stephanos-server/services/programmeAuthorityService.test.js'
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
@@ -67,20 +83,26 @@ jobs:
       - name: Parse conveyor sources
         run: |
           node --check shared/agents/programmeAuthorityV1.mjs
+          node --check shared/agents/goalBuildingAgentV1.records.mjs
           node --check shared/agents/durableFlywheelControllerVNext.mjs
           node --check shared/runtime/missionScheduler.mjs
           node --check shared/agents/missionControllerCapacityRouterV1.mjs
           node --check shared/agents/openClawProviderPoolQualificationV1.mjs
           node --check stephanos-server/services/elasticGoalMissionAdmissionService.js
+          node --check stephanos-server/services/elasticPrHeadLeaseService.js
           node --check stephanos-server/services/criticalBacklogConveyorServiceCore.js
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
           node --check stephanos-server/services/openClawProviderPoolAdmissionService.js
           node --check stephanos-server/services/providerNeutralSourceBuilderService.js
+          node --check stephanos-server/services/sourceArtifactEscrowStore.js
           node --check stephanos-server/services/programmeAuthorityService.js
           node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/battle-bridge-goal-discovery-heartbeat.mjs
+
+      - name: Prove Goal Building Agent runtime Q&A and status use the same physical proof
+        run: node --test shared/agents/goalBuildingAgentV1.runtime-records.test.mjs
 
       - name: Prove every goal-to-builder handoff
         run: node --test tests/goal-to-builder-conveyor-proof.test.mjs
@@ -95,14 +117,20 @@ jobs:
         run: >-
           node --test
           shared/agents/programmeAuthorityV1.test.mjs
+          shared/agents/completionGuardianV1.test.mjs
+          scripts/completion-guardian.test.mjs
+          shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
+          shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.test.mjs
           shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs
           stephanos-server/services/programmeAuthorityService.test.js
           shared/runtime/missionScheduler.test.mjs
           stephanos-server/services/elasticGoalMissionAdmissionService.test.js
+          stephanos-server/services/elasticPrHeadLeaseService.test.js
           shared/agents/missionControllerCapacityRouterV1.test.mjs
           shared/agents/openClawProviderPoolQualificationV1.test.mjs
           stephanos-server/services/openClawProviderPoolAdmissionService.test.js
           stephanos-server/services/providerNeutralSourceBuilderService.test.js
+          stephanos-server/services/sourceArtifactEscrowStore.test.js
           shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
           scripts/sovereign-commander-capability-parity-reconcile.test.mjs
           stephanos-server/services/missionOrchestratorWorkerService.test.js

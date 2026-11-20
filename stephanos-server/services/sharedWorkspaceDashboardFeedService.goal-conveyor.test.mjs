@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -110,6 +110,13 @@ test('dashboard backend projects each goal build journey without borrowing anoth
     },
   });
 
+  await writeJson(root, 'status', 'autonomy-build-track-current.json', {
+    ...createSharedWorkspaceStatusRecord({ statusId: 'autonomy-build-track-current', participantId: 'mission-scheduler',
+      timestampUtc: NOW, status: 'WAITING', summary: 'Canonical cycle is waiting for a claim.' }),
+    autonomyTrack: { schemaVersion: 'stephanos.autonomy-build-track.v1', timestampUtc: NOW,
+      sourceHead: '', missionId: 'mission-2002', issueNumber: 2002,
+      currentGate: 'CLAIM', currentState: 'WAITING', gates: [{ id: 'CLAIM', state: 'WAITING' }] },
+  });
   const payload = await readBackendSharedWorkspaceDashboardFeed({
     env: {
       HOME: home,
@@ -129,6 +136,13 @@ test('dashboard backend projects each goal build journey without borrowing anoth
   assert.equal(payload.stephanosBuildTruthStatus.truth, 'CURRENT');
   assert.equal(payload.projection.stephanosBuildTruth.state, 'BUILDING');
   assert.equal(payload.projection.stephanosBuildTruth.goals.length, 2);
+  assert.equal(payload.projection.goalBuildConveyorOverview.schemaVersion, 'stephanos.goal-build-conveyor-overview.v1');
+  assert.equal(payload.projection.goalBuildConveyorOverview.trace.observedAtUtc, NOW);
+  assert.equal(payload.projection.goalBuildConveyorOverview.trace.sourceBinding, 'SOURCE_HEAD_MISSING');
+  assert.equal(payload.projection.goalBuildConveyorOverview.stages.find(stage => stage.id === 'claim').operational.label, 'Waiting here');
+  assert.equal(payload.projection.goalBuildConveyorOverview.buildingGoalCount, 1);
+  assert.equal(payload.projection.goalBuildConveyorOverview.workers[0].id, 'openclaw-local');
+  assert.equal(payload.projection.goalBuildConveyorOverview.stages.find(stage => stage.id === 'merge').state, 'UNKNOWN');
   assert.equal(building.buildJourney.schemaVersion, 'stephanos.goal-build-conveyor.v1');
   assert.equal(building.buildJourney.builder, 'openclaw-local');
   assert.equal(building.buildJourney.stages.find((stage) => stage.id === 'PICKED_UP').trafficLight, 'GREEN');
@@ -207,4 +221,49 @@ test('stale Sovereign build truth cannot render a goal as picked up or building'
   assert.notEqual(goal.buildJourney.stages.find((stage) => stage.id === 'PICKED_UP').trafficLight, 'GREEN');
   assert.notEqual(goal.buildJourney.stages.find((stage) => stage.id === 'BUILDING').trafficLight, 'GREEN');
   assert.equal(payload.projection.goalBuildConveyor.buildingCount, 0);
+});
+
+
+test('freshness diagnostics follow fresh, stale, fresh and absent evidence without inventing progress', async () => {
+  const root=await tempDir('goal-conveyor-diagnostic-');
+  const repoRoot=await tempDir('goal-conveyor-diagnostic-repo-');
+  const home=await tempDir('goal-conveyor-diagnostic-home-');
+  for(const directory of ['goals','status','proof','capabilities','events']) await mkdir(join(root,directory),{recursive:true});
+  await writeJson(root,'goals','goal-2002.json',{...createSharedWorkspaceGoalRecord({
+    goalId:'goal-2002',participantId:'mission-scheduler',timestampUtc:NOW,relatedIssue:'#2002',
+    title:'Diagnostic fixture goal',status:'READY'
+  }),nextAction:'Preserve this real goal action.'});
+  async function publish(at){
+    await writeJson(root,'status','stephanos-build-truth-current.json',{
+      ...createSharedWorkspaceStatusRecord({statusId:'stephanos-build-truth-current',participantId:'sovereign-commander',
+        timestampUtc:at,relatedIssue:'#2002',status:'BUILDING',summary:'Fixture build activity'}),
+      stephanosBuildTruth:{schemaVersion:'stephanos.sovereign-build-truth.v1',observedAtUtc:at,
+        state:'BUILDING',trafficLight:'GREEN',goals:[{issue:'#2002',state:'BUILDING',builder:'fixture-worker',
+          selectedForAdmission:true,blocker:'',nextAction:'Continue this actual worker action.',proofRefs:['proof/fixture-build']}]}});
+  }
+  const options={env:{HOME:home,USERPROFILE:home,PATH:'',STEPHANOS_SHARED_AGENT_WORKSPACE:root},
+    repoRoot,nowMs:Date.parse(NOW),staleAfterMs:60000,liveProjection:null};
+  const readGoal=async()=> (await readBackendSharedWorkspaceDashboardFeed(options)).projection.goals.find(g=>g.issue==='#2002');
+  await publish(NOW);
+  const fresh=await readGoal();
+  assert.equal(fresh.buildEvidenceDiagnostic,'');
+  assert.equal(fresh.buildNextAction,'Continue this actual worker action.');
+  await publish('2026-10-06T15:50:00.000Z');
+  const stale=await readGoal();
+  assert.match(stale.buildEvidenceDiagnostic,/evidence is stale/);
+  assert.equal(stale.state,'READY');assert.equal(stale.builder,'');assert.equal(stale.selectedForAdmission,false);
+  assert.equal(stale.exactNextAction,'Preserve this real goal action.');assert.deepEqual(stale.blockers,[]);
+  assert.equal(stale.buildJourney.provenStageCount,2);
+  for(const id of ['SELECTED','DISPATCHED','PICKED_UP','BUILDING','COMPLETED'])
+    assert.notEqual(stale.buildJourney.stages.find(s=>s.id===id).trafficLight,'GREEN');
+  await publish(NOW);
+  const refreshed=await readGoal();
+  assert.equal(refreshed.buildEvidenceDiagnostic,'');assert.deepEqual(refreshed.buildJourney,fresh.buildJourney);
+  await unlink(join(root,'status','stephanos-build-truth-current.json'));
+  const absent=await readGoal();
+  assert.match(absent.buildEvidenceDiagnostic,/evidence is unavailable/);
+  assert.equal(absent.exactNextAction,'Preserve this real goal action.');assert.deepEqual(absent.blockers,[]);
+  assert.equal(absent.builder,'');assert.equal(absent.buildJourney.provenStageCount,2);
+  assert.notEqual(absent.buildJourney.stages.find(s=>s.id==='PICKED_UP').trafficLight,'GREEN');
+  assert.notEqual(absent.buildJourney.stages.find(s=>s.id==='COMPLETED').trafficLight,'GREEN');
 });

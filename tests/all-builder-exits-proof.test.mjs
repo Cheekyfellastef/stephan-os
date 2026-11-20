@@ -1,3 +1,5 @@
+// Goal #2961: real hosted Node runner validates exact-head and temporal worker beacons.
+import '../shared/agents/missionWorkerBeaconStateV1.test.mjs';
 // Fleet acceptance: every executable builder exit must retain proof-backed pickup and terminal truth.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,6 +27,11 @@ import {
   processNextStephanosNativeItem,
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
+
+// Retain Builder 8's new independent capacity and publisher regressions in the
+// existing proof entry point, without altering the protected Actions workflow.
+import '../shared/agents/sovereignCommanderBuilder8CapacityV1.test.mjs';
+import '../stephanos-server/services/sovereignBuilder8CapacityService.test.js';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const proof = (requirement, receiptId, source = 'all-builder-exits-proof') => ({
@@ -234,6 +241,7 @@ const PATCH = [
 for (const builder of [
   { adapter: 'foundry-forge', route: 'FOUNDRY_FORGE', issueNumber: 7105 },
   { adapter: 'chatgpt-github', route: 'CHATGPT_GITHUB', issueNumber: 7106 },
+  { adapter: 'sovereign-commander', route: 'SOVEREIGN_COMMANDER', issueNumber: 7108 },
 ]) {
   test(`${builder.adapter} claims exact goal packet, mutates/tests source, and emits full execution truth`, async () => {
     const fx = await runtime(builder.issueNumber, builder.adapter);
@@ -253,7 +261,7 @@ for (const builder of [
   });
 }
 
-test('Desktop Commander source handoff is absorbed by the green Sovereign source-construction lane', () => {
+test('Desktop Commander source handoff maps to Sovereign without claiming installed parity', () => {
   const observation = {
     adapter: 'desktop-commander',
     path: 'C:/queue/desktop-source-build.json',
@@ -273,6 +281,11 @@ test('Desktop Commander source handoff is absorbed by the green Sovereign source
   assert.equal(ledger.buildableGapCount, 0);
   assert.equal(ledger.parityPresentCount, 1);
   assert.equal(ledger.zeroGapInvariantSatisfied, true);
-  assert.equal(ledger.daemonMayReportGreen, true);
-  assert.equal(ledger.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN');
+  assert.equal(ledger.parityEvidenceScope, 'SOURCE_CATALOG_ONLY');
+  assert.equal(ledger.runtimeParityProven, false);
+  assert.equal(ledger.installedParityState, 'UNKNOWN');
+  assert.equal(ledger.sourceGapClosureRequired, false);
+  assert.equal(ledger.closureRequired, true);
+  assert.equal(ledger.daemonMayReportGreen, false);
+  assert.equal(ledger.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RUNTIME_UNPROVEN');
 });

@@ -1,10 +1,12 @@
 ﻿import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSharedWorkspaceRouter } from '../stephanos-server/routes/shared-workspace.js';
 import { readBackendSharedWorkspaceDashboardFeed } from '../stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
+import { readWorkspaceHydrationBundle } from '../stephanos-server/services/workspaceHydrationService.js';
 import { startBattleBridgePublisherLoopForBackend } from '../stephanos-server/services/battleBridgePublisherLifecycle.js';
 import {
   createAgentCapabilityRecord,
@@ -135,7 +137,7 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
 
   await layer.route.stack[0].handle(
     {},
-    {
+    Object.assign(new EventEmitter(), {
       set(headers) {
         responseHeaders = { ...responseHeaders, ...headers };
         return this;
@@ -147,7 +149,7 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
       json(value) {
         payload = value;
       },
-    },
+    }),
   );
 
   assert.equal(statusCode, 503);
@@ -310,9 +312,25 @@ test('full-history backend projection exposes latest closed-loop learning state 
   assert.equal(full.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
   assert.equal(full.projection.closedLoopLearning.teacherId, 'openclaw-local');
 
-  const flywheelSource = await import('node:fs/promises')
-    .then(({ readFile }) => readFile(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8'));
-  assert.match(flywheelSource, /dashboard-feed\?scope=full-history/);
+  const hydration = await readWorkspaceHydrationBundle({
+    workspaceId: 'flywheel', datasets: ['dashboard'],
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot, nowMs: Date.parse(NOW), staleAfterMs: 60_000,
+  });
+  assert.equal(hydration.datasets.dashboard.payload.recordScope, 'full-history');
+  assert.equal(hydration.datasets.dashboard.payload.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
+
+  // Flywheel now consumes canonical workspace hydration. The backend explicitly
+  // selects full-history for that workspace, without a direct UI dashboard URL.
+  const { readFile } = await import('node:fs/promises');
+  const flywheelSource = await readFile(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8');
+  const hydrationSource = await readFile(new URL('../stephanos-server/services/workspaceHydrationService.js', import.meta.url), 'utf8');
+  assert.match(flywheelSource, /requestWorkspaceHydration\s*\(\s*\{/);
+  assert.match(flywheelSource, /workspaceId:\s*['"]flywheel['"]/);
+  assert.match(flywheelSource, /datasets:\s*\[\s*['"]dashboard['"]\s*\]/);
+  assert.match(hydrationSource, /normalizedWorkspaceId\s*===\s*['"]flywheel['"]/);
+  assert.match(hydrationSource, /\?\s*['"]full-history['"]/);
+  assert.match(hydrationSource, /recordScope:\s*dashboardRecordScope/);
 });
 
 

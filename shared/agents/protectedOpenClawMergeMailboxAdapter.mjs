@@ -48,7 +48,6 @@ const LEGACY_PULL_REQUEST_TARGET_BINDING = 'legacy-pull-request-target';
 const CANONICAL_REPOSITORY_API_URL = 'https://api.github.com/repos/' + CANONICAL_REPOSITORY;
 const CANONICAL_MAILBOX_AUTHOR = 'Cheekyfellastef';
 const CANONICAL_MAILBOX_MARKER = 'stephanos-battle-bridge-command';
-const CANONICAL_MAILBOX_PAGE_SIZE = 100;
 const FORBIDDEN_FIELDS = Object.freeze([
   'command', 'commands', 'executable', 'args', 'arguments', 'shell', 'powershell',
   'script', 'path', 'privateKey', 'publicKey', 'credential', 'cookie', 'session',
@@ -202,25 +201,6 @@ export function resolveProtectedOperatorAuthorizationCommentId(comments = [], pl
     return commentId;
   }
   return 0;
-}
-
-function readProtectedOperatorAuthorizationCommentId(runCommand, plan) {
-  const issue = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-    'api', `repos/${CANONICAL_REPOSITORY}/issues/${CANONICAL_MAILBOX_ISSUE}`,
-  ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_MAILBOX_ISSUE_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_MAILBOX_ISSUE_JSON_INVALID');
-  const commentCount = Number(issue?.comments || 0);
-  if (!Number.isSafeInteger(commentCount) || commentCount < 1) return 0;
-  const lastPage = Math.max(1, Math.ceil(commentCount / CANONICAL_MAILBOX_PAGE_SIZE));
-  const firstPage = Math.max(1, lastPage - 1);
-  const comments = [];
-  for (let page = firstPage; page <= lastPage; page += 1) {
-    const pagePayload = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-      'api', `repos/${CANONICAL_REPOSITORY}/issues/${CANONICAL_MAILBOX_ISSUE}/comments?per_page=${CANONICAL_MAILBOX_PAGE_SIZE}&page=${page}`,
-    ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_MAILBOX_COMMENT_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_MAILBOX_COMMENT_JSON_INVALID');
-    if (!Array.isArray(pagePayload)) return 0;
-    comments.push(...pagePayload);
-  }
-  return resolveProtectedOperatorAuthorizationCommentId(comments, plan);
 }
 
 function validateLivePullRequest(pull, command) {
@@ -442,19 +422,22 @@ export function buildProtectedOperatorWorkflowDispatchArgs(plan, pull, headTree,
   ]);
 }
 
-function latestMatchingWorkflowRun(payload, plan) {
-  const runs = Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : [];
-  return runs.find((run) => (
-    run?.name === 'Protected Operator Merge Queue Boundary'
-    && run?.event === 'workflow_dispatch'
-    && run?.head_sha === plan.normalized.expectedBase
-    && String(run?.display_title || '').includes(plan.normalized.expectedHead)
-  )) || null;
-}
-
 export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, options = {}) {
   const plan = buildProtectedOpenClawMergePlan(command, options);
   if (!plan.ok) return plan;
+
+  // A clean review uses the existing protected workflow mailbox. Its immutable
+  // authorization parser cannot accept a Battle Bridge command as that decision.
+  // Refuse before filesystem/API work so this compatibility route cannot create
+  // an invalid workflow attempt that consumes the canonical replay fence.
+  if (plan.normalized.reviewMode === PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE) {
+    return fail('PROTECTED_OPERATOR_MERGE_CANONICAL_MAILBOX_REQUIRED', {
+      operation: 'DISPATCH_PROTECTED_OPERATOR_MERGE',
+      issueNumber: CANONICAL_MAILBOX_ISSUE,
+      expectedHead: plan.normalized.expectedHead,
+      expectedBase: plan.normalized.expectedBase,
+    });
+  }
   const platform = options.platform || process.platform;
   if (platform !== 'win32') return fail('PROTECTED_MERGE_WINDOWS_REQUIRED');
   const runCommand = options.runCommand || defaultRun;
@@ -474,7 +457,7 @@ export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, 
 
     const checksResult = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
       'pr', 'checks', String(plan.normalized.prNumber), '--repo', 'Cheekyfellastef/stephan-os',
-      '--json', 'name,state,workflow',
+      '--json', 'name,state,workflow,event',
     ], { cwd: plan.repositoryRoot });
     const checksStatus = Number.isInteger(checksResult?.status) ? checksResult.status : -1;
     if (checksResult?.error || ![0, 1].includes(checksStatus)) {
@@ -510,48 +493,6 @@ export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, 
       'api', 'repos/Cheekyfellastef/stephan-os/pulls/' + plan.normalized.prNumber,
     ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_FINAL_PR_PREFLIGHT_FAILED').stdout, 'PROTECTED_MERGE_FINAL_PR_JSON_INVALID');
     if (!validateLivePullRequest(pullAgain, plan.normalized)) return fail('PROTECTED_MERGE_FINAL_PR_IDENTITY_CHANGED');
-
-    if (plan.normalized.reviewMode === PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE) {
-      const main = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-        'api', 'repos/Cheekyfellastef/stephan-os/branches/main',
-      ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_MAIN_PREFLIGHT_FAILED').stdout, 'PROTECTED_MERGE_MAIN_JSON_INVALID');
-      if (main?.commit?.sha !== plan.normalized.expectedBase) return fail('PROTECTED_MERGE_MAIN_IDENTITY_CHANGED');
-      const headCommit = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-        'api', 'repos/Cheekyfellastef/stephan-os/git/commits/' + plan.normalized.expectedHead,
-      ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_HEAD_TREE_FAILED').stdout, 'PROTECTED_MERGE_HEAD_TREE_JSON_INVALID');
-      const headTree = String(headCommit?.tree?.sha || '').toLowerCase();
-      const authorizationCommentId = readProtectedOperatorAuthorizationCommentId(runCommand, plan);
-      if (!authorizationCommentId) return fail('PROTECTED_MERGE_AUTHORIZATION_COMMENT_NOT_FOUND');
-      const dispatchArgs = buildProtectedOperatorWorkflowDispatchArgs(plan, pullAgain, headTree, authorizationCommentId);
-      if (!dispatchArgs) return fail('PROTECTED_MERGE_WORKFLOW_INPUTS_INVALID');
-      runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, dispatchArgs, {
-        cwd: plan.repositoryRoot,
-      }, 'PROTECTED_MERGE_WORKFLOW_DISPATCH_FAILED');
-      const runs = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-        'api', 'repos/Cheekyfellastef/stephan-os/actions/workflows/' + PROTECTED_OPERATOR_MERGE_WORKFLOW + '/runs?event=workflow_dispatch&per_page=20',
-      ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_WORKFLOW_RUN_LOOKUP_FAILED').stdout, 'PROTECTED_MERGE_WORKFLOW_RUN_LOOKUP_JSON_INVALID');
-      const run = latestMatchingWorkflowRun(runs, plan);
-      return Object.freeze({
-        ok: true,
-        finalVerdict: 'PROTECTED_OPERATOR_MERGE_WORKFLOW_DISPATCHED',
-        prNumber: plan.normalized.prNumber,
-        expectedHead: plan.normalized.expectedHead,
-        expectedHeadTree: headTree,
-        expectedBase: plan.normalized.expectedBase,
-        reviewRunId: plan.normalized.reviewRunId,
-        reviewArtifactId: plan.normalized.reviewArtifactId,
-        authorizationCommentId,
-        workflow: PROTECTED_OPERATOR_MERGE_WORKFLOW,
-        workflowRunId: Number(run?.id || 0),
-        workflowRunStatus: String(run?.status || 'queued'),
-        workflowRunConclusion: String(run?.conclusion || ''),
-        directMergePerformed: false,
-        arbitraryShellAllowed: false,
-        adminBypassAllowed: false,
-        directMainWriteAllowed: false,
-        forcePushAllowed: false,
-      });
-    }
 
     writeFileSync(plan.claimsPath, JSON.stringify(plan.claims, null, 2) + '\n', 'utf8');
     const issuer = runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.node, [plan.issuerScript, plan.claimsPath], {

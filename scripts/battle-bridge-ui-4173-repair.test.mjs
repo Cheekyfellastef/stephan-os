@@ -2,13 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { collectUi4173ServedExactHeadProof, evaluateUi4173Repair, getUi4173RepairCurrentGitHead, resolveUi4173RepairInvocation, runUi4173Repair } from './battle-bridge-ui-4173-repair.mjs';
+import { join, dirname, resolve, basename } from 'node:path';
+import { collectUi4173ServedExactHeadProof, evaluateUi4173Repair, getUi4173RepairCurrentGitHead, resolveUi4173RepairInvocation, runUi4173Repair as runActualUiRepair } from './battle-bridge-ui-4173-repair.mjs';
 import { BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const EXACT_HEAD = 'a'.repeat(40);
+const testWorkspace = mkdtempSync(join(tmpdir(), 'ui-repair-proof-'));
+const runUi4173Repair = options => runActualUiRepair({ ...options,
+  sharedWorkspace: options.sharedWorkspace ?? mkdtempSync(join(testWorkspace, 'case-')) });
+test.after(() => {
+  assert.equal(dirname(resolve(testWorkspace)), resolve(tmpdir()));
+  assert.ok(basename(testWorkspace).startsWith('ui-repair-proof-'));
+  rmSync(testWorkspace, { recursive: true });
+});
 
 function exactHeadProof(overrides = {}) {
   return {

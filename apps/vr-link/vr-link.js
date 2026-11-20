@@ -15,30 +15,56 @@ chamber();
 $('device').textContent = /Quest|Oculus/i.test(navigator.userAgent) ? 'Quest browser (reported)' : 'Browser (unverified)';
 $('backend').textContent = location.protocol === 'file:' ? 'Offline' : /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'Local' : 'Hosted';
 let session = null;
+let xrSupported = false;
+let openingSession = false;
+// Preserve the latest XR/session notice when older backend pings settle.
+let noticeVersion = 0;
+function showNotice(message) {
+  noticeVersion++;
+  $('notice').textContent = message;
+}
 async function detect() {
-  if (!navigator.xr) { $('xr').textContent = 'No (WebXR API unavailable)'; $('notice').textContent = 'Desktop fallback. WebXR is unavailable in this browser or context.'; return; }
+  if (!navigator.xr) { $('xr').textContent = 'No (WebXR API unavailable)'; showNotice('Desktop fallback. WebXR is unavailable in this browser or context.'); return; }
   try {
     const supported = await navigator.xr.isSessionSupported('immersive-vr');
+    xrSupported = Boolean(supported);
     $('xr').textContent = supported ? 'Yes (immersive-vr supported)' : 'No (immersive-vr unsupported)';
-    $('enter').disabled = !supported;
-  } catch(e) { $('xr').textContent='Unknown'; $('notice').textContent='WebXR check failed: '+String(e.message||e); }
+    $('enter').disabled = !xrSupported || openingSession || Boolean(session);
+  } catch(e) { xrSupported = false; $('enter').disabled = true; $('xr').textContent='Unknown'; showNotice('WebXR check failed: '+String(e.message||e)); }
 }
 $('enter').addEventListener('click', async () => {
-  if (!navigator.xr) return;
+  if (!navigator.xr || !xrSupported || session || openingSession) return;
+  openingSession = true;
+  $('enter').disabled = true;
+  showNotice('Opening immersive VR session…');
   try {
-    session = await navigator.xr.requestSession('immersive-vr');
-    $('session').textContent='immersive-vr';
-    $('notice').textContent='WebXR session entered. This V0 confirms connection only; no spatial renderer has been attached.';
-    session.addEventListener('end',()=>{session=null;$('session').textContent='Fallback';$('notice').textContent='VR session ended. Desktop fallback ready.';},{once:true});
-  } catch(e) { $('session').textContent='Fallback';$('notice').textContent='VR session failed: '+String(e.message||e); }
+    const opened = await navigator.xr.requestSession('immersive-vr');
+    session = opened;
+    $('session').textContent = 'immersive-vr';
+    showNotice('WebXR session entered. This V0 confirms connection only; no spatial renderer has been attached.');
+    opened.addEventListener('end', () => {
+      if (session !== opened) return;
+      session = null;
+      $('enter').disabled = !xrSupported;
+      $('session').textContent = 'Fallback';
+      showNotice('VR session ended. Desktop fallback ready.');
+    }, { once: true });
+  } catch (e) {
+    $('session').textContent = 'Fallback';
+    showNotice('VR session failed: ' + String(e.message || e));
+  } finally {
+    openingSession = false;
+    $('enter').disabled = !xrSupported || Boolean(session);
+  }
 });
 $('ping').addEventListener('click',async()=>{
+  const pingVersion = ++noticeVersion;
   $('notice').textContent='Checking Stephanos…';
   const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),3000);
   try {
     const response=await fetch('/api/health',{method:'GET',cache:'no-store',signal:controller.signal});
-    $('notice').textContent=response.ok?'Stephanos reachable (HTTP '+response.status+').':'Stephanos unavailable (HTTP '+response.status+').';
-  } catch(e) {$('notice').textContent='Stephanos offline or unreachable: '+String(e.message||e);}
+    if (pingVersion === noticeVersion) $('notice').textContent=response.ok?'Stephanos reachable (HTTP '+response.status+').':'Stephanos unavailable (HTTP '+response.status+').';
+  } catch(e) {if (pingVersion === noticeVersion) $('notice').textContent='Stephanos offline or unreachable: '+String(e.message||e);}
   finally {clearTimeout(timeout);}
 });
 detect();

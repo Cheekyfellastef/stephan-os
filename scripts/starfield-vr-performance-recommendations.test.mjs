@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { buildStarfieldVrPerformanceRecommendations } from './starfield-vr-performance-recommendations.mjs';
 
-const repoRoot = new URL('..', import.meta.url).pathname;
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+
+test('research corpus fixture resolves to an existing filesystem path on every platform', () => {
+  assert.equal(existsSync(join(repoRoot, 'VR-Research-Lab', 'lab-workspace.json')), true);
+});
 const identity = (provider = 'mutar-openxr') => ({
   status: 'VERIFIED_PROVIDER',
   provider,

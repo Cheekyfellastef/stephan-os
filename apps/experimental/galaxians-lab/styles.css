@@ -65,3 +65,20 @@ h1 {
   background: #000;
   display: block;
 }
+
+.diagnostics-readout {
+  margin: 0 0 1rem;
+  padding: 0.85rem;
+  max-width: 640px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 0.875rem/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: #d3e7ff;
+  background: #151d2a;
+  border: 1px solid #36435e;
+  border-radius: 0.5rem;
+}
+
+.diagnostics-readout[hidden] {
+  display: none;
+}

@@ -3,6 +3,7 @@ import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButton
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import CollapsiblePanel from './CollapsiblePanel';
 import AgentsWorkspaceCanvas from './AgentsWorkspaceCanvas';
+import SharedWorkspaceProofIndex from './SharedWorkspaceProofIndex';
 import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
 import { deriveAgentsWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
 
@@ -177,6 +178,7 @@ export default function AgentsTile({
         selectedAgentId={workspaceSelectedAgentId || selectedAgentId}
         onSelectAgent={handleWorkspaceSelectAgent}
       />
+      <SharedWorkspaceProofIndex feed={workspaceFeed} />
       <div className="agents-fleet-strip" role="list" aria-label="Agent fleet strip">
         {visibleAgents.map((agent) => (
           <button

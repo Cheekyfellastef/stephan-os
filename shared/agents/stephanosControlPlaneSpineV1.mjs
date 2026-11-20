@@ -46,9 +46,12 @@ export function projectStephanosControlPlaneSpine(input = {}) {
   const safeEligibleWorkRemaining = count(flywheel.refillSafeEligibleWorkRemaining);
   const provenSafeFreeLanes = count(flywheel.refillProvenSafeFreeLanes);
   const materialActions = count(flywheel.refillMaterialActionsSucceeded);
-  const strandedCapacity = safeEligibleWorkRemaining > 0
-    && provenSafeFreeLanes > 0
-    && materialActions === 0;
+  // A partially successful sweep can still strand independent tasks.
+  // Do not report the completed Core cycle as healthy merely because one
+  // worker changed source while eligible work and verified capacity remain.
+  const strandedCapacity = completedCycle && !flywheelCycleRunning
+    && safeEligibleWorkRemaining > 0
+    && provenSafeFreeLanes > 0;
   const repairRequired = !dependencyHealthy
     || refillStatus === 'DEGRADED'
     || flywheel.octopusNeedsRepair === true
@@ -85,7 +88,7 @@ export function projectStephanosControlPlaneSpine(input = {}) {
     flywheelLastError,
     flywheelReconciliationBlocked,
     idleGrantWaitProven,
-    safeEligibleWorkRemaining:
+    safeEligibleWorkRemaining,
     provenSafeFreeLanes,
     materialActionsLastCycle: materialActions,
     strandedCapacity,

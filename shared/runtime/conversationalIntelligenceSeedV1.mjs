@@ -43,6 +43,47 @@ export const CONVERSATIONAL_INTELLIGENCE_DIMENSIONS_V1 = Object.freeze([
   'answer-relevance',
   'conversational-naturalness',
   'learning-retention',
+  'crash-and-restart-recovery',
+  'cross-device-conversation-parity',
+  'ios-scroll-and-composer-accessibility',
+  'long-conversation-memory-pressure',
+  'workspace-asset-and-hydration-parity',
+]);
+
+// Reuse the already planted #2798 canopy seed. These are canonical owners,
+ // not additional seeds, queues or unattended mutation authorities.
+export const CONVERSATIONAL_INTELLIGENCE_CHAT_EXPERIENCE_WORK_V1 = Object.freeze([
+  Object.freeze({
+    ref: '#2434', kind: 'issues',
+    title: 'Durable conversation memory',
+    outcome: 'Resume the same verified conversation after iPad reload, crash, backend restart and device switch.',
+  }),
+  Object.freeze({
+    ref: '#2966', kind: 'issues',
+    title: 'iPad / Battle Bridge parity',
+    outcome: 'Prove equivalent canonical workspace assets, hydrated data and responsive interaction on every device.',
+  }),
+  Object.freeze({
+    ref: '#1722', kind: 'issues',
+    title: 'Cross-surface experience',
+    outcome: 'Continuously test touch scrolling, memory pressure, keyboard handling, accessibility and crash resilience.',
+  }),
+  Object.freeze({
+    ref: '#2965', kind: 'pull',
+    title: 'Stephanos AI recovery repair',
+    outcome: 'Review and prove the existing iPad scrolling, bounded transcript and shared-memory recovery implementation.',
+  }),
+]);
+
+export const CONVERSATIONAL_INTELLIGENCE_CHAT_QUALITY_CHECKS_V1 = Object.freeze([
+  'canonical-shared-thread-recovery',
+  'message-persisted-before-completion',
+  'uncertain-send-no-silent-duplicate',
+  'cross-device-history-equivalence',
+  'ios-touch-scroll-and-composer',
+  'long-chat-bounded-memory',
+  'hosted-workspace-asset-hydration-parity',
+  'wrong-brain-context-and-answer-quality',
 ]);
 
 export function buildConversationalIntelligenceSeedV1(input = {}) {
@@ -58,6 +99,8 @@ export function buildConversationalIntelligenceSeedV1(input = {}) {
     operatingLoop: CONVERSATIONAL_INTELLIGENCE_LOOP_V1,
     growthRungs: CONVERSATIONAL_INTELLIGENCE_GROWTH_RUNGS_V1,
     qualityDimensions: CONVERSATIONAL_INTELLIGENCE_DIMENSIONS_V1,
+    linkedImprovementWork: CONVERSATIONAL_INTELLIGENCE_CHAT_EXPERIENCE_WORK_V1,
+    continuousExperienceChecks: CONVERSATIONAL_INTELLIGENCE_CHAT_QUALITY_CHECKS_V1,
     operatorRole: 'conversation-intent-judgment-protected-approval',
     growthContract: Object.freeze({
       evidenceBackedOnly: true,
@@ -67,6 +110,10 @@ export function buildConversationalIntelligenceSeedV1(input = {}) {
       contextLossBecomesLearningSignal: true,
       successfulEvaluationsRequireProof: true,
       retainedLessonsFeedNextConversation: true,
+      verifiedChatExperienceFailuresBecomeCanonicalGaps: true,
+      existingGoalOwnersReusedBeforeAnyNewAdmission: true,
+      restartAndDeviceSwitchRequireLiveProof: true,
+      seededImprovementDoesNotProveDeployment: true,
       sovereigntyIsNonNegotiable: true,
       providerNeutralRoutingPreserved: true,
     }),

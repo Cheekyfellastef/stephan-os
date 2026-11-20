@@ -46,12 +46,30 @@ function Test-TaskAction {
     } catch { return $false }
 }
 
+# Task Scheduler may persist the same identity as a short name or SID.
+# Compare the actual Windows account SID, not an unauthenticated spelling.
+# A failed translation grants no authority and never changes a task.
+function Resolve-TaskPrincipalSid {
+    param([string]$PrincipalUserId)
+    if ([string]::IsNullOrWhiteSpace($PrincipalUserId)) { return '' }
+    try {
+        if ($PrincipalUserId -match '^S-\d-\d+(?:-\d+)+$') {
+            return ([System.Security.Principal.SecurityIdentifier]::new($PrincipalUserId)).Value
+        }
+        return ([System.Security.Principal.NTAccount]::new($PrincipalUserId)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    } catch { return '' }
+}
+
 function Test-TaskAuthority {
     param([object]$Task)
     try {
         if (-not $Task -or -not $Task.Principal -or -not $Task.Settings) { return $false }
-        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        return [string]::Equals([string]$Task.Principal.UserId, $currentUser, [System.StringComparison]::OrdinalIgnoreCase) `
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $currentSid = if ($identity -and $identity.User) { [string]$identity.User.Value } else { '' }
+        $principalSid = Resolve-TaskPrincipalSid -PrincipalUserId ([string]$Task.Principal.UserId)
+        return (-not [string]::IsNullOrWhiteSpace($currentSid) `
+            -and -not [string]::IsNullOrWhiteSpace($principalSid) `
+            -and [string]::Equals($principalSid, $currentSid, [System.StringComparison]::Ordinal)) `
             -and [string]$Task.Principal.LogonType -eq 'Interactive' `
             -and [string]$Task.Principal.RunLevel -eq 'Limited' `
             -and [string]$Task.Settings.MultipleInstances -eq 'IgnoreNew' `
@@ -81,16 +99,9 @@ function Test-CanonicalBackendCommandLine {
     param([string]$CommandLine, [string]$ExpectedSourceHead)
     $commandLine = (([string]$CommandLine -replace '\s+', ' ').Trim())
     $canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STEPHANOS_BACKEND_BOOTSTRAP_BASE64)"
-    $expectedCommands = @(
-        "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`"",
-        "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
-    )
-    foreach ($expectedCommand in $expectedCommands) {
-        if ([string]::Equals($commandLine, $expectedCommand, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $true
-        }
-    }
-    return $false
+    $expectedQuotedCommand = "`"$canonicalNode`" --input-type=module --eval `"$canonicalBootstrapEval`""
+    $expectedUnquotedCommand = "$canonicalNode --input-type=module --eval `"$canonicalBootstrapEval`""
+    return ([string]::Equals($commandLine, $expectedQuotedCommand, [System.StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($commandLine, $expectedUnquotedCommand, [System.StringComparison]::OrdinalIgnoreCase))
 }
 
 function Test-RuntimeUiDistStatus {

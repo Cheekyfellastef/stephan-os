@@ -11,10 +11,14 @@ test('canonical-main source admission is evaluated before the worker-runtime hol
   const admission = source.indexOf('elasticAdmission = await ensureElasticMissions', start);
   assert.notEqual(admission, -1);
   const block = source.slice(start, admission);
+  const gateStart = source.indexOf('export function projectElasticAdmissionGateV1');
+  assert.notEqual(gateStart, -1);
+  const gate = source.slice(gateStart, start);
 
   assert.match(block, /authoritative\?\.machineryInventory\?\.sourceHead/);
   assert.match(block, /workerRuntimeHold/);
-  assert.match(block, /worker-heartbeat-invalid-or-missing/);
-  assert.match(block, /source:mission-worker-heartbeat-unavailable/);
+  assert.match(block, /elasticAdmissionGate = projectElasticAdmissionGateV1/);
+  assert.match(gate, /worker-heartbeat-invalid-or-missing/);
+  assert.match(gate, /source:mission-worker-heartbeat-unavailable/);
   assert.doesNotMatch(block, /env\.STEPHANOS_MISSION_WORKER_HEAD_SHA/);
 });

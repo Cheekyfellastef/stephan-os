@@ -62,15 +62,15 @@ function github() {
   };
 }
 
-test('all five seeds generate stable owned pressure; healthy whole-system observation creates no repair', () => {
+test('registered seeds generate stable owned pressure; healthy whole-system observation creates no repair', () => {
   const payload = feed({ wholeGap: true });
   const planned = pressures(payload);
-  assert.equal(planned.length, 5);
-  assert.deepEqual(planned.map((work) => work.ownerIssueRef), ['#2655', '#2670', '#2796', '#2798', '#2519']);
+  assert.equal(planned.length, 7);
+  assert.deepEqual(planned.map((work) => work.ownerIssueRef), ['#2655', '#2670', '#2796', '#2798', '#2519', '#2968', '#3026']);
   const keys = planned.map((work) => work.pressureKey);
   payload.records.statusRecords = payload.records.statusRecords.map((record) => ({ ...record, timestampUtc: '2026-10-07T19:59:59.000Z' }));
   assert.deepEqual(pressures(payload).map((work) => work.pressureKey), keys);
-  assert.equal(pressures(feed()).length, 4);
+  assert.equal(pressures(feed()).length, 6);
 });
 
 test('stale, future, unavailable and conflicting feeds cannot authorize seed goals', () => {
@@ -100,16 +100,16 @@ test('existing reconciliation admits one owned goal per pressure and repeats wit
   };
   const first = await reconcileFlywheelLearningGoalsV1(options);
   assert.equal(first.createdCanonicalGoalCount, 4);
-  assert.equal(first.seedGrowthAttachments.length, 5);
+  assert.equal(first.seedGrowthAttachments.length, 7);
   assert.equal(first.authority.dispatchAllowed, false);
   assert.equal(first.authority.mergeAllowed, false);
   const second = await reconcileFlywheelLearningGoalsV1(options);
-  assert.equal(second.createdCanonicalGoalCount, 1);
+  assert.equal(second.createdCanonicalGoalCount, 3);
   assert.equal(second.dedupedCanonicalGoalCount, 4);
-  assert.equal(adapter.shapes.length, 5);
+  assert.equal(adapter.shapes.length, 7);
   const third = await reconcileFlywheelLearningGoalsV1(options);
   assert.equal(third.createdCanonicalGoalCount, 0);
-  assert.equal(adapter.shapes.length, 5);
+  assert.equal(adapter.shapes.length, 7);
   const goal = JSON.parse(await readFile(join(paths.root, 'goals/goal-9001.json'), 'utf8'));
   assert.ok(goal.seedGrowthWork.ownerIssueRef);
   assert.equal(goal.dispatchAllowed, false);
@@ -133,7 +133,7 @@ test('production authority, ownership lookup and binding conflicts fail closed w
   adapter.findOwnerCandidates = async () => ({ ok: true, candidates: [{ number: 1444 }] });
   const ownerHold = await reconcileFlywheelLearningGoalsV1({ ...options, canonicalGoalAdmissionAuthorized: true });
   assert.equal(ownerHold.createdCanonicalGoalCount, 0);
-  assert.equal(ownerHold.canonicalGoalAdmissionHeldCount, 4);
+  assert.equal(ownerHold.canonicalGoalAdmissionHeldCount, 6);
   assert.equal(adapter.shapes.length, 0);
 });
 
@@ -271,6 +271,36 @@ test('one failed seed admission does not stop resource-disjoint seed reconciliat
     admitCanonicalGoal: async () => { attempts += 1; if (attempts === 1) throw new Error('surface-unavailable');
       return { ok: false, reason: 'existing-owner-resolution-required' }; },
   });
-  assert.equal(attempts, 4);
-  assert.equal(result.seedGrowthAttachments.length, 4);
+  assert.equal(attempts, 6);
+  assert.equal(result.seedGrowthAttachments.length, 6);
+});
+
+
+test('fleet care creates deduped canonical growth pressure only for a fresh proved real fault', () => {
+  const payload = feed();
+  assert.equal(pressures(payload).some((work) => work.ownerIssueRef === '#2972'), false);
+  const event = {
+    schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.event',
+    eventId: 'pickup-blocked-1', timestampUtc: NOW, participantId: 'goal-building-agent',
+    relatedIssue: '#1622', eventKind: 'worker-pickup-failed',
+    capabilityId: 'worker-pickup-missing', status: 'BLOCKED',
+    summary: 'SELECT/CLAIM was recorded but there was no physical worker pickup.',
+    proofRefs: ['proof/actual-pickup-failure'],
+  };
+  payload.records.eventRecords.push(event);
+  const first = pressures(payload).find((work) => work.ownerIssueRef === '#2972');
+  assert.ok(first);
+  assert.equal(first.seedId, 'goal-conveyor-fleet-care');
+  assert.equal(first.capabilityGapId, 'worker-pickup-missing');
+  assert.equal(first.pressureKey, 'seed-2972:gap:worker-pickup-missing');
+  assert.deepEqual(first.evidenceRefs.slice(-1), ['events/pickup-blocked-1.json']);
+  assert.equal(pressures(payload).find((work) => work.ownerIssueRef === '#2972').pressureKey, first.pressureKey);
+  event.timestampUtc = '2026-10-06T20:00:00.000Z';
+  assert.equal(pressures(payload).some((work) => work.ownerIssueRef === '#2972'), false);
+  event.timestampUtc = NOW;
+  event.proofRefs = [];
+  assert.equal(pressures(payload).some((work) => work.ownerIssueRef === '#2972'), false);
+  event.proofRefs = ['proof/actual-pickup-failure'];
+  event.relatedIssue = '#1722';
+  assert.equal(pressures(payload).some((work) => work.ownerIssueRef === '#2972'), false);
 });

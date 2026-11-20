@@ -763,7 +763,8 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(runner, /validateIndependentReviewArtifact\(artifact/);
   assert.match(runner, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED/);
   assert.match(runner, /independentReviewArtifactComments/);
-  assert.match(runner, /mapWithConcurrency\(openPullRequests, 8/);
+  assert.match(runner, /selectExactHeadDiscoveryWindowV1\(openPullRequests\)/);
+  assert.match(runner, /mapWithConcurrency\(boundedCandidates, 8/);
   assert.doesNotMatch(runner, /multiple canonical review lanes detected/);
   assert.match(runner, /REQUESTED_PR_NOT_CANONICAL/);
   assert.match(runner, /GitHub pagination exceeded.*refusing partial evidence/);

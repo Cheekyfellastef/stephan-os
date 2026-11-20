@@ -1,5 +1,6 @@
 import { getStartupDiagnosticsSnapshot, recordStartupLaunchTrigger, recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
 import { publishTileContextSnapshot } from '../../shared/runtime/tileContextRegistry.mjs';
+import { prepareLauncherTileLayout } from '../../shared/runtime/launcherTileLayout.mjs';
 import { STEPHANOS_LAW_IDS } from '../../shared/runtime/stephanosLaws.mjs';
 import { withCommandDeckDestination } from '../../shared/runtime/commandDeckDestination.mjs';
 import { buildStephanosTileTruthProjection } from './stephanosTileTruthProjection.mjs';
@@ -255,7 +256,7 @@ function hardenProjectRegistryHitTargets(container) {
   });
 }
 
-function launchProject(project, context, trigger = {}) {
+export function launchProject(project, context, trigger = {}) {
   const projectId = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
   const isStephanos = projectId === 'stephanos' || projectId === 'stephanos os';
   const isMusicTile = isMusicTileProject(project);
@@ -566,12 +567,16 @@ export function renderProjectRegistry(projects, context, options = {}) {
     return;
   }
 
+  const layout = prepareLauncherTileLayout(container, projects, () => renderProjectRegistry(projects, context, options));
+  if (layout.deferred) return;
+  const orderedProjects = layout.projects;
   ensureSpatialTelemetryLandingRefresh(projects, context);
-  const nextSignature = createProjectRegistryRenderSignature(projects, options);
+  const nextSignature = JSON.stringify([createProjectRegistryRenderSignature(orderedProjects, options), layout.signature]);
   if (container.__commandDeckRenderSignature === nextSignature) {
     return;
   }
   container.__commandDeckRenderSignature = nextSignature;
+  layout.beforeRender();
   container.innerHTML = '';
   syncTileRegistrySnapshots(projects);
 
@@ -584,7 +589,7 @@ export function renderProjectRegistry(projects, context, options = {}) {
   const stephanosProjectForCockpit = (Array.isArray(projects) ? projects : []).map(normaliseProject).find((candidate) => isStephanosProject(candidate)) || {};
   const canonicalCockpitProjection = buildCockpitProjection({ runtimeStatusModel: stephanosProjectForCockpit.runtimeStatusModel || {}, project: stephanosProjectForCockpit });
 
-  projects.forEach((project) => {
+  orderedProjects.forEach((project) => {
     const safeProject = normaliseProject(project);
     const tile = document.createElement('div');
     const isStephanos = isStephanosProject(safeProject);
@@ -668,13 +673,15 @@ export function renderProjectRegistry(projects, context, options = {}) {
         tile.classList.add('app-tile-pending-launchable');
       }
       tile.title = runtimeDetail || safeProject.statusMessage || safeProject.name;
-      tile.onclick = () => launchProject(safeProject, context, { type: 'user-click', origin: 'app-tile' });
     }
+
+    layout.decorateTile(tile, safeProject, blockLaunch ? null : () => launchProject(safeProject, context, { type: 'user-click', origin: 'app-tile' }));
 
     container.appendChild(tile);
   });
 
   hardenProjectRegistryHitTargets(container);
+  layout.afterRender();
 }
 
 export const moduleDefinition = {

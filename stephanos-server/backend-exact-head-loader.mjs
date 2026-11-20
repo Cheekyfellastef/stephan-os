@@ -13,9 +13,10 @@ function exactHeadGitEnvironment(environment = process.env) {
   );
   const nullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
   const fixedConfig = [
+    ['core.autocrlf', process.platform === 'win32' ? 'true' : 'false'],
     ['core.hooksPath', nullDevice], ['core.fsmonitor', 'false'], ['core.trustctime', 'true'],
     ['core.checkStat', 'default'], ['core.ignoreStat', 'false'], ['core.untrackedCache', 'false'],
-    ['core.attributesFile', nullDevice], ['core.excludesFile', nullDevice], ['credential.helper', ''],
+    ['core.attributesFile', process.platform === 'win32' ? '' : nullDevice], ['core.excludesFile', process.platform === 'win32' ? '' : nullDevice], ['credential.helper', ''],
     ['protocol.allow', 'never'], ['protocol.https.allow', 'always'], ['submodule.recurse', 'false'],
     ['fetch.recurseSubmodules', 'false'], ['fetch.writeCommitGraph', 'false'], ['gc.auto', '0'],
     ['maintenance.auto', 'false'],
