@@ -5,6 +5,10 @@ import {
   currentTruthObservationRecordIsPersistableV1,
 } from './codexDependencyCurrentTruthObservationV1.mjs';
 import {
+  CODEX_DEPENDENCY_CURRENT_TRUTH_REPORT_SCHEMA,
+  CURRENT_TRUTH_REPORT_STATE,
+} from './codexDependencyCurrentTruthReportV1.mjs';
+import {
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceStatusRecord,
   validateSharedWorkspaceRecord,
@@ -17,9 +21,19 @@ export const CURRENT_TRUTH_PERSISTENCE_STATE = Object.freeze({
 });
 
 const HEX64 = /^[0-9a-f]{64}$/;
+const IDENTITY_FIELDS = Object.freeze(['repository','sourceBranch','sourceHead','observedAtUtc']);
+const COUNT_FIELDS = Object.freeze(['criticalGapCount','unownedCriticalGapCount','unclassifiedReferenceCount']);
+const REPORT_STATES = new Set(Object.values(CURRENT_TRUTH_REPORT_STATE));
 
 function text(value) { return String(value ?? '').trim(); }
 function sha256(value) { return createHash('sha256').update(String(value)).digest('hex'); }
+function plainRecord(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
+function stringFields(value, fields) { return plainRecord(value) && fields.every((field)=>typeof value[field] === 'string'); }
+function validSummary(value) {
+  return plainRecord(value) && REPORT_STATES.has(value.reportState)
+    && typeof value.admissionReady === 'boolean'
+    && COUNT_FIELDS.every((field)=>Number.isSafeInteger(value[field]) && value[field] >= 0);
+}
 function authorityProjection() {
   return Object.freeze({
     writerExecutionAllowed:false,
@@ -46,9 +60,15 @@ function dataOnly(value, path='value', depth=0) {
     for (let index=0; index<value.length; index+=1) if (!Object.hasOwn(value,index)) throw new Error(`${path} must not be sparse`);
     for (const key of Reflect.ownKeys(value)) {
       if (key === 'length') continue;
-      if (typeof key !== 'string' || !/^\d+$/.test(key) || Number(key) >= value.length) throw new Error(`${path} contains a non-index array property`);
+      if (typeof key !== 'string' || !/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length) throw new Error(`${path} contains a non-index array property`);
     }
-    return value.map((entry,index)=>dataOnly(entry,`${path}[${index}]`,depth+1));
+    const output=[];
+    for (let index=0; index<value.length; index+=1) {
+      const descriptor=Object.getOwnPropertyDescriptor(value,String(index));
+      if (!descriptor || descriptor.get || descriptor.set || !Object.hasOwn(descriptor,'value')) throw new Error(`${path}[${index}] must be a data property`);
+      output.push(dataOnly(descriptor.value,`${path}[${index}]`,depth+1));
+    }
+    return output;
   }
   if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) throw new Error(`${path} must contain data-only plain objects`);
   const output={};
@@ -77,7 +97,7 @@ function exactObservationBindings(observation) {
   if (observation.observedAtUtc !== record.observedAtUtc) reasons.push('observation-time-binding-mismatch');
   if (record.reportState !== report.reportState) reasons.push('report-state-binding-mismatch');
   if (record.admissionReady !== (report.admissionReady === true)) reasons.push('admission-ready-binding-mismatch');
-  for (const field of ['criticalGapCount','unownedCriticalGapCount','unclassifiedReferenceCount']) {
+  for (const field of COUNT_FIELDS) {
     if (record[field] !== report[field]) reasons.push(`${field}-binding-mismatch`);
   }
   const digest=sha256(JSON.stringify(report));
@@ -88,10 +108,16 @@ function exactObservationBindings(observation) {
 export function planCodexDependencyCurrentTruthPersistenceV1(input={}) {
   let envelope;
   try { envelope=dataOnly(input,'input'); } catch (error) { return blocked([`input-invalid:${error.message}`]); }
-  if (Object.keys(envelope).length !== 1 || !Object.hasOwn(envelope,'observation')) return blocked(['input-shape-invalid']);
+  if (!plainRecord(envelope)
+    || Object.keys(envelope).length !== 1 || !Object.hasOwn(envelope,'observation')) return blocked(['input-shape-invalid']);
   const observation=envelope.observation;
   if (observation?.schema !== CODEX_DEPENDENCY_CURRENT_TRUTH_OBSERVATION_SCHEMA) return blocked(['observation-schema-invalid']);
-  if (!currentTruthObservationRecordIsPersistableV1(observation.record)) return blocked(['observation-record-not-persistable']);
+  if (!stringFields(observation,IDENTITY_FIELDS)) return blocked(['observation-identity-invalid']);
+  if (!stringFields(observation.record,[...IDENTITY_FIELDS,'observationId','reportDigest'])
+    || !validSummary(observation.record)
+    || !currentTruthObservationRecordIsPersistableV1(observation.record)) return blocked(['observation-record-not-persistable']);
+  if (!validSummary(observation.report)
+    || observation.report.schema !== CODEX_DEPENDENCY_CURRENT_TRUTH_REPORT_SCHEMA) return blocked(['observation-report-invalid']);
   const bindingErrors=exactObservationBindings(observation);
   if (bindingErrors.length) return blocked(bindingErrors);
 
