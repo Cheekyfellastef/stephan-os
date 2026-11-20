@@ -199,6 +199,24 @@ try {
         Assert-True ($monitorState.Busy -and -not $monitorState.ProviderSlotReleased -and -not $monitorState.DurableCustodyReleased) 'Mutation was not reserved before writing'
         Assert-True (-not (Send-MonitorCommand -Command 'confirm')) 'Double click dispatched again'
     }
+    Invoke-Fixture 'same-run game identity drift is rejected before confirmation state changes' {
+        foreach ($variant in @('pid', 'birth')) {
+            Reset-MonitorFixture
+            Send-FixtureFrame (New-StateFrame 'waiting')
+            $changed = New-StateFrame 'waiting'
+            $changed.eventSequence = 2
+            if ($variant -ceq 'pid') { $changed.process.pid = 54322 }
+            else { $changed.process.createdFileTime = '134384678410182998' }
+            $correctRefusal = $false
+            try { Send-FixtureFrame $changed }
+            catch { $correctRefusal = $_.Exception.Message -ceq 'monitor-state-game-identity-drift' }
+            Assert-True $correctRefusal ('Native run identity changed without refusal: ' + $variant)
+            Assert-True ($monitorState.RunId -ceq ('1' * 32) -and $monitorState.GameProcess.pid -eq 54321 -and
+                $monitorState.GameProcess.createdFileTime -ceq '134384678410182997') 'Rejected drift replaced game identity'
+            Assert-True ($monitorState.ConfirmationToken -ceq ('2' * 32) -and
+                $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Rejected drift changed confirmation authority'
+        }
+    }
     Invoke-Fixture 'failed foreground transfer consumes neither token nor request sequence' {
         Reset-MonitorFixture
         Send-FixtureFrame (New-StateFrame 'waiting')
