@@ -329,4 +329,3 @@ test('actual failed READ retains only its typed blocker through full and compact
     readExecutionLedger: () => { throw Error('unknown target must not read ledger'); } });
   assert.equal(ordinary.blocker, 'MAILBOX_RECEIPT_ID_MISMATCH');
 });
-
