@@ -91,7 +91,9 @@
     "starfield-vr:test": "node --test shared/agents/starfieldVrLaunchPolicy.test.mjs scripts/starfield-vr-launcher-source.test.mjs scripts/starfield-vr-flight-recorder.test.mjs",
     "starfield-vr:reference-lab:test": "node --test shared/vr/starfieldVrReferenceCatalogue.test.mjs tests/starfield-vr-reference-lab.test.mjs",
     "stephanos:sovereign-review:coverage": "node scripts/sovereign-review-coverage-v1.mjs --once",
-    "stephanos:sovereign-review:windows-calibration": "node scripts/sovereign-windows-review-calibration-v1.mjs --once"
+    "stephanos:sovereign-review:windows-calibration": "node scripts/sovereign-windows-review-calibration-v1.mjs --once",
+    "stephanos:github:operator-briefing": "node scripts/stephanos-github-operator-briefing.mjs",
+    "stephanos:github:operator-briefing:test": "node --test shared/agents/githubOperatorAssistantV1.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.54.0",

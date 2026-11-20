@@ -1022,6 +1022,34 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
   }
 
+  // An unresolved Core maintenance attempt is an authority hold for this
+  // controller's affected admission/release phases. Keep incident learning and
+  // proof publication alive, but do not enter goal creation, closure, orphan
+  // recovery, lane finalization, capacity routing or grant issuance. This
+  // option only removes authority; no caller-supplied value can grant it.
+  if (options.maintenanceContinuationHold != null && options.maintenanceContinuationHold !== false) {
+    const candidate = options.maintenanceContinuationHold?.blocker;
+    const blocker = typeof candidate === 'string' && /^[A-Z][A-Z0-9_]{1,159}$/.test(candidate)
+      ? candidate : 'CORE_REPAIR_CONTINUATION_UNPROVEN';
+    let learningPromotion;
+    try {
+      learningPromotion = await requiredFunction(deps.promoteIncidentLessons, 'promoteIncidentLessons')({
+        ...serviceOptions, repoRoot: serviceOptions.repoRoot || process.cwd(), maxPromotions: 2,
+      });
+    } catch {
+      learningPromotion = freeze({ ok: false, reason: 'LEARNING_PROMOTION_FAILED_SOFT',
+        finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED' });
+    }
+    const result = holdResult(blocker, { observedAtUtc: nowUtc, sourceRevision });
+    const receipt = createCycleReceipt(result, null, nowUtc);
+    const receiptPublication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
+    const heartbeatPublication = await publishHeartbeat(heartbeatInput({
+      state: 'HOLD', sourceRevision, nowUtc, blockers: [blocker],
+    }), serviceOptions);
+    return freeze({ ...result, learningPromotion, cycleReceipt: receipt, receiptPublication,
+      heartbeatPublication, maintenanceContinuationHeld: true });
+  }
+
   let outcomeOwnershipSeedPublication = null;
   try {
     outcomeOwnershipSeedPublication = await requiredFunction(
