@@ -528,21 +528,23 @@ test('composite review refuses contradictory typed counts and verdict before del
       }
     }
 
-    // Accessor-backed upstream P0 claims cannot be laundered through child reviews.
+    // Accessor-backed upstream P0 identity claims are denied before any child
+    // dispatch, rather than reaching the legacy composite classifier.
     for (const field of ['counts', 'verdict', 'clean']) {
       const forged = { ...analysis, clean: false };
-      const original = forged[field];
+      let getterCalls = 0;
       Object.defineProperty(forged, field, {
-        enumerable: true, get() { return original; },
+        enumerable: true, get() { getterCalls++; throw new Error('untrusted composite identity getter'); },
       });
       const denied = analyzeWindowsAuthoritySpecialistReview({
         repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
         analysis: forged, sources,
       });
-      assert.equal(denied.eligible, true, field + ' accessor must be classified');
+      assert.equal(getterCalls, 0, field + ' getter must not execute');
+      assert.equal(denied.eligible, false, field + ' accessor must be denied before child dispatch');
       assert.equal(denied.clean, false, field + ' accessor must fail closed');
       assert.deepEqual(denied.proofRefs, [], field + ' accessor must not yield proof');
-      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID');
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE');
     }
     for (const field of ['P0', 'P1', 'P2']) {
       const counts = { ...analysis.counts };
