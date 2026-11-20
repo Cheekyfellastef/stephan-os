@@ -24,6 +24,23 @@ const store = () => {
   return {writes, getItem:key=>entries.get(key)??null,
     setItem(key,value){writes.push({key,value});entries.set(key,value);}};
 };
+test('denied default localStorage getter leaves the Spatial furniture room usable in memory', () => {
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+  const statuses=[];
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,get(){throw new Error('Storage unavailable');}});
+  try{
+    const furniture=createHolodeckFurniture({onStatus:message=>statuses.push(message)});
+    vec(furniture.getOffset('table'),[0,0,0]);
+    furniture.nudge('table',0,0.1);
+    close(furniture.getOffset('table')[0],0.1);
+    assert.equal(furniture.flush(),false,'unavailable storage must never report durable persistence');
+    assert.match(statuses.join(' '),/session-only/);
+  }finally{
+    if(previous)Object.defineProperty(globalThis,'localStorage',previous);
+    else Reflect.deleteProperty(globalThis,'localStorage');
+  }
+});
+
 const tracked = (point) => ({transform:{
   position:{x:point[0],y:point[1],z:point[2]},
   orientation:{x:0,y:0,z:0,w:1},
