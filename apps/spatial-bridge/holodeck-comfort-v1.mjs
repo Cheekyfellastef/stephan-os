@@ -1,4 +1,5 @@
-import { HOLODECK_CONSOLE, HOLODECK_DISPLAY } from './holodeck-layout-v1.mjs';
+import { HOLODECK_CONSOLE, HOLODECK_DISPLAY, HOLODECK_CONSOLE_TRAY } from './holodeck-layout-v1.mjs';
+import { markSolid } from './holodeck-cube-physics-v1.mjs';
 
 // Room presentation preferences and their matching physical geometry. This does not change
 // headset tracking, browser permissions, native input authority, or execution authority.
@@ -221,13 +222,12 @@ function axisAlignedSolid({ minX, maxX, minY, maxY, minZ, maxZ }) {
 
 function tiltedKeyboardSolid(tiltDegrees, furnitureOffset=[0,0,0]) {
   const c = HOLODECK_CONSOLE;
-  const halfWidth = c.halfWidth - 0.06;
-  const halfDepth = c.halfDepth - 0.02;
+  const {halfWidth, halfDepth, top, bottom} = HOLODECK_CONSOLE_TRAY;
   const faces = [
     [[1,0,0], [halfWidth,c.top,c.center[2]]],
     [[-1,0,0], [-halfWidth,c.top,c.center[2]]],
-    [[0,1,0], [0,c.top+0.003,c.center[2]]],
-    [[0,-1,0], [0,c.top-0.02,c.center[2]]],
+    [[0,1,0], [0,top,c.center[2]]],
+    [[0,-1,0], [0,bottom,c.center[2]]],
     [[0,0,1], [0,c.top,c.center[2]+halfDepth]],
     [[0,0,-1], [0,c.top,c.center[2]-halfDepth]],
   ];
@@ -251,5 +251,6 @@ export function createHolodeckComfortSolids({ keyboardTilt = 0, furnitureOffset 
     minY: dial.center[1] + furnitureOffset[1] - dial.radius, maxY: dial.center[1] + furnitureOffset[1] + dial.radius,
     minZ: dial.center[2] + furnitureOffset[2] - dial.radius, maxZ: dial.center[2] + furnitureOffset[2] + dial.radius,
   }));
-  return [tiltedKeyboardSolid(keyboardTilt,furnitureOffset), display, ...dials];
+  return [markSolid(tiltedKeyboardSolid(keyboardTilt,furnitureOffset),{owner:'keyboard'}),
+    markSolid(display,{owner:'display'}),...dials.map(solid=>markSolid(solid,{owner:'keyboard'}))];
 }

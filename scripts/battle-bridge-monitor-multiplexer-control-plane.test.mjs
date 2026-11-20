@@ -68,7 +68,7 @@ function watchdogReceipt() {
   return {
     taskName: 'Stephanos Mission Orchestrator Worker Watchdog',
     installed: true,
-    intervalMinutes: 5,
+    intervalMinutes: 2,
     atLogon: true,
     hidden: true,
     runLevel: 'Limited',
@@ -103,7 +103,7 @@ function beaconReceipt() {
     taskName: 'Stephanos Battle Bridge Outbound Health Beacon',
     installed: true,
     startedNow: true,
-    intervalMinutes: 10,
+    intervalMinutes: 2,
     atLogon: true,
     hidden: true,
     runLevel: 'Limited',
@@ -232,6 +232,38 @@ test('the fixed early normal-token denial is diagnostic even without a late task
   const result = caretakerResult({ status: 2, stdout: JSON.stringify(denied) });
   assert.equal(result.sovereignCaretakerExecution.reportedBlocker, denied.blocker);
   assert.equal(result.ok, false);
+});
+
+test('governor custody and lifecycle denials remain typed diagnostic failures through repeated projection', () => {
+  const blockers = ['CHILD_CUSTODY_UNPROVEN', 'BUSY', 'OWNER_UNPROVEN', 'STARTING']
+    .map(code => `SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_${code}`);
+  for (const blocker of blockers) for (const emergency of [false, true]) {
+    const denied = sovereignReceipt({ healthy: false, daemonHealthy: false, blocker,
+      finalVerdict: 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED',
+      privatePath: 'PRIVATE_PATH', runtimeActivationGranted: true, sourceMutationAllowed: true });
+    const result = caretakerResult({ status: 4, stdout: JSON.stringify(denied), stderr: 'PRIVATE_STDERR' }, { emergency });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, emergency ? 'CONTROL_PLANE_FIXED_INSTALLER_FAILED' : 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED');
+    const evidence = result.sovereignCaretakerExecution;
+    assert.equal(evidence.failureReceiptRecognized, true);
+    assert.equal(evidence.reportedBlocker, blocker);
+    assert.equal(evidence.exitStatus, 4);
+    assert.equal(evidence.diagnosticOnly, true);
+    assert.equal(result.tasks.at(-1).healthy, false);
+    assert.equal(result.tasks.at(-1).receiptValid, false);
+    assert.deepEqual(projectSovereignCaretakerExecutionEvidence(
+      projectSovereignCaretakerExecutionEvidence(evidence, HEAD), HEAD), evidence);
+    assert.equal(Object.hasOwn(evidence, 'runtimeActivationGranted'), false);
+    assert.equal(Object.hasOwn(evidence, 'sourceMutationAllowed'), false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+  }
+  const unrecognized = sovereignReceipt({ healthy: false,
+    blocker: 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_PRIVATE_TOKEN',
+    finalVerdict: 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED' });
+  const refused = caretakerResult({ status: 4, stdout: JSON.stringify(unrecognized) });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.sovereignCaretakerExecution.failureReceiptRecognized, false);
+  assert.equal(refused.sovereignCaretakerExecution.reportedBlocker, '');
 });
 
 test('caretaker timeout and transport failures retain only typed OS evidence', () => {

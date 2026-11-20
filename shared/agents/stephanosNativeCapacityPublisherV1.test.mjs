@@ -11,6 +11,7 @@ import {
   STEPHANOS_NATIVE_CAPACITY_STATUS_ID,
   probeStephanosNativeOllamaV1,
   publishStephanosNativeCapacityV1,
+  publishStephanosNativeCapacityObservationV1,
 } from './stephanosNativeCapacityPublisherV1.mjs';
 import { verifyStephanosNativeCapacityReceipt } from './stephanosNativeCapacityReceiptV1.mjs';
 
@@ -40,7 +41,9 @@ async function assertGamingHold(result, root) {
   assert.equal(result.finalVerdict, 'STEPHANOS_NATIVE_CAPACITY_GAMING_HOLD');
   assert.match(result.reason, /^native-capacity-gaming-/);
   assert.equal(result.cleared, true);
-  await assert.rejects(readFile(statusPath(root), 'utf8'), { code: 'ENOENT' });
+  const diagnostic=JSON.parse(await readFile(statusPath(root),'utf8'));
+  assert.equal(diagnostic.status,'BLOCKED');assert.equal(diagnostic.sourceMutationAllowed,false);
+  assert.equal(Object.hasOwn(diagnostic,'capacityReceipt'),false);assert.equal(Object.hasOwn(diagnostic,'sourceAuthority'),false);
 }
 
 function response(value, status = 200) {
@@ -171,7 +174,8 @@ test('publisher fails dark when canonical queue posture cannot be proved', async
   const result = await publishStephanosNativeCapacityV1(publicationOptions(workspaceRoot, { readQueue: undefined }));
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'native-capacity-queue-unproven');
-  await assert.rejects(readFile(join(workspaceRoot, 'status', `${STEPHANOS_NATIVE_CAPACITY_STATUS_ID}.json`), 'utf8'), { code: 'ENOENT' });
+  const diagnostic=JSON.parse(await readFile(statusPath(workspaceRoot),'utf8'));
+  assert.equal(diagnostic.status,'BLOCKED');assert.equal(diagnostic.sourceMutationAllowed,false);assert.equal(Object.hasOwn(diagnostic,'capacityReceipt'),false);
 }));
 
 test('probe refuses model substitution even when a different local model returns a plausible repair', async () => withWorkspace(async (workspaceRoot) => {
@@ -197,7 +201,8 @@ test('failed deterministic source qualification clears previously published nati
   }));
   assert.equal(second.ok, false);
   assert.equal(second.reason, 'native-source-qualification-failed');
-  await assert.rejects(readFile(join(workspaceRoot, 'status', `${STEPHANOS_NATIVE_CAPACITY_STATUS_ID}.json`), 'utf8'), { code: 'ENOENT' });
+  const diagnostic=JSON.parse(await readFile(statusPath(workspaceRoot),'utf8'));
+  assert.equal(diagnostic.status,'BLOCKED');assert.equal(diagnostic.sourceMutationAllowed,false);assert.equal(Object.hasOwn(diagnostic,'capacityReceipt'),false);
 }));
 
 test('remote or caller-shaped transport never becomes native capacity', async () => {
@@ -320,14 +325,14 @@ test('revocation after the status temporary write blocks the actual status renam
   let statusRenames = 0;
   mockFileSystem(t, 'writeFile', (original) => async (path, ...args) => {
     const result = await original(path, ...args);
-    if (String(path).startsWith(`${statusPath(root)}.`) && String(path).endsWith('.tmp')) {
+    if (String(path).startsWith(`${statusPath(root)}.`) && String(path).endsWith('.tmp') && JSON.parse(String(args[0])).status==='READY') {
       temporaryWrites += 1;
       writeFileSync(governorPath(root), JSON.stringify(governorState({ heavyModelAllowed: false })));
     }
     return result;
   });
   mockFileSystem(t, 'rename', (original) => async (source, target) => {
-    if (target === statusPath(root)) statusRenames += 1;
+    if (target === statusPath(root) && JSON.parse(await readFile(source,'utf8')).status==='READY') statusRenames += 1;
     return original(source, target);
   });
   await assertGamingHold(await publishStephanosNativeCapacityV1(publicationOptions(root)), root);
@@ -338,8 +343,9 @@ test('revocation after the status temporary write blocks the actual status renam
 test('revocation during an awaited status rename clears capacity before returning', async (t) => withWorkspace(async (root) => {
   let statusRenames = 0;
   mockFileSystem(t, 'rename', (original) => async (source, target) => {
+    const isReady=target===statusPath(root)&&JSON.parse(await readFile(source,'utf8')).status==='READY';
     const result = await original(source, target);
-    if (target === statusPath(root)) {
+    if (isReady) {
       statusRenames += 1;
       writeFileSync(join(root, 'vr', 'gaming-resource-prepare.json'), '{}');
     }
@@ -352,8 +358,9 @@ test('revocation during an awaited status rename clears capacity before returnin
 test('a filesystem refusal to clear revoked capacity remains an explicit unresolved cleanup failure', async (t) => withWorkspace(async (root) => {
   let published = false;
   mockFileSystem(t, 'rename', (original) => async (source, target) => {
+    const isReady=target===statusPath(root)&&JSON.parse(await readFile(source,'utf8')).status==='READY';
     const result = await original(source, target);
-    if (target === statusPath(root)) {
+    if (isReady) {
       published = true;
       writeFileSync(join(root, 'vr', 'gaming-resource-prepare.json'), '{}');
     }
@@ -377,7 +384,7 @@ test('a filesystem refusal to clear revoked capacity remains an explicit unresol
 test('an atomic rename retry must obtain fresh admission before attempting publication again', async (t) => withWorkspace(async (root) => {
   let statusRenames = 0;
   mockFileSystem(t, 'rename', (original) => async (source, target) => {
-    if (target === statusPath(root)) {
+    if (target===statusPath(root)&&JSON.parse(await readFile(source,'utf8')).status==='READY') {
       statusRenames += 1;
       if (statusRenames === 1) {
         writeFileSync(join(root, 'vr', 'gaming-resource-prepare.json'), '{}');
@@ -388,4 +395,48 @@ test('an atomic rename retry must obtain fresh admission before attempting publi
   });
   await assertGamingHold(await publishStephanosNativeCapacityV1(publicationOptions(root)), root);
   assert.equal(statusRenames, 1);
+}));
+
+test('an awaited real probe leaves an unsigned CHECKING observation until genuine qualification completes',async()=>withWorkspace(async root=>{
+  let entered,release;const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+  const base=fetchFixture();
+  const pending=publishStephanosNativeCapacityV1(publicationOptions(root,{fetchImpl:async(url,init)=>{
+    if(url.endsWith('/api/chat')){entered();await gate;}return base(url,init);
+  }}));
+  await started;const record=JSON.parse(await readFile(statusPath(root),'utf8'));
+  assert.equal(record.status,'CHECKING');assert.equal(record.diagnostic.reason,'native-capacity-probe-in-progress');
+  assert.equal(record.sourceMutationAllowed,false);assert.deepEqual(record.supportedOperations,[]);
+  for(const field of ['capacityReceipt','sourceAuthority','publisherAttestation'])assert.equal(Object.hasOwn(record,field),false);
+  release();const result=await pending;assert.equal(result.ok,true);assert.equal(result.statusRecord.status,'READY');
+}));
+
+test('failed probe persists only a closed typed denial and never private error material',async()=>withWorkspace(async root=>{
+  const marker='PRIVATE_FIXTURE_MATERIAL_DO_NOT_PUBLISH';
+  const result=await publishStephanosNativeCapacityV1(publicationOptions(root,{fetchImpl:async()=>{throw Error(marker);}}));
+  assert.equal(result.ok,false);assert.equal(result.diagnosticPublished,true);
+  const raw=await readFile(statusPath(root),'utf8'),record=JSON.parse(raw);
+  assert.equal(record.status,'BLOCKED');assert.equal(record.diagnostic.reason,'native-model-probe-failed');
+  assert.equal(raw.includes(marker),false);assert.equal(Object.hasOwn(record,'capacityReceipt'),false);
+  assert.equal(record.sourceMutationAllowed,false);assert.equal(record.diagnostic.qualificationProven,false);
+}));
+
+test('a refused diagnostic sink prevents model work and does not recursively publish another failure',async t=>withWorkspace(async root=>{
+  let renames=0,calls=0;
+  mockFileSystem(t,'rename',original=>async(source,target)=>{
+    if(target===statusPath(root)){renames++;throw Object.assign(Error('fixture write refusal'),{code:'EACCES'});}
+    return original(source,target);
+  });
+  const result=await publishStephanosNativeCapacityV1(publicationOptions(root,{fetchImpl:async()=>{calls++;throw Error('MODEL_MUST_NOT_RUN');}}));
+  assert.equal(result.ok,false);assert.equal(result.reason,'native-capacity-diagnostic-unwritable');assert.equal(result.diagnosticPublished,false);
+  assert.equal(calls,0);assert.equal(renames,6);await assert.rejects(readFile(statusPath(root),'utf8'),{code:'ENOENT'});
+}));
+
+test('advisory observation factory rejects READY and reduces arbitrary failure strings without signing',async()=>withWorkspace(async root=>{
+  const options=publicationOptions(root);
+  assert.equal((await publishStephanosNativeCapacityObservationV1(options,{phase:'READY',reason:'anything'})).ok,false);
+  const result=await publishStephanosNativeCapacityObservationV1(options,{phase:'BLOCKED',reason:'PRIVATE_FIXTURE_VALUE'});
+  assert.equal(result.ok,true);const record=JSON.parse(await readFile(statusPath(root),'utf8'));
+  assert.equal(record.diagnostic.reason,'native-capacity-observation-unclassified');
+  assert.equal(JSON.stringify(record).includes('PRIVATE_FIXTURE_VALUE'),false);
+  assert.equal(record.sourceMutationAllowed,false);assert.deepEqual(record.proofRefs,[]);
 }));

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { BATTLE_BRIDGE_CONTROL_PLANE_TASKS } from '../shared/agents/battleBridgeControlPlaneSelfRepairCoreV1.mjs';
 
 const beaconInstaller = new URL('./windows/install-battle-bridge-outbound-health-beacon.ps1', import.meta.url);
 const watchdogInstaller = new URL('./windows/install-battle-bridge-worker-watchdog.ps1', import.meta.url);
@@ -52,6 +53,10 @@ test('real publication intervals remain strictly inside the independent hosted a
   )?.[1]?.replaceAll('_', ''));
   const beaconEvery = intervalMinutes(beacon);
   const watchdogEvery = intervalMinutes(watchdog);
+  assert.equal(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.find((task) => task.id === 'workerWatchdog')?.intervalMinutes, watchdogEvery,
+    'control-plane worker watchdog custody must agree with installed cadence');
+  assert.equal(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.find((task) => task.id === 'outboundHealthBeacon')?.intervalMinutes, beaconEvery,
+    'control-plane beacon custody must agree with installed cadence');
 
   assert.ok(Number.isInteger(beaconEvery) && beaconEvery >= 1);
   assert.ok(Number.isInteger(watchdogEvery) && watchdogEvery >= 1);

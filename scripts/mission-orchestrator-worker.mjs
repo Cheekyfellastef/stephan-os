@@ -52,6 +52,20 @@ import {
   OPENCLAW_OC1_GATEWAY_REQUEST_SCHEMA,
   OPENCLAW_OC1_GATEWAY_RESULT_SCHEMA,
 } from '../integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs';
+import {
+  OPENCLAW_OC2_FIXED_PLAN,
+  OPENCLAW_OC2_ISSUE,
+  OPENCLAW_OC2_OPERATION,
+  OPENCLAW_OC2_PROVIDER,
+  OPENCLAW_OC2_PROVIDER_VERSION,
+  OPENCLAW_OC2_RESULT_SCHEMA,
+  OPENCLAW_OC2_TASK_CLASS,
+} from '../integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs';
+import {
+  OPENCLAW_OC2_GATEWAY_METHOD,
+  OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA,
+  OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA,
+} from '../integrations/openclaw/stephanos-builder-provider/lib/oc2-gateway-provider.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -319,6 +333,142 @@ function validateOpenClawOc1GatewayPayload(payload, grant) {
     && result.evidenceReceipts.every((receipt) => receipt?.verified === true);
 }
 
+function openClawOc2GatewayPayload(stdout) {
+  let parsed;
+  try { parsed = JSON.parse(String(stdout || '')); }
+  catch { return null; }
+  if (parsed?.schemaVersion === OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA) return parsed;
+  if (parsed?.result?.schemaVersion === OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA) return parsed.result;
+  return null;
+}
+
+function validateOpenClawOc2GatewayPayload(payload, grant) {
+  const taskId = text(grant?.actionId).toLowerCase();
+  const missionId = text(grant?.missionId).toLowerCase();
+  const sourceHead = text(grant?.sourceRevision).toLowerCase();
+  const providerInstance = text(payload?.providerInstance);
+  const result = payload?.result;
+  // Bind the Gateway's reported proof location and receipt IDs to the
+  // trusted action-grant identity. A merely well-formed OC2 path is not
+  // evidence for this exact grant, task and source revision.
+  const grantId = text(grant?.grantId);
+  // The producer hashes its fixed, grant-bound task before execution.
+  // A caller-supplied 64-hex input digest is not proof of that task.
+  const expectedInputIdentity = createHash('sha256').update(JSON.stringify({
+    missionId,
+    goalId: `#${OPENCLAW_OC2_ISSUE}`,
+    taskId,
+    taskClass: OPENCLAW_OC2_TASK_CLASS,
+    repository: text(grant?.repository),
+    requestedSourceHead: sourceHead,
+    provider: OPENCLAW_OC2_PROVIDER,
+    providerVersion: OPENCLAW_OC2_PROVIDER_VERSION,
+    operation: OPENCLAW_OC2_OPERATION,
+    testPlanIds: OPENCLAW_OC2_FIXED_PLAN.map((entry) => entry.testId),
+    grantId,
+    sourceMutationAuthority: false,
+    arbitraryShellAuthority: false,
+    arbitraryCommandAuthority: false,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    selfQualificationAuthority: false,
+  }), 'utf8').digest('hex');
+  const taskHash = createHash('sha256')
+    .update(JSON.stringify([missionId, taskId, grantId, sourceHead]), 'utf8')
+    .digest('hex').slice(0, 32);
+  const proofRef = `proofs/openclaw-oc2/oc2-${taskHash}.json`;
+  const resultReceiptId = `openclaw-oc2-result-${taskHash.slice(0, 20)}`;
+  const proofReceiptId = `openclaw-oc2-proof-${createHash('sha256').update(proofRef, 'utf8').digest('hex').slice(0, 20)}`;
+  const core = result?.outputProofCore;
+  const testResults = core?.testResults;
+  // A well-formed digest copied into the result, receipt and proof fields is
+  // not enough: prove it is the hash of the fixed, grant-bound test record.
+  const outputCoreValid = core && typeof core === 'object' && !Array.isArray(core)
+    && Object.keys(core).length === 23
+    && core.schemaVersion === OPENCLAW_OC2_RESULT_SCHEMA
+    && text(core.missionId).toLowerCase() === missionId
+    && core.goalId === `#${OPENCLAW_OC2_ISSUE}`
+    && text(core.taskId).toLowerCase() === taskId
+    && core.taskClass === OPENCLAW_OC2_TASK_CLASS
+    && core.repository === text(grant?.repository)
+    && text(core.requestedSourceHead).toLowerCase() === sourceHead
+    && text(core.observedSourceHead).toLowerCase() === sourceHead
+    && core.exactInputIdentity === expectedInputIdentity
+    && core.provider === OPENCLAW_OC2_PROVIDER
+    && core.providerInstance === providerInstance
+    && core.providerVersion === OPENCLAW_OC2_PROVIDER_VERSION
+    && core.operation === OPENCLAW_OC2_OPERATION
+    && Array.isArray(testResults)
+    && testResults.length === OPENCLAW_OC2_FIXED_PLAN.length
+    && testResults.every((entry, i) => entry && typeof entry === 'object'
+      && !Array.isArray(entry) && Object.keys(entry).length === 3
+      && entry.testId === OPENCLAW_OC2_FIXED_PLAN[i].testId
+      && entry.status === 0
+      && /^[a-f0-9]{64}$/.test(text(entry.outputSha256)))
+    && Array.isArray(core.changedFiles) && core.changedFiles.length === 0
+    && core.sourceMutationPerformed === false
+    && core.arbitraryShellAllowed === false
+    && core.arbitraryCommandAllowed === false
+    && core.mergeAllowed === false
+    && core.deploymentAllowed === false
+    && core.selfQualificationAllowed === false
+    && core.finalVerdict === 'OPENCLAW_OC2_PROVIDER_TASK_COMPLETED'
+    && typeof core.completedAtUtc === 'string'
+    && core.completedAtUtc === result?.completedAt;
+  const expectedOutputIdentity = outputCoreValid
+    ? createHash('sha256').update(JSON.stringify(core), 'utf8').digest('hex') : '';
+  return Boolean(grantId)
+    && payload?.schemaVersion === OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA
+    && payload?.success === true
+    && payload?.qualificationEligible === true
+    && text(payload?.missionId).toLowerCase() === missionId
+    && text(payload?.goalId) === `#${OPENCLAW_OC2_ISSUE}`
+    && text(payload?.taskId).toLowerCase() === taskId
+    && text(payload?.taskClass) === OPENCLAW_OC2_TASK_CLASS
+    && text(payload?.repository) === text(grant?.repository)
+    && text(payload?.requestedSourceHead).toLowerCase() === sourceHead
+    && text(payload?.provider) === OPENCLAW_OC2_PROVIDER
+    && /^openclaw-gateway:[1-9][0-9]*$/.test(providerInstance)
+    && text(payload?.providerVersion) === OPENCLAW_OC2_PROVIDER_VERSION
+    && payload?.executionSurface === 'openclaw-gateway-plugin'
+    && result?.success === true
+    && result?.qualificationEligible === true
+    && text(result?.resultId).toLowerCase() === taskId
+    // Inner producer evidence must describe this exact claimed task, not
+    // merely inherit a trusted-looking outer Gateway response envelope.
+    && text(result?.missionId).toLowerCase() === missionId
+    && text(result?.goalId) === `#${OPENCLAW_OC2_ISSUE}`
+    && text(result?.taskId).toLowerCase() === taskId
+    && text(result?.taskClass) === OPENCLAW_OC2_TASK_CLASS
+    && text(result?.repository) === text(grant?.repository)
+    && text(result?.requestedSourceHead).toLowerCase() === sourceHead
+    && text(result?.observedSourceHead).toLowerCase() === sourceHead
+    && text(result?.provider) === OPENCLAW_OC2_PROVIDER
+    && text(result?.providerVersion) === OPENCLAW_OC2_PROVIDER_VERSION
+    && text(result?.operation).toLowerCase() === OPENCLAW_OC2_OPERATION
+    && Array.isArray(result?.changedFiles)
+    && result.changedFiles.length === 0
+    && text(result?.providerInstance) === providerInstance
+    && /^[a-f0-9]{64}$/.test(text(result?.exactInputIdentity))
+    && text(result?.exactInputIdentity) === expectedInputIdentity
+    && /^[a-f0-9]{64}$/.test(text(result?.exactOutputIdentity))
+    && outputCoreValid === true
+    && result?.exactOutputIdentity === expectedOutputIdentity
+    && result?.receipt?.verified === true
+    && text(result?.receipt?.receiptId) === resultReceiptId
+    && result?.receipt?.source === 'openclaw-standalone-oc2'
+    && result?.receipt?.evidenceType === 'provider-neutral-task-result'
+    && result?.receipt?.commandOutputHash === result?.exactOutputIdentity
+    && Array.isArray(result?.evidenceReceipts)
+    && result.evidenceReceipts.length === 1
+    && result.evidenceReceipts.every((receipt) => receipt?.verified === true
+      && text(receipt?.receiptId) === proofReceiptId
+      && receipt?.sha256 === result?.exactOutputIdentity
+      && receipt?.source === 'openclaw-standalone-oc2'
+      && receipt?.evidenceType === 'shared-workspace-proof'
+      && text(receipt?.receiptPath) === proofRef);
+}
+
 async function groundedOpenClawEvidence(action, finalOutput, options, timestamp) {
   const env = options.env || process.env;
   const missionRunnerRoot = text(options.missionRunnerRoot || env.STEPHANOS_MISSION_RUNNER_ROOT || (env.USERPROFILE ? resolve(env.USERPROFILE, 'Documents', 'OpenClaw-Standalone', 'mission-runner') : ''));
@@ -343,6 +493,16 @@ async function groundedOpenClawEvidence(action, finalOutput, options, timestamp)
     } catch { /* An absent or unreadable receipt is not evidence. */ }
   }
   return receipts;
+}
+
+function gatewayFailure(error, timestamp) {
+  return {
+    success: false,
+    error,
+    completedAt: timestamp,
+    changedFiles: [],
+    evidenceReceipts: [],
+  };
 }
 
 function openClawSourcePrompt(action, agentId) {
@@ -710,8 +870,44 @@ export async function executeOpenClawLocalAction(action, claim, options = {}) {
 
 export async function executeOpenClawReadonlyAction(action, claim, options = {}) {
   if (action?.actionKind !== 'agent-handoff' || action.adapter !== 'openclaw-readonly') throw new Error('Unsupported OpenClaw read-only worker action.');
-  if (options.actionGrant?.issueNumber === OPENCLAW_OC1_ISSUE) {
-    const grant = options.actionGrant;
+  const grant = options.actionGrant;
+  const grantOperation = text(grant?.operation).toLowerCase();
+  if (grant?.issueNumber === OPENCLAW_OC2_ISSUE && grantOperation === OPENCLAW_OC2_OPERATION) {
+    // The canonical queue action and the retained grant must describe the
+    // same fixed OC2 task before a Gateway toolCall is allowed.
+    if (text(action?.actionId).toLowerCase() !== text(grant?.actionId).toLowerCase()
+        || text(action?.missionId).toLowerCase() !== text(grant?.missionId).toLowerCase()
+        || text(action?.repository) !== text(grant?.repository)
+        || text(action?.operation).toLowerCase() !== grantOperation
+        || text(action?.actionKind) !== text(grant?.actionKind)
+        || text(action?.adapter) !== text(grant?.adapter)) {
+      return gatewayFailure('OPENCLAW_OC2_ACTION_GRANT_MISMATCH', completedAt(options));
+    }
+    const request = {
+      schemaVersion: OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA,
+      actionGrant: grant,
+    };
+    const run = options.runCommand || defaultRun;
+    const timestamp = completedAt(options);
+    const command = run(options.openClawExecutable || process.env.STEPHANOS_OPENCLAW_EXECUTABLE || 'openclaw.cmd', [
+      'gateway', 'call', OPENCLAW_OC2_GATEWAY_METHOD,
+      '--params', JSON.stringify(request),
+      '--timeout', '120000',
+      '--json',
+    ], { cwd: text(action.repositoryRoot) || undefined, env: options.env || process.env });
+    const stdout = command.stdout || '';
+    const stderr = command.stderr || '';
+    if (command.error || command.status !== 0) {
+      return gatewayFailure(command.error?.message || stderr || stdout || `OpenClaw OC2 Gateway call exited with code ${command.status}.`, timestamp);
+    }
+    const payload = openClawOc2GatewayPayload(stdout);
+    if (!validateOpenClawOc2GatewayPayload(payload, grant)) {
+      return gatewayFailure('OPENCLAW_OC2_GATEWAY_RESULT_LINEAGE_INVALID', timestamp);
+    }
+    return payload.result;
+  }
+  if (grant?.issueNumber === OPENCLAW_OC1_ISSUE) {
+    if (grantOperation) return gatewayFailure('OPENCLAW_OC1_OPERATION_NOT_ALLOWLISTED', completedAt(options));
     const request = {
       schemaVersion: OPENCLAW_OC1_GATEWAY_REQUEST_SCHEMA,
       actionGrant: grant,
@@ -727,23 +923,11 @@ export async function executeOpenClawReadonlyAction(action, claim, options = {})
     const stdout = command.stdout || '';
     const stderr = command.stderr || '';
     if (command.error || command.status !== 0) {
-      return {
-        success: false,
-        error: command.error?.message || stderr || stdout || `OpenClaw OC1 Gateway call exited with code ${command.status}.`,
-        completedAt: timestamp,
-        changedFiles: [],
-        evidenceReceipts: [],
-      };
+      return gatewayFailure(command.error?.message || stderr || stdout || `OpenClaw OC1 Gateway call exited with code ${command.status}.`, timestamp);
     }
     const payload = openClawOc1GatewayPayload(stdout);
     if (!validateOpenClawOc1GatewayPayload(payload, grant)) {
-      return {
-        success: false,
-        error: 'OPENCLAW_OC1_GATEWAY_RESULT_LINEAGE_INVALID',
-        completedAt: timestamp,
-        changedFiles: [],
-        evidenceReceipts: [],
-      };
+      return gatewayFailure('OPENCLAW_OC1_GATEWAY_RESULT_LINEAGE_INVALID', timestamp);
     }
     return payload.result;
   }
