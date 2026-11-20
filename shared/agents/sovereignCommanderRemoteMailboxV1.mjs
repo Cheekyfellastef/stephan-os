@@ -2276,7 +2276,7 @@ function safeMaintenanceFailureProjection(value = {}, expectedAction = '') {
   });
 }
 
-function safeStarfieldVrResourcePreflightProjection(value = {}) {
+export function safeStarfieldVrResourcePreflightProjection(value = {}) {
   const failureEnvelope = findFailedMaintenanceExecutionEnvelope(value);
   const executionEnvelope = findMaintenanceExecutionEnvelope(value);
   const source = Object.keys(failureEnvelope).length > 0
@@ -2285,7 +2285,9 @@ function safeStarfieldVrResourcePreflightProjection(value = {}) {
   const structured = source?.structuredContent && typeof source.structuredContent === 'object'
     ? source.structuredContent
     : {};
-  const status = Number(structured?.status);
+  const rawStatus = structured?.status;
+  // A missing, boolean or textual native child status is not proof of exit zero.
+  const status = Number.isSafeInteger(rawStatus) ? rawStatus : null;
   const stdout = String(structured?.stdout || '').trim();
   const stderr = String(structured?.stderr || '').trim();
   let parsed = null;
