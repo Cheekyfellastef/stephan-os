@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+// Exercise PR #2443's beacon/worker cadence and Core custody regression in the existing Windows watchdog proof lane.
+import './battle-bridge-github-api-traffic-conservation.test.mjs';
 
 const installPath = new URL('./windows/install-battle-bridge-worker-watchdog.ps1', import.meta.url);
 const statusPath = new URL('./windows/status-battle-bridge-worker-watchdog.ps1', import.meta.url);
