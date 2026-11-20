@@ -92,10 +92,32 @@ add('untrusted hold envelope',{governorReceipt:{...gamingHold('native-capacity-g
 add('governor read failure',{governorThrow:true,
   governorHoldCode:'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',expectedInspections:0},
   'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+const governorPermission=Object.freeze({observedAtUtc:'2026-11-20T21:08:15.000Z',
+  failed:Object.freeze(['LOAD','LOCAL_MODEL','HEAVY_MODEL'])});
+const permissionReceipt=Object.freeze({...gamingHold('native-capacity-gaming-permission-denied'),governorPermission});
+add('initial permission denial preserves the producer sample',{governorReceipt:permissionReceipt,
+  governorPermission,governorHoldCode:'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED',
+  expectedInspections:0,expectedGovernorReads:1},'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+add('terminal permission denial preserves the terminal producer sample',{row:success,status:0,
+  governorTerminalReceipt:permissionReceipt,governorPermission,
+  governorHoldCode:'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED',expectedGovernorReads:2},
+  'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+for(const [suffix,code] of [['observation-stale','FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE'],
+  ['prepare-pending','FIXED_RUNTIME_GOVERNOR_PREPARE_PENDING']]) {
+  add(suffix+' cannot carry permission detail',{governorReceipt:{...gamingHold('native-capacity-gaming-'+suffix),
+    governorPermission:privateText},governorHoldCode:code,expectedInspections:0,expectedGovernorReads:1},
+    'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+}
+add('foreign denial cannot carry permission detail',{governorReceipt:{...permissionReceipt,
+  finalVerdict:'FOREIGN_GOVERNOR',governorPermission:privateText},
+  governorHoldCode:'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',expectedInspections:0,expectedGovernorReads:1},
+  'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+cases.push({name:'positive admission does not carry permission diagnostics',row:success,status:0,ok:true,
+  governorReceipt:{ok:true,governorPermission:privateText},expectedGovernorReads:2});
 cases.push({name:'unchanged positive inventory',row:success,status:0,ok:true});
 
 for(const entry of cases) {
-  let inspections=0,executions=0;
+  let inspections=0,executions=0,governorReads=0;
   const context=vm.createContext({Buffer,TextDecoder,performance,setTimeout,clearTimeout,setInterval,clearInterval,
     AbortController,process:{platform:'win32',pid:12345,env:{}}});
   const pending={SchemaVersion:'stephanos.fixed-runtime-pending.v1',SourceHead:entry.pendingChange==='head'?'d'.repeat(40):head,
@@ -125,7 +147,12 @@ for(const entry of cases) {
   };
   const mocks={'node:child_process':{spawn:()=>{executions++;throw new Error('EXECUTION_NOT_PERMITTED_IN_FIXTURE');},spawnSync},
     'node:crypto':{createHash},'node:fs':fs,'node:path':{dirname:win32.dirname,join:win32.join},
-    '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs':{inspectStephanosNativeCapacityGamingAdmissionV1:()=>entry.governorThrow?fail('EACCES'):(entry.governorReceipt??{ok:true})},
+    '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs':{inspectStephanosNativeCapacityGamingAdmissionV1:()=>{
+      governorReads++;
+      if(entry.governorThrow)return fail('EACCES');
+      return governorReads===2 && entry.governorTerminalReceipt
+        ? entry.governorTerminalReceipt : (entry.governorReceipt??{ok:true});
+    }},
     '../shared/agents/battleBridgeExecutionBoundaryV1.mjs':{createBattleBridgeMinimalChildEnvironment:()=>({}),
       resolveBattleBridgeGitExecution:()=>({executable:'FIXTURE_GIT',fixedConfigArgs:[],environment:{}})},
     '../shared/agents/battleBridgeGitProbeContextV1.mjs':{createBattleBridgeGitProbeContextV1:()=>({assert(){},close(){},repositoryArgs:()=>[]}),isBattleBridgeGitProbeContextV1:()=>true},
@@ -143,11 +170,17 @@ for(const entry of cases) {
   assert.equal(result.ok,entry.ok===true,entry.name);
   assert.equal(Object.isFrozen(result),true,entry.name);
   assert.equal(inspections,entry.expectedInspections??1,entry.name);
+  if(entry.expectedGovernorReads)assert.equal(governorReads,entry.expectedGovernorReads,entry.name);
   assert.equal(JSON.stringify(result).includes(privateText),false,entry.name);
   assert.equal(Object.hasOwn(result,'stdout'),false,entry.name);
   assert.equal(Object.hasOwn(result,'stderr'),false,entry.name);
   if(entry.governorHoldCode)assert.equal(result.governorHoldCode,entry.governorHoldCode,entry.name);
   else assert.equal(Object.hasOwn(result,'governorHoldCode'),false,entry.name);
+  if(entry.governorPermission) {
+    assert.equal(result.governorPermission,entry.governorPermission,entry.name);
+    assert.equal(Object.isFrozen(result.governorPermission),true,entry.name);
+    assert.equal(Object.isFrozen(result.governorPermission.failed),true,entry.name);
+  } else assert.equal(Object.hasOwn(result,'governorPermission'),false,entry.name);
   if(entry.ok) {
     assert.equal(result.sourceHead,head,entry.name);
     assert.equal(result.dispatchAllowed,true,entry.name);
@@ -161,6 +194,7 @@ for(const entry of cases) {
       {onPrepared:()=>true});
     assert.equal(attempted.reason,'FIXED_RUNTIME_FRESH_QUALIFICATION_REQUIRED',entry.name);
     assert.equal(attempted.dispatchAllowed,false,entry.name);
+    assert.equal(Object.hasOwn(attempted,'governorPermission'),false,entry.name);
   }
   assert.equal(executions,0,entry.name);
 }

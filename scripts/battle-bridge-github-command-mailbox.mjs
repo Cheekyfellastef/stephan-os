@@ -74,7 +74,7 @@ import { inspectHistoricalMailboxTerminal, projectHistoricalTerminalAttestation,
   HISTORICAL_TERMINAL_ATTESTATION_VERDICT } from '../shared/agents/mailboxHistoricalTerminalAttestationV1.mjs';
 import { executeMailboxRotationOnHost, readMailboxAuthorityLiteral, verifyMailboxRotationActivationPull } from './canonical-mailbox-rotation-host-v1.mjs';
 import { buildMailboxRotationFence, findMailboxRotationFence } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
-import { inventoryMailboxRotationExecution } from './canonical-mailbox-action-evidence-v2.mjs';
+import { inventoryMailboxRotationExecution, collectMailboxActionProofsNative } from './canonical-mailbox-action-evidence-v2.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
 import {
@@ -3617,6 +3617,7 @@ function publishRotationFence(record, proof) {
 
 function readRotationActions(record) {
   return inventoryMailboxRotationExecution({activationHead:record?.cutoverHead,
+    collectProofs:collectMailboxActionProofsNative,
     read:path=>ghJson(['api',`repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/${path}`])});
 }
 

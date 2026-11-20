@@ -5,7 +5,7 @@ import { readJsonObject, resolveMailboxOutboxGuardLockPath } from './battle-brid
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import { mailboxActionsExecutionQuiescent } from '../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs';
-import { inventoryMailboxRotationExecution } from './canonical-mailbox-action-evidence-v2.mjs';
+import { inventoryMailboxRotationExecution, collectMailboxActionProofsNative } from './canonical-mailbox-action-evidence-v2.mjs';
 import { auditMailboxRotationComments, validateMailboxRotationRecord } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { readMailboxAuthorityLiteral, verifyMailboxRotationActivationPull } from './canonical-mailbox-rotation-host-v1.mjs';
 import { findMailboxRotationFence, parseMailboxRotationFenceBody, validateMailboxRotationFenceProof } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
@@ -86,7 +86,8 @@ export function preflightCanonicalMailboxRotationSync({ repoRoot, expectedHead =
     freeze: get(`issues/comments/${projected.freezeCommentId}`), command: get(`issues/comments/${projected.commandCommentId}`),
     receipt: get(`issues/comments/${projected.receiptCommentId}`),
   });
-  const actions = inventoryMailboxRotationExecution({read:get,activationHead:state.mailboxRotation.cutoverHead});
+  const actions = inventoryMailboxRotationExecution({read:get,activationHead:state.mailboxRotation.cutoverHead,
+    collectProofs:collectMailboxActionProofsNative});
   if (get('commits/main').sha !== mainHead) return { ok: false, blocker: 'MAILBOX_ROTATION_SYNC_MAIN_MOVED' };
   return evaluateMailboxRotationSyncPreflight({ state, predecessorComments,
     pull: get(`pulls/${state.mailboxRotation.cutoverPrNumber}`), authoritySource, mainHead, outboxLedger, fence, actions, now:new Date().toISOString() });

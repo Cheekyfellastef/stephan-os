@@ -18,6 +18,8 @@ import { SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1,
   SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1,
   sovereignControlSystemGovernorHoldCodeV1,
   sovereignControlSystemGovernorObservationCodeV1,
+  sovereignControlSystemOwnerDiagnosticCodeV1,
+  projectSovereignControlSystemGovernorPermissionV1,
   sovereignControlSystemDiagnosticCodeV1 } from '../shared/agents/sovereignControlSystemStatusV1.mjs';
 
 const REPOSITORY = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
@@ -460,7 +462,13 @@ export async function inspectSovereignControlSystemV1(options = {}) {
 
     const observeOwner = async () => {
       try { return { ok: true, value: validOwner(await deps.readOwner(), Date.parse(instant(deps.now))) }; }
-      catch (error) { return { ok: false, reason: diagnosticCode(error, 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN') }; }
+      catch (error) {
+        const reason = diagnosticCode(error, 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN');
+        return { ok: false, reason,
+          ...(reason === 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN' && Object.hasOwn(error, 'diagnosticCode')
+            ? { diagnosticCode: sovereignControlSystemOwnerDiagnosticCodeV1(
+              Object.getOwnPropertyDescriptor(error, 'diagnosticCode')?.value) } : {}) };
+      }
     };
     const before = await observeOwner();
     let health, healthTime, healthReason = '';
@@ -474,9 +482,12 @@ export async function inspectSovereignControlSystemV1(options = {}) {
     const after = await observeOwner();
     const same = before.ok && after.ok && ['pid', 'createdAtUtc', 'commandSha256', 'imageSha256']
       .every(key => before.value[key] === after.value[key]);
+    const ownerReason = same ? '' : before.ok && after.ok ? 'SOVEREIGN_CONTROL_SYSTEM_OWNER_CHANGED'
+      : before.reason || after.reason || 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN';
     report.owner = { available: before.ok && after.ok, stable: same,
-      reason: same ? '' : before.ok && after.ok ? 'SOVEREIGN_CONTROL_SYSTEM_OWNER_CHANGED'
-        : before.reason || after.reason || 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN',
+      reason: ownerReason,
+      ...(ownerReason === 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN' && (before.diagnosticCode || after.diagnosticCode)
+        ? { diagnosticCode: before.diagnosticCode || after.diagnosticCode } : {}),
       ...(after.ok ? { observedAtUtc: after.value.observedAtUtc } : {}),
       before, after };
     if (same && protocolRead.status === 'fulfilled') {
@@ -492,10 +503,18 @@ export async function inspectSovereignControlSystemV1(options = {}) {
     // Its private qualification object is deliberately discarded, never executed.
     try {
       const native = dataRecord(await deps.inspectRuntime()), observedAtUtc = instant(deps.now);
-      if (native.ok === false) report.nativeRuntime = { available: true, qualificationObserved: false,
-        reason: sovereignControlSystemDiagnosticCodeV1(native.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN'), observedAtUtc,
-        ...(native.reason === 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD'
-          ? { governorHoldCode: sovereignControlSystemGovernorHoldCodeV1(native.governorHoldCode) } : {}) };
+      if (native.ok === false) {
+        const governorHoldCode = native.reason === 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD'
+          ? sovereignControlSystemGovernorHoldCodeV1(native.governorHoldCode) : '';
+        const governorPermission = governorHoldCode === 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED'
+          && (!Object.hasOwn(native, 'sourceHead') || native.sourceHead === sourceHead)
+          && Object.hasOwn(native, 'governorPermission')
+          ? projectSovereignControlSystemGovernorPermissionV1(native.governorPermission, observedAtUtc) : null;
+        report.nativeRuntime = { available: true, qualificationObserved: false,
+          reason: sovereignControlSystemDiagnosticCodeV1(native.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN'), observedAtUtc,
+          ...(governorHoldCode ? { governorHoldCode } : {}),
+          ...(governorPermission ? { governorPermission } : {}) };
+      }
       else if (native.ok === true && native.sourceHead === sourceHead && utc(native.observedAtUtc)
         && Date.parse(native.observedAtUtc) <= Date.parse(observedAtUtc)
         && Date.parse(observedAtUtc) - Date.parse(native.observedAtUtc) <= 15000
@@ -535,7 +554,9 @@ export async function inspectSovereignControlSystemV1(options = {}) {
       report.nativeRuntime.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED';
       delete report.nativeRuntime.profiles;
       delete report.nativeRuntime.governorHoldCode;
+      delete report.nativeRuntime.governorPermission;
       if (report.governorObservation) report.governorObservation = governorUnavailable(report.source.reason);
+      delete report.owner.diagnosticCode;
     }
     report.observationCompleted = report.source.stable && (report.nativeRuntime.available || report.guardian.available);
     report.blocker = report.source.reason || report.owner.reason || report.guardian.blocker

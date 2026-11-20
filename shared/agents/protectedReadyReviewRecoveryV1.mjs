@@ -1,14 +1,13 @@
 // Original #1802 / #2961: pure, fail-closed classification for an accidental
 // draft-state interleave during a protected one-use READY review. This helper
 // does NOT dispatch a review, change a PR, approve a merge or mint an owner grant.
-import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 export const READY_REVIEW_RECOVERY_SCHEMA = 'stephanos.protected-ready-review-recovery.v1';
 export const READY_REVIEW_DRAFT_INTERLEAVE_CODE = 'CURRENT_PR_HEAD_TREE_BASE_OR_DRAFT_CHANGED';
 export const READY_REVIEW_RECOVERY_STEP = 'Review ready head with the unchanged engine and qualified escalation';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SHA40 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
-const MAILBOX_ISSUE = CANONICAL_MAILBOX_ISSUE;
+const MAILBOX_ISSUE = 3258;
 const OPERATOR = 'Cheekyfellastef';
 const MAX_AUTHOR_WINDOW_MS = 10 * 60 * 1000;
 
