@@ -89,7 +89,7 @@ test('actual generated immutable loader executes captured fixture bytes and refu
 });
 test('three new files do not change or join the fixed-runtime closure',()=>{
   const closure=JSON.parse(readFileSync(new URL('../shared/agents/sovereignFixedRuntimeSourceClosureV1.json',import.meta.url)));
-  assert.equal(closure.paths.length,300);
+  assert.equal(closure.paths.length,302);
   for(const p of [FACTORY,ENTRY,FACTORY.replace('.mjs','.test.mjs')])assert.equal(closure.paths.includes(p),false,p);
 });
 test('actual preparation capture accepts only installed host.exe + pending.json; embedded manifest is a commitment',()=>{
