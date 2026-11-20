@@ -575,13 +575,13 @@ test('native reconcile pins full bootstrap and complete stop/start task identity
     assert.ok(recon.includes(field), 'missing fixed task check for ' + field);
   }
   assert.match(recon, /\$candidateSid -ne \$callerSid/);
-  assert.match(recon, /\$preMutationTask = Get-ScheduledTask -TaskName \$taskName -ErrorAction Stop/);
-  assert.match(recon, /Assert-FixedPublisherTaskIdentity \$preMutationTask \\(\[string\]\$action\\.Arguments\\)/);
-  assert.match(recon, /NATIVE_RECONCILE_TASK_STATE_UNPROVEN/);
-  assert.match(recon, /if \\(\$preMutationState -eq 'Running'\\)/);
-  assert.doesNotMatch(recon, /if \\(\[string\]\$task\\.State -eq 'Running'\\)/);
-  assert.match(recon, /Assert-FixedPublisherTaskIdentity \$stillRegistered/);
-  assert.match(recon, /NATIVE_RECONCILE_TASK_RUNNING_BEFORE_RESTART/);
+  assert.ok(recon.includes('$preMutationTask = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop'));
+  assert.ok(recon.includes('Assert-FixedPublisherTaskIdentity $preMutationTask ([string]$action.Arguments)'));
+  assert.ok(recon.includes('NATIVE_RECONCILE_TASK_STATE_UNPROVEN'));
+  assert.ok(recon.includes("if ($preMutationState -eq 'Running')"));
+  assert.ok(!recon.includes("if ([string]$task.State -eq 'Running')"));
+  assert.ok(recon.includes('Assert-FixedPublisherTaskIdentity $stillRegistered'));
+  assert.ok(recon.includes('NATIVE_RECONCILE_TASK_RUNNING_BEFORE_RESTART'));
   const fenceIndex = recon.indexOf('[System.IO.File]::Open($fencePath');
   const liveIndex = recon.indexOf('$preMutationTask = Get-ScheduledTask');
   const stopIndex = recon.indexOf('Stop-ScheduledTask -TaskName $taskName -ErrorAction Stop');
