@@ -299,7 +299,7 @@ test('Qwen canary never emits a global unload without authenticated model owners
       if (mode === 'transportError') throw new Error('synthetic transport error');
       if (mode === 'chat503') return { ok: false, status: 503 };
       return { ok: true, json: async () => ({
-        model: 'qwen3.5:27b', message: { content: 'QWEN35_CANARY_OK' },
+        model: 'qwen3.5:27b', done: true, message: { content: 'QWEN35_CANARY_OK' },
       }) };
     };
     await execute(() => JSON.stringify(state), () => '/virtual',
@@ -360,7 +360,7 @@ test('Qwen 27B canary cancels on in-flight VR transition or stale governor and n
       }
       return { ok: true, json: async () => {
         if (mode === 'response-parse') gaming();
-        return { model: 'qwen3.5:27b', message: { content: 'QWEN35_CANARY_OK' } };
+        return { model: 'qwen3.5:27b', done: true, message: { content: 'QWEN35_CANARY_OK' } };
       } };
     };
     await run(() => JSON.stringify(state), () => '/virtual',
@@ -384,6 +384,62 @@ test('Qwen 27B canary cancels on in-flight VR transition or stale governor and n
       assert.equal(aborted, true, mode);
     }
     assert.equal(requests.includes('generate'), false, mode);
+  }
+});
+
+test('Qwen 27B canary rejects mismatched, incomplete and coerced local responses', async () => {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const body = qwen35Canary.replace(/^#![^\n]*\n/, '').replace(/^import [^\n]*\n/gm, '');
+  const run = new AsyncFunction('readFileSync', 'homedir', 'resolve', 'process',
+    'classifyQwen35CanaryGovernorV1', 'fetch', 'AbortController',
+    'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', body);
+  const safe = () => ({
+    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    governorVersion: 3, phase: 'NORMAL', updatedAtUtc: new Date().toISOString(),
+    active: false, flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false,
+    prepareLeaseActive: false, nativeProbeCustodyHeld: false,
+    dependencyObservationKnown: true, evictionHealthy: true,
+    localModelAllowed: true, heavyModelAllowed: true,
+  });
+  const good = { model: 'qwen3.5:27b', done: true,
+    message: { content: 'QWEN35_CANARY_OK' } };
+  const cases = [
+    ['exact-identity-complete', good, true, 'QWEN35_CANARY_GREEN'],
+    ['different-model', { ...good, model: 'qwen3:27b' }, false, 'QWEN35_CANARY_MODEL_IDENTITY_UNPROVEN'],
+    ['model-absent', { done: true, message: good.message }, false, 'QWEN35_CANARY_MODEL_IDENTITY_UNPROVEN'],
+    ['model-null', { ...good, model: null }, false, 'QWEN35_CANARY_MODEL_IDENTITY_UNPROVEN'],
+    ['completion-absent', { model: good.model, message: good.message }, false, 'QWEN35_CANARY_COMPLETION_UNPROVEN'],
+    ['completion-false', { ...good, done: false }, false, 'QWEN35_CANARY_COMPLETION_UNPROVEN'],
+    ['completion-string', { ...good, done: 'true' }, false, 'QWEN35_CANARY_COMPLETION_UNPROVEN'],
+    ['wrong-marker', { ...good, message: { content: 'WRONG' } }, false, 'QWEN35_CANARY_RESPONSE_MISMATCH'],
+    ['json-array-marker', { ...good, message: { content: ['QWEN35_CANARY_OK'] } }, false, 'QWEN35_CANARY_RESPONSE_MISMATCH'],
+    ['json-nested-array', { ...good, message: { content: [['QWEN35_CANARY_OK']] } }, false, 'QWEN35_CANARY_RESPONSE_MISMATCH'],
+    ['json-empty-prefix', { ...good, message: { content: ['', 'QWEN35_CANARY_OK'] } }, false, 'QWEN35_CANARY_RESPONSE_MISMATCH'],
+    ['json-null', { ...good, message: { content: null } }, false, 'QWEN35_CANARY_RESPONSE_MISMATCH'],
+    ['json-number', { ...good, message: { content: 0 } }, false, 'QWEN35_CANARY_RESPONSE_MISMATCH'],
+    ['whitespace', { ...good, message: { content: '  QWEN35_CANARY_OK  ' } }, true, 'QWEN35_CANARY_GREEN'],
+  ];
+  for (const [name, reply, expected, verdict] of cases) {
+    const outputs = [], calls = [];
+    const proc = { stdout: { write(s) { outputs.push(JSON.parse(s)); } }, exitCode: undefined };
+    const fetchStub = async (url) => {
+      const path = url.endsWith('/tags') ? 'tags' : 'chat';
+      calls.push(path);
+      return path === 'tags' ? { ok: true, json: async () => ({ models: [{ name: 'qwen3.5:27b' }] }) }
+        : { ok: true, json: async () => JSON.parse(JSON.stringify(reply)) };
+    };
+    const AbortStub = class { constructor() { this.signal = {}; } abort() {} };
+    await run(() => JSON.stringify(safe()), () => '/virtual', () => '/virtual/governor',
+      proc, classifyQwen35CanaryGovernorV1, fetchStub, AbortStub,
+      () => 1, () => {}, () => ({ unref() {} }), () => {});
+    assert.deepEqual(calls, ['tags', 'chat'], name);
+    assert.equal(outputs.length, 1, name);
+    assert.equal(outputs[0].ok, expected, name);
+    assert.equal(outputs[0].finalVerdict, verdict, name);
+    assert.equal(outputs[0].completionProven, reply.done === true, name);
+    assert.equal(outputs[0].requestedModel, 'qwen3.5:27b', name);
+    assert.equal(proc.exitCode, expected ? undefined : 3, name);
   }
 });
 
