@@ -1,6 +1,9 @@
 import test from 'node:test';
 // Exercise original #2002 capacity-accounting regressions in existing hosted Node proof.
 import './goalBuildingAgentV1.hardening.test.mjs';
+// Existing surface-ignition CI entry also exercises the full Stephanos AI recovery
+// suite; no security-sensitive GitHub workflow mutation or additional trust route.
+import '../../tests/stephanos-ai-ipad-scroll-bridge.test.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
@@ -124,7 +127,10 @@ test('stateful suites remain serial only inside their isolated parallel job', as
   // Preserve main's Seed Forge read-only integration expectations alongside reviewer jobs.
   assert.doesNotMatch(workflow, /Run Seed Forge physical Git fixture integration/);
   assert.match(workflow, /shared\/runtime\/upliftWorkspaceProjectionV1\.test\.mjs/);
+  // The protected five-job workflow remains exactly the trusted main definition.
+  // The existing surface-ignition entry imports the recovery tests above.
   assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 5);
+  assert.doesNotMatch(workflow, /name: Prove Stephanos AI iPad recovery and canonical memory/);
   assert.doesNotMatch(workflow, /# These stateful routing suites share process-global fixtures/);
 });
 

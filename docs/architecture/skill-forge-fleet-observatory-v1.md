@@ -58,3 +58,21 @@ A GitHub CI pass proves source quality. Successful source tests do **not** prove
 OpenClaw references:
 - https://docs.openclaw.ai/tools/creating-skills
 - https://docs.openclaw.ai/skills
+
+
+## Canonical Sovereign Skill Conjurer drafts
+
+The existing deluxe Skill Forge blueprint library also projects **uninstalled**
+draft packets from the canonical `sovereign-commander-capability-parity-current`
+Shared Workspace status under goal #2573. This is read-only presentation, not
+a new skill registry, approval queue, scheduler or build lane.
+
+The projection requires the exact Conjurer compiler schema, canonical goal
+identity, explicit no-execution/no-activation flags and draft status. It
+retains source freshness separately, displaying stale records as stale instead
+of presenting them as installed abilities. Native self-discovery gap counts and
+Remote Commander parity gap counts remain distinct.
+
+A draft in the observatory is not evidence of a trained actor, reviewed source,
+merged executable, installed tool or successful live Battle Bridge acceptance.
+Those milestones continue through the existing approval and proof fabric.

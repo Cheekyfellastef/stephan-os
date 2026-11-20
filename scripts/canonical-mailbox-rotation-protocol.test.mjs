@@ -262,6 +262,7 @@ test('A→B→C keeps one durable execution identity and successor proof derives
   const root=sandbox(t),ledger=createMailboxExecutionLedger(root),source=readFileSync(new URL('../shared/agents/canonicalMailboxRotationV1.mjs',import.meta.url),'utf8');
   const authoritySource=readFileSync(new URL('../shared/agents/canonicalMailboxAuthorityV1.mjs',import.meta.url),'utf8');
   writeFileSync(join(root,'canonicalMailboxRotationActionEvidenceV1.mjs'),readFileSync(new URL('../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs',import.meta.url),'utf8'));
+  writeFileSync(join(root,'mailboxHistoricalTerminalAttestationV1.mjs'),readFileSync(new URL('../shared/agents/mailboxHistoricalTerminalAttestationV1.mjs',import.meta.url),'utf8'));
   let predecessor=current,retired=readMailboxAuthorityLiteral(authoritySource).retired;
   for (const [i,epoch] of [current+1000,current+2000].entries()) {
     const a=join(root,`authority-${i}.mjs`),r=join(root,`rotation-${i}.mjs`);

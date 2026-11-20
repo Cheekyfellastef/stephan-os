@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from './sovereignMaintenanceAdmissionV1.mjs';
+import { MAINTENANCE_OWNER_DIAGNOSTIC_CODES_V1 } from '../../scripts/sovereign-maintenance-owner-observation-v2.mjs';
 import { createControlTowerRequestObservationV1, projectControlTowerRequestObservationV1,
   CONTROL_TOWER_REQUEST_OBSERVATION_MAX_BYTES_V1 }
   from './controlTowerRequestObservationV1.mjs';
 import { fixture as controlTowerFixture } from './fixtures/controlTowerBuildV1.mjs';
 import { SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1, SOVEREIGN_CONTROL_SYSTEM_STATUS_SCHEMA_V1,
   SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1, projectSovereignControlSystemStatusV1,
-  sovereignControlSystemDiagnosticCodeV1, sovereignControlSystemGovernorObservationCodeV1 }
+  sovereignControlSystemDiagnosticCodeV1, sovereignControlSystemGovernorObservationCodeV1,
+  sovereignControlSystemOwnerDiagnosticCodeV1, projectSovereignControlSystemGovernorPermissionV1,
+  SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1 }
   from './sovereignControlSystemStatusV1.mjs';
 
 const HEAD = 'a'.repeat(40), NOW = '2026-10-31T13:00:00.000Z';
@@ -531,11 +534,14 @@ test('governor facts cannot survive source failure and do not inherit owner proo
   }
 });
 
-test('governor observation survives actual receipt readback with the original hash, time and byte bounds', () => {
-  const input = governorInspection();
-  input.owner = { available: false, stable: false, reason: 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN' };
+test('owner and governor diagnostics survive actual receipt readback with the original hash, time and byte bounds', () => {
+  const input = governorInspection('FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED');
+  input.owner = { available: false, stable: false, reason: 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN',
+    diagnosticCode: 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN' };
   input.guardian = { available: false, blocker: 'MAINTENANCE_CUSTODY_HELD' };
   input.governorObservation = governorObservation({ observedAtUtc: '2026-10-31T13:00:01.1234567Z' });
+  input.nativeRuntime.governorPermission = { observedAtUtc: '2026-10-31T12:59:29.000Z',
+    failed: [...SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1] };
   const status = projectSovereignControlSystemStatusV1(input), nowMs = Date.parse(NOW) + 2000;
   const bytes = JSON.stringify(status), observationProofHash = createHash('sha256').update(bytes).digest('hex');
   assert.ok(Buffer.byteLength(bytes) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
@@ -553,9 +559,11 @@ test('governor observation survives actual receipt readback with the original ha
     assert.equal(receipt.observationProofHash, observationProofHash);
     assert.equal(createHash('sha256').update(JSON.stringify(receipt.controlSystemStatus)).digest('hex'), observationProofHash);
     assert.equal(receipt.controlSystemStatus.governorObservation.observedAtUtc, '2026-10-31T13:00:01.123Z');
+    assert.equal(receipt.controlSystemStatus.owner.diagnosticCode, 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN');
     assert.equal(receipt.controlSystemStatus.owner.available, false);
     assert.equal(receipt.controlSystemStatus.nativeRuntime.qualificationObserved, false);
-    assert.equal(receipt.controlSystemStatus.nativeRuntime.governorHoldCode, 'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE');
+    assert.equal(receipt.controlSystemStatus.nativeRuntime.governorHoldCode, 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED');
+    assert.deepEqual(receipt.controlSystemStatus.nativeRuntime.governorPermission, input.nativeRuntime.governorPermission);
     assert.equal(receipt.wakeProofHash, ''); assert.equal(receipt.nativePickupProven, false);
     assert.ok(Buffer.byteLength(JSON.stringify(receipt)) <= CONTROL_TOWER_REQUEST_OBSERVATION_MAX_BYTES_V1);
   }
@@ -574,4 +582,162 @@ test('governor extension keeps the 2048-byte bound with explicit overflow, never
   assert.equal(result.blocker, 'SOVEREIGN_CONTROL_SYSTEM_STATUS_BOUND_EXCEEDED');
   assert.equal(result.observationCompleted, false);
   assert.deepEqual(projectSovereignControlSystemStatusV1(result), result);
+});
+
+test('closed owner failure detail covers the native vocabulary without changing custody or admission', () => {
+  const input = governorInspection();
+  input.owner = { available: false, stable: false, reason: 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN' };
+  input.guardian = { available: false, blocker: 'MAINTENANCE_CUSTODY_HELD' };
+  input.governorObservation = governorObservation();
+  const baseline = projectSovereignControlSystemStatusV1(input);
+  assert.equal(Object.hasOwn(baseline.owner, 'diagnosticCode'), false);
+  assert.ok(MAINTENANCE_OWNER_DIAGNOSTIC_CODES_V1.includes('OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN'));
+  for (const code of MAINTENANCE_OWNER_DIAGNOSTIC_CODES_V1) {
+    input.owner.diagnosticCode = code;
+    const projected = projectSovereignControlSystemStatusV1(input);
+    assert.equal(sovereignControlSystemOwnerDiagnosticCodeV1(code), code);
+    assert.equal(sovereignControlSystemDiagnosticCodeV1(code), 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN');
+    assert.equal(projected.owner.diagnosticCode, code);
+    const { diagnosticCode, ...owner } = projected.owner;
+    assert.deepEqual({ ...projected, owner }, baseline);
+    assert.equal(projected.owner.available, false); assert.equal(projected.owner.stable, false);
+    assert.equal(projected.owner.reason, 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+    assert.equal(projected.guardian.blocker, 'MAINTENANCE_CUSTODY_HELD');
+    assert.equal(projected.nativeRuntime.qualificationObserved, false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(projected))), projected);
+    assert.ok(Buffer.byteLength(JSON.stringify(projected)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+  }
+});
+
+test('owner diagnostics exclude private content, accessors, positive identity and mismatched source', () => {
+  let invoked = 0;
+  for (const diagnosticCode of ['PRIVATE_TOKEN', 'C:\\PRIVATE\\node.exe', 'OWNER_PRIVATE_TOKEN', 'x'.repeat(10000),
+    undefined, null, [], {}, 0, true, { toString() { invoked++; return 'OWNER_NATIVE_ACCESS_DENIED'; } }]) {
+    const input = governorInspection();
+    input.owner = { available: false, stable: false, reason: 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN', diagnosticCode };
+    const projected = projectSovereignControlSystemStatusV1(input);
+    assert.equal(projected.owner.diagnosticCode, 'OWNER_OBSERVER_INVALID_RECEIPT');
+    assert.equal(JSON.stringify(projected).includes('PRIVATE'), false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(projected), projected);
+  }
+  for (const alter of [row => { row.owner.available = true; }, row => { row.owner.stable = true; },
+    row => { row.owner.available = 'false'; }, row => { row.owner.stable = 'false'; },
+    row => { row.owner.reason = 'SOVEREIGN_CONTROL_SYSTEM_OWNER_CHANGED'; },
+    row => { row.source.available = false; }, row => { row.source.stable = false; },
+    row => { row.source.expectedMain = 'e'.repeat(40); },
+    row => { row.source.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED'; }]) {
+    const input = governorInspection();
+    input.owner = { available: false, stable: false, reason: 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN',
+      diagnosticCode: 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN' };
+    alter(input);
+    const projected = projectSovereignControlSystemStatusV1(input);
+    assert.equal(Object.hasOwn(projected.owner, 'diagnosticCode'), false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(projected), projected);
+  }
+  const positive = inspection(); positive.owner.diagnosticCode = 'OWNER_NATIVE_ACCESS_DENIED';
+  assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(positive).owner, 'diagnosticCode'), false);
+  const accessor = governorInspection();
+  accessor.owner = { available: false, stable: false, reason: 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN' };
+  Object.defineProperty(accessor.owner, 'diagnosticCode', { get() { invoked++; return 'PRIVATE_TOKEN'; } });
+  assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(accessor).owner, 'diagnosticCode'), false);
+  assert.equal(invoked, 0);
+});
+
+test('permission causes retain only original bounded time and a canonical nonempty failed-predicate set', () => {
+  const predicates = SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1;
+  assert.deepEqual(predicates, ['PHASE', 'OVERRIDE', 'LOAD', 'COOLDOWN', 'ACTIVE', 'FLAT_GAME', 'AIR_LINK',
+    'REAL_AIR_LINK', 'VIRTUAL_AIR_LINK', 'PREPARE_LEASE', 'LOCAL_MODEL', 'HEAVY_MODEL']);
+  for (const failed of [predicates, ['PHASE'], ['HEAVY_MODEL'], ['OVERRIDE', 'COOLDOWN', 'REAL_AIR_LINK']]) {
+    const input = governorInspection('FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED');
+    const baseline = projectSovereignControlSystemStatusV1(input);
+    input.nativeRuntime.governorPermission = { observedAtUtc: '2026-10-31T12:59:29.1234567Z', failed };
+    const projected = projectSovereignControlSystemStatusV1(input);
+    const { governorPermission, ...nativeRuntime } = projected.nativeRuntime;
+    assert.deepEqual(governorPermission, { observedAtUtc: '2026-10-31T12:59:29.123Z', failed });
+    assert.deepEqual({ ...projected, nativeRuntime }, baseline);
+    assert.equal(Object.isFrozen(governorPermission), true); assert.equal(Object.isFrozen(governorPermission.failed), true);
+    assert.equal(projected.nativeRuntime.qualificationObserved, false);
+    assert.equal(projected.nativeRuntime.governorHoldCode, 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED');
+    assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(projected))), projected);
+  }
+  for (const age of [0, 30000, 31000, 45000]) {
+    const permission = { observedAtUtc: new Date(Date.parse(NOW) - age).toISOString(), failed: ['ACTIVE'] };
+    assert.deepEqual(projectSovereignControlSystemGovernorPermissionV1(permission, NOW), permission);
+  }
+  for (const age of [-1, 45001]) {
+    const permission = { observedAtUtc: new Date(Date.parse(NOW) - age).toISOString(), failed: ['ACTIVE'] };
+    assert.equal(projectSovereignControlSystemGovernorPermissionV1(permission, NOW), null);
+  }
+});
+
+test('permission causes reject private, malformed, accessor, inherited and noncanonical data without evaluation', () => {
+  let invoked = 0;
+  const permission = { observedAtUtc: NOW, failed: ['ACTIVE'] };
+  const accessor = { observedAtUtc: NOW };
+  Object.defineProperty(accessor, 'failed', { get() { invoked++; return ['PRIVATE_TOKEN']; } });
+  const arrayAccessor = [];
+  Object.defineProperty(arrayAccessor, '0', { get() { invoked++; return 'ACTIVE'; } });
+  const extraArray = ['ACTIVE']; extraArray.extra = 'PRIVATE_TOKEN';
+  const symbolArray = ['ACTIVE']; symbolArray[Symbol('PRIVATE_TOKEN')] = true;
+  const inheritedArray = ['ACTIVE']; Object.setPrototypeOf(inheritedArray, Object.create(Array.prototype));
+  const invalid = [null, [], Object.create(permission), accessor,
+    { ...permission, [Symbol('PRIVATE_TOKEN')]: true }, { ...permission, executionAuthority: true },
+    ...[null, 'ACTIVE', [], ['PRIVATE_TOKEN'], ['ACTIVE', 'ACTIVE'], ['HEAVY_MODEL', 'PHASE'],
+      ['ACTIVE', { toString() { invoked++; return 'HEAVY_MODEL'; } }], Array(1), arrayAccessor,
+      extraArray, symbolArray, inheritedArray].map(failed => ({ ...permission, failed })),
+    ...['PRIVATE_TOKEN', '2026-02-31T13:00:00Z', '2026-10-31T13:00:00+00:00',
+      '2026-10-31T13:00:00.001Z', '2026-10-31T12:59:14.999Z'].map(observedAtUtc => ({ ...permission, observedAtUtc })),
+  ];
+  const input = governorInspection('FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED');
+  const baseline = projectSovereignControlSystemStatusV1(input);
+  for (const value of invalid) {
+    input.nativeRuntime.governorPermission = value;
+    assert.equal(projectSovereignControlSystemGovernorPermissionV1(value, NOW), null);
+    const projected = projectSovereignControlSystemStatusV1(input);
+    assert.deepEqual(projected, baseline);
+    assert.equal(JSON.stringify(projected).includes('PRIVATE'), false);
+  }
+  assert.equal(projectSovereignControlSystemGovernorPermissionV1(permission, 'PRIVATE_TIME'), null);
+  assert.equal(invoked, 0);
+});
+
+test('permission causes require the original permission-denied hold and stable matching source', () => {
+  for (const alter of [row => { row.nativeRuntime.available = false; },
+    row => { row.nativeRuntime.qualificationObserved = true; },
+    row => { row.nativeRuntime.reason = 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING'; },
+    row => { row.nativeRuntime.governorHoldCode = 'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE'; },
+    row => { delete row.nativeRuntime.governorHoldCode; }, row => { delete row.nativeRuntime.observedAtUtc; },
+    row => { row.nativeRuntime.sourceHead = 'e'.repeat(40); }, row => { row.nativeRuntime.sourceHead = 'PRIVATE_HEAD'; },
+    row => { row.source.available = false; }, row => { row.source.stable = false; },
+    row => { row.source.expectedMain = 'e'.repeat(40); },
+    row => { row.source.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED'; }]) {
+    const input = governorInspection('FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED');
+    input.nativeRuntime.governorPermission = { observedAtUtc: NOW, failed: ['ACTIVE'] };
+    alter(input);
+    const projected = projectSovereignControlSystemStatusV1(input);
+    assert.equal(Object.hasOwn(projected.nativeRuntime, 'governorPermission'), false);
+    assert.equal(projected.nativeRuntime.qualificationObserved, false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(projected), projected);
+  }
+  const positive = inspection();
+  positive.nativeRuntime.governorHoldCode = 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED';
+  positive.nativeRuntime.governorPermission = { observedAtUtc: NOW, failed: ['ACTIVE'] };
+  assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(positive).nativeRuntime, 'governorPermission'), false);
+});
+
+test('permission detail preserves the 2048-byte bound through explicit overflow refusal', () => {
+  const input = governorInspection('FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED');
+  input.nativeRuntime.governorPermission = { observedAtUtc: NOW,
+    failed: [...SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1] };
+  input.protocol = protocol(['HTTP_OK', 'HEALTH_OK', 'SERVICE', 'OBSERVATION_SCOPE', 'NO_ADMISSION', 'OWNER_VERSION']);
+  input.governorObservation = governorObservation({ overrideMode: 'FORCE_OFF' });
+  const code = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
+  input.blocker = code;
+  for (const key of ['caller', 'owner', 'requestLedger']) input[key].reason = code;
+  input.guardian.blocker = code;
+  const projected = projectSovereignControlSystemStatusV1(input);
+  assert.equal(projected.blocker, 'SOVEREIGN_CONTROL_SYSTEM_STATUS_BOUND_EXCEEDED');
+  assert.equal(projected.observationCompleted, false);
+  assert.ok(Buffer.byteLength(JSON.stringify(projected)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+  assert.deepEqual(projectSovereignControlSystemStatusV1(projected), projected);
 });
