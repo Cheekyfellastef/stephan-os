@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+// PR #2493: run authority-read freshness and pinned executable regressions in hosted CI.
+import './recovery-mesh-guardian-github-observation.test.mjs';
 
 import {
   CHATGPT_SHARED_WORKSPACE_OWNER,

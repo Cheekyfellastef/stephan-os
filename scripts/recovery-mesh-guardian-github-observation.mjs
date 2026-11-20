@@ -6,6 +6,9 @@ import { readBrokeredGithubJson } from '../shared/agents/githubObservationBroker
 const MAIN_ENDPOINT = 'repos/Cheekyfellastef/stephan-os/branches/main';
 const COMPARE_PATTERN = /^repos\/Cheekyfellastef\/stephan-os\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})$/i;
 const SHA40 = /^[0-9a-f]{40}$/i;
+// The recovery guardian already verifies this same fixed Windows executable.
+// Never let PATH or STEPHANOS_GH_COMMAND select an authority-read binary.
+const PINNED_GITHUB_CLI = 'C:\\Program Files\\GitHub CLI\\gh.exe';
 
 export function resolveRecoveryGuardianGithubObservation(argv = []) {
   const [mode, command, endpoint, ...rest] = argv.map((value) => String(value));
@@ -49,9 +52,18 @@ export function runRecoveryGuardianGithubObservation({
     endpoint: request.endpoint,
     ttlMs: request.ttlMs,
     maxStaleMs: request.maxStaleMs,
+    ghCommand: PINNED_GITHUB_CLI,
   });
   if (!observed?.ok) {
     return Object.freeze({ ok: false, reason: observed?.reason || 'GUARDIAN_GITHUB_OBSERVATION_READ_FAILED' });
+  }
+  // Scheduled-task repair depends on current main identity. Expired broker data
+  // after an upstream failure or an in-flight refresh is not authority.
+  if (!['SHARED_CACHE', 'UPSTREAM_REFRESH'].includes(observed.source)
+    || !Number.isFinite(observed.ageMs)
+    || observed.ageMs < 0
+    || observed.ageMs > request.ttlMs) {
+    return Object.freeze({ ok: false, reason: 'GUARDIAN_GITHUB_AUTHORITY_SOURCE_NOT_FRESH' });
   }
   if (request.projection === 'MAIN_SHA') {
     const sha = String(observed.payload?.commit?.sha || '').trim().toLowerCase();
