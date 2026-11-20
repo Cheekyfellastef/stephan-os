@@ -4,6 +4,7 @@ import App from "./App";
 import { AIStoreProvider } from "./state/aiStore";
 import { buildApiUrl } from "./ai/apiConfig";
 import "./styles.css";
+import "../../shared/styles/stephanos-card-layout.css";
 import {
   STEPHANOS_UI_BOOT_LOG,
   STEPHANOS_UI_BUILD_METADATA,

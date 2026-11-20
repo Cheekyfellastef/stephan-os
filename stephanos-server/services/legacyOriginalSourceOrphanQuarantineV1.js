@@ -6,6 +6,9 @@ import { isAbsolute, relative, resolve } from 'node:path';
 export const LEGACY_ORPHAN_QUARANTINE_SCHEMA = 'stephanos.legacy-original-source-orphan-quarantine.v1';
 export const LEGACY_ORPHAN_WITNESS_DOMAIN = 'stephanos.legacy-orphan-os-witness.v1\0';
 export const LEGACY_ORPHAN_APPROVAL_DOMAIN = 'stephanos.legacy-orphan-operator-approval.v1\0';
+export const PROSPECTIVE_ORPHAN_QUARANTINE_SCHEMA = 'stephanos.original-source-prospective-quarantine.v1';
+export const PROSPECTIVE_ORPHAN_WITNESS_DOMAIN = 'stephanos.original-source-prospective-os-witness.v1\0';
+export const PROSPECTIVE_ORPHAN_APPROVAL_DOMAIN = 'stephanos.original-source-prospective-operator-approval.v1\0';
 const SHA40 = /^[a-f0-9]{40}$/;
 const SHA64 = /^[a-f0-9]{64}$/;
 const SID = /^S-1-[1-9][0-9]*(?:-[0-9]+){2,15}$/;
@@ -186,5 +189,149 @@ export async function authenticateLegacyOrphanQuarantine(
     });
   } catch {
     return failed('LEGACY_ORPHAN_ATTESTATION_UNOBSERVABLE');
+  }
+}
+
+
+const prospectiveFailed = reason => Object.freeze({
+  authenticated: false, classification: 'PROSPECTIVE_ORPHAN_QUARANTINE_HELD',
+  blocker: reason, eligibilityOnly: true,
+  processingClaimQuarantineAuthority: false,
+  leaseReleaseAuthority: false, sourceMutationAuthority: false,
+  materialPickupProven: false, goalComplete: false,
+});
+
+function prospectiveExecutionRevision(expected = {}) {
+  const missionId = text(expected.missionId);
+  const actionId = text(expected.sourceExecutionId);
+  const match = actionId.match(/^critical-([1-9][0-9]*)-elastic-goal-r(0|[1-9][0-9]*)-[a-f0-9]{12}$/);
+  return match && missionId === 'critical-' + match[1] + '-elastic-goal' ? Number(match[2]) : null;
+}
+
+// Eligibility-only prospective containment. It never reconstructs the historical
+// result. Two independently pinned signers must attest that the exact old writer
+// can no longer mutate source and that only the named processing claim may leave
+// active queue semantics while its bytes and UNKNOWN history stay preserved.
+export async function authenticateProspectiveOrphanQuarantine(
+  expected = {}, { env = process.env, now = () => Date.now() } = {},
+) {
+  try {
+    const executionRevision = prospectiveExecutionRevision(expected);
+    if (expected.repository !== ROOT_ID
+      || !/^critical-[1-9][0-9]*-elastic-goal$/.test(text(expected.missionId))
+      || executionRevision === null
+      || text(expected.sourceExecutionLeaseKey) !== expected.missionId + '-r' + executionRevision + '-lease'
+      || !Number.isSafeInteger(expected.missionRevision)
+      || expected.missionRevision !== executionRevision + 1
+      || !SHA64.test(text(expected.processingClaimSha256))
+      || !SHA40.test(text(expected.sourceRevision))
+      || !SHA40.test(text(expected.operatorSourceRevision))
+      || !isAbsolute(text(expected.worktreePath))
+      || !/^[a-z0-9._-]{8,127}$/.test(text(expected.commandId))
+      || !/^[a-z0-9._:-]{8,120}$/.test(text(expected.requestId))
+      || !text(expected.branch)) return prospectiveFailed('PROSPECTIVE_ORPHAN_EXACT_IDENTITY_UNPROVEN');
+
+    const receiptPath = text(env.STEPHANOS_PROSPECTIVE_ORPHAN_EVIDENCE_PATH);
+    const witnessPublicPath = text(env.STEPHANOS_PROSPECTIVE_ORPHAN_OS_WITNESS_PUBLIC_KEY_PATH);
+    const operatorPublicPath = text(env.STEPHANOS_PROSPECTIVE_ORPHAN_OPERATOR_PUBLIC_KEY_PATH);
+    const witnessHash = text(env.STEPHANOS_PROSPECTIVE_ORPHAN_OS_WITNESS_PUBLIC_KEY_SHA256);
+    const operatorHash = text(env.STEPHANOS_PROSPECTIVE_ORPHAN_OPERATOR_PUBLIC_KEY_SHA256);
+    if (![receiptPath, witnessPublicPath, operatorPublicPath].every(isAbsolute)
+      || !SHA64.test(witnessHash) || !SHA64.test(operatorHash) || witnessHash === operatorHash) {
+      return prospectiveFailed('PROSPECTIVE_ORPHAN_TRUST_ROOTS_UNPROVEN');
+    }
+
+    const home = await realpath(resolve(expected.worktreePath));
+    const configPaths = [receiptPath, witnessPublicPath, operatorPublicPath].map(x => resolve(x));
+    if (new Set(configPaths.map(x => x.toLowerCase())).size !== 3
+      || configPaths.some(x => inside(home, x))) return prospectiveFailed('PROSPECTIVE_ORPHAN_TRUST_PATHS_UNSAFE');
+    const realPaths = await Promise.all(configPaths.map(x => realpath(x)));
+    if (realPaths.some(x => inside(home, x))) return prospectiveFailed('PROSPECTIVE_ORPHAN_TRUST_PATHS_UNSAFE');
+    const [recordBytes, witnessBytes, operatorBytes] = await Promise.all([
+      boundedRegular(configPaths[0], 24 * 1024, realPaths[0]),
+      boundedRegular(configPaths[1], 4096, realPaths[1]),
+      boundedRegular(configPaths[2], 4096, realPaths[2]),
+    ]);
+    if (!recordBytes || !witnessBytes || !operatorBytes
+      || hash(witnessBytes) !== witnessHash || hash(operatorBytes) !== operatorHash) {
+      return prospectiveFailed('PROSPECTIVE_ORPHAN_TRUST_FILES_UNVERIFIED');
+    }
+
+    const witnessKey = createPublicKey(witnessBytes);
+    const operatorKey = createPublicKey(operatorBytes);
+    if (witnessKey.asymmetricKeyType !== 'ed25519' || operatorKey.asymmetricKeyType !== 'ed25519'
+      || witnessKey.export({ format: 'der', type: 'spki' })
+        .equals(operatorKey.export({ format: 'der', type: 'spki' }))) {
+      return prospectiveFailed('PROSPECTIVE_ORPHAN_TRUST_PRINCIPALS_NOT_INDEPENDENT');
+    }
+
+    const record = JSON.parse(recordBytes.toString('utf8'));
+    if (record?.schemaVersion !== PROSPECTIVE_ORPHAN_QUARANTINE_SCHEMA
+      || !verifiedSignature(record.osWitness, witnessKey, PROSPECTIVE_ORPHAN_WITNESS_DOMAIN)
+      || !verifiedSignature(record.operatorApproval, operatorKey, PROSPECTIVE_ORPHAN_APPROVAL_DOMAIN)) {
+      return prospectiveFailed('PROSPECTIVE_ORPHAN_ATTESTATIONS_UNAUTHENTICATED');
+    }
+    const w = record.osWitness.claims;
+    const a = record.operatorApproval.claims;
+    const clock = typeof now === 'function' ? now() : Date.now();
+    const start = timestamp(w.containmentEffectiveAtUtc);
+    const observed = timestamp(w.observedAtUtc);
+    const signed = timestamp(w.signedAtUtc);
+    const approved = timestamp(a.approvedAtUtc);
+    if (![clock, start, observed, signed, approved].every(Number.isFinite)
+      || start > observed || observed > signed || signed > approved || approved > clock
+      || clock - signed > MAX_AGE_MS || clock - approved > MAX_AGE_MS) {
+      return prospectiveFailed('PROSPECTIVE_ORPHAN_CURRENT_ATTESTATION_UNPROVEN');
+    }
+
+    const exactKeys = ['repository', 'missionId', 'sourceExecutionId', 'sourceExecutionLeaseKey',
+      'processingClaimSha256', 'branch', 'sourceRevision', 'operatorSourceRevision'];
+    if (exactKeys.some(key => w[key] !== expected[key])
+      || w.missionRevision !== expected.missionRevision
+      || resolve(text(w.worktreePath)) !== home
+      || w.historicalTerminalReceiptPresent !== false
+      || w.historicalTerminalReceiptReconstructed !== false
+      || w.historicalExecutionOutcome !== 'UNKNOWN'
+      || w.activeOriginalSourceWriters !== 0
+      || w.oldWriterAccessRevoked !== true || w.outOfJobExecutionRevoked !== true
+      || w.wmiComRelaunchDenied !== true || w.scheduledTaskRelaunchDenied !== true
+      || w.sourceWriteAccessDeniedToOriginalPrincipals !== true
+      || w.testedOldPrincipalWriteDenied !== true
+      || w.otherKnownWriterQueuesQuiesced !== true
+      || w.exactProcessingClaimQuarantinable !== true
+      || w.containmentRemainsEnforced !== true
+      || !SID.test(text(w.independentOsWitnessSid))
+      || !SHA64.test(text(w.osEvidenceDigest))
+      || !SHA64.test(text(w.denyAclPolicyDigest))
+      || !/^[a-z0-9._:-]{8,120}$/.test(text(w.protectedWitnessLogId))) {
+      return prospectiveFailed('PROSPECTIVE_ORPHAN_PHYSICAL_CONTAINMENT_UNPROVEN');
+    }
+
+    const witnessDigest = hash(Buffer.from(JSON.stringify(record.osWitness), 'utf8'));
+    if (a.repository !== ROOT_ID || a.missionId !== expected.missionId
+      || a.sourceExecutionId !== expected.sourceExecutionId
+      || a.sourceExecutionLeaseKey !== expected.sourceExecutionLeaseKey
+      || a.processingClaimSha256 !== expected.processingClaimSha256
+      || a.missionRevision !== expected.missionRevision
+      || a.commandId !== expected.commandId || a.requestId !== expected.requestId
+      || a.witnessDigest !== witnessDigest
+      || a.historicalOutcomeRemainsUnknown !== true
+      || a.deferGoalNotComplete !== true
+      || a.operatorApprovalKind !== 'QUARANTINE_UNKNOWN_PROCESSING_CLAIM_ONLY'
+      || !SID.test(text(a.operatorSid)) || a.operatorSid === w.independentOsWitnessSid) {
+      return prospectiveFailed('PROSPECTIVE_ORPHAN_INDEPENDENT_OPERATOR_APPROVAL_UNPROVEN');
+    }
+
+    return Object.freeze({
+      authenticated: true, classification: 'PROSPECTIVE_ORPHAN_CONTAINMENT_VERIFIED',
+      evidenceDigest: hash(recordBytes), witnessDigest, observedAtUtc: w.observedAtUtc,
+      processingClaimSha256: expected.processingClaimSha256,
+      historicalExecutionOutcome: 'UNKNOWN', eligibilityOnly: true,
+      processingClaimQuarantineAuthority: true,
+      leaseReleaseAuthority: false, sourceMutationAuthority: false,
+      materialPickupProven: false, goalComplete: false,
+    });
+  } catch {
+    return prospectiveFailed('PROSPECTIVE_ORPHAN_ATTESTATION_UNOBSERVABLE');
   }
 }

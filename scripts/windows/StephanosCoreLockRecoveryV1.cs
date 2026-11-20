@@ -28,6 +28,7 @@ public sealed class StephanosCoreLockRecoveryV1 : IDisposable {
     private FileStream stream;
     private readonly byte[] bytes;
     private bool committed;
+    private string absentPath;
     public string Digest { get; private set; }
     public string Text { get { return new System.Text.UTF8Encoding(false, true).GetString(bytes); } }
     public DateTime CreatedUtc { get; private set; }
@@ -46,7 +47,8 @@ public sealed class StephanosCoreLockRecoveryV1 : IDisposable {
     private static DateTime FileTime(System.Runtime.InteropServices.ComTypes.FILETIME value) {
         return DateTime.FromFileTimeUtc(((long)value.dwHighDateTime << 32) | (uint)value.dwLowDateTime);
     }
-    public StephanosCoreLockRecoveryV1(string path) {
+    public StephanosCoreLockRecoveryV1(string path) : this(path, false) { }
+    public StephanosCoreLockRecoveryV1(string path, bool requireAbsent) {
         try {
             string full = Path.GetFullPath(path);
             if (full.StartsWith(@"\\", StringComparison.Ordinal) || full.IndexOf(':', 2) >= 0) throw new IOException("CORE_RECOVERY_PATH_UNSAFE");
@@ -54,8 +56,15 @@ public sealed class StephanosCoreLockRecoveryV1 : IDisposable {
             for (var current = Path.GetDirectoryName(full); !String.IsNullOrEmpty(current); current = Path.GetDirectoryName(current)) directories.Push(current);
             while (directories.Count > 0) {
                 // Deny delete/rename of each ancestor throughout the operation.
-                var parent = CreateFile(directories.Pop(), 0x80, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+                // Metadata-only access does not enforce rename denial on all
+                // Windows directories. Hold real read access for this pin.
+                var parent = CreateFile(directories.Pop(), 0x80000000, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
                 ancestors.Add(parent); Inspect(parent, true);
+            }
+            if (requireAbsent) {
+                absentPath = full;
+                AssertAbsent();
+                return;
             }
             handle = CreateFile(full, 0x80000000 | 0x00010000, 0, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
             var info = Inspect(handle, false);
@@ -68,7 +77,18 @@ public sealed class StephanosCoreLockRecoveryV1 : IDisposable {
             using (var sha = SHA256.Create()) Digest = BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
         } catch { Dispose(); throw; }
     }
+    public void AssertAbsent() {
+        if (absentPath == null || ancestors.Count == 0) throw new IOException("CORE_RECOVERY_ABSENCE_HANDLE_REQUIRED");
+        // Existing parent handles pin the namespace. Only file-not-found is
+        // absence; denied access, a directory or a reparse object is not.
+        using (var probe = CreateFile(absentPath, 0x80, 3, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero)) {
+            if (!probe.IsInvalid) throw new IOException("CORE_RECOVERY_LOCK_NOT_ABSENT");
+            int error = Marshal.GetLastWin32Error();
+            if (error != 2) throw new Win32Exception(error);
+        }
+    }
     public void Archive(string archivePath) {
+        if (absentPath != null) throw new IOException("CORE_RECOVERY_ABSENCE_IS_READ_ONLY");
         if (committed) throw new IOException("CORE_RECOVERY_ALREADY_COMMITTED");
         // Caller supplies the fixed digest-named sibling. Its parent is pinned.
         using (var output = new FileStream(archivePath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
@@ -76,6 +96,7 @@ public sealed class StephanosCoreLockRecoveryV1 : IDisposable {
         }
     }
     public void Commit(string expectedDigest) {
+        if (absentPath != null) throw new IOException("CORE_RECOVERY_ABSENCE_IS_READ_ONLY");
         if (committed || !String.Equals(Digest, expectedDigest, StringComparison.Ordinal)) throw new IOException("CORE_RECOVERY_DIGEST_CHANGED");
         var value = new Disposition { Delete = true };
         if (!SetFileInformationByHandle(handle, 4, ref value, (uint)Marshal.SizeOf(typeof(Disposition)))) throw new Win32Exception(Marshal.GetLastWin32Error());

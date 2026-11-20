@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
   GITHUB_READ_MAX_ATTEMPTS,
@@ -17,6 +18,92 @@ const IDENTITY = Object.freeze({
   baseSha: 'cf2d48fdf2c0aa29edc0cd01af678e9c92cfecc1',
   workflowRunId: 32036048136,
   workflowRunAttempt: 1,
+});
+
+const FAILURE_IDENTITY = Object.freeze({
+  code: 'GITHUB_READ_NETWORK', method: 'GET',
+  path: '/repos/Cheekyfellastef/stephan-os/pulls/1838/reviews',
+  status: null, attempts: 3,
+});
+
+const FAILURE_MISMATCHES = [
+  { code: 'GITHUB_READ_NETWORK', status: 200 },
+  { code: 'GITHUB_READ_TRANSIENT_HTTP', status: 200 },
+  { code: 'GITHUB_READ_TRANSIENT_HTTP', status: 403 },
+  { code: 'GITHUB_READ_PR_GLOBAL_ID_404', status: 503 },
+  { code: 'GITHUB_READ_RATE_LIMIT', status: 404 },
+  { attempts: 4 }, { attempts: '3' }, { attempts: 0 }, { attempts: 1.5 },
+];
+
+function canonicalJsonForFixture(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJsonForFixture).join(',')}]`;
+  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJsonForFixture(value[key])}`).join(',')}}`;
+}
+
+function resignFixture(artifact) {
+  const { payloadSha256: ignored, ...core } = artifact;
+  return { ...core, payloadSha256: createHash('sha256').update(canonicalJsonForFixture(core)).digest('hex') };
+}
+
+for (const mismatch of FAILURE_MISMATCHES) {
+  test(`failure constructor rejects inconsistent or unbounded evidence ${JSON.stringify(mismatch)}`, () => {
+    assert.throws(() => new GitHubReadInfrastructureError({ ...FAILURE_IDENTITY, ...mismatch }), /identity is invalid/);
+  });
+
+  test(`valid digest cannot bless inconsistent failure evidence ${JSON.stringify(mismatch)}`, () => {
+    const failure = new GitHubReadInfrastructureError(FAILURE_IDENTITY);
+    const good = buildIndependentReviewInfrastructureBlockedArtifact({ ...IDENTITY, failure });
+    const changed = { ...good.blocker, ...mismatch };
+    if (mismatch.code) {
+      changed.providerCode = mismatch.code;
+      changed.code = 'REVIEW_INFRASTRUCTURE_BLOCKED';
+    }
+    const artifact = resignFixture({ ...good, blocker: changed });
+    const result = validateIndependentReviewInfrastructureBlockedArtifact(artifact, IDENTITY);
+    assert.equal(result.valid, false);
+    assert.ok(result.blockers.includes('blocker-invalid'));
+    assert.ok(!result.blockers.includes('payload-digest-mismatch'));
+  });
+}
+
+test('all legitimate status/code pairs retain valid infrastructure receipts', () => {
+  for (const [code, statuses] of [
+    ['GITHUB_READ_NETWORK', [null]],
+    ['GITHUB_READ_TRANSIENT_HTTP', [502, 503, 504]],
+    ['GITHUB_READ_PR_GLOBAL_ID_404', [404]],
+    ['GITHUB_READ_RATE_LIMIT', [403, 429]],
+  ]) {
+    for (const status of statuses) {
+      const failure = new GitHubReadInfrastructureError({ ...FAILURE_IDENTITY, code, status });
+      const artifact = buildIndependentReviewInfrastructureBlockedArtifact({ ...IDENTITY, failure });
+      assert.equal(validateIndependentReviewInfrastructureBlockedArtifact(artifact, IDENTITY).valid, true);
+    }
+  }
+});
+
+test('artifact construction revalidates a mutated error instance', () => {
+  const failure = new GitHubReadInfrastructureError(FAILURE_IDENTITY);
+  failure.status = 200;
+  assert.throws(() => buildIndependentReviewInfrastructureBlockedArtifact({ ...IDENTITY, failure }), /identity is invalid/);
+});
+
+test('null and malformed artifact inputs return typed refusal', () => {
+  for (const artifact of [null, undefined, [], 'broken', false]) {
+    const result = validateIndependentReviewInfrastructureBlockedArtifact(artifact, IDENTITY);
+    assert.equal(result.valid, false);
+    assert.equal(result.finalVerdict, 'INDEPENDENT_REVIEW_INFRASTRUCTURE_ARTIFACT_BLOCKED');
+  }
+});
+
+test('missing or malformed expected identities cannot validate an artifact', () => {
+  const failure = new GitHubReadInfrastructureError(FAILURE_IDENTITY);
+  const artifact = buildIndependentReviewInfrastructureBlockedArtifact({ ...IDENTITY, failure });
+  for (const options of [null, undefined, [], 'broken', false, {}]) {
+    const result = validateIndependentReviewInfrastructureBlockedArtifact(artifact, options);
+    assert.equal(result.valid, false);
+    assert.equal(result.finalVerdict, 'INDEPENDENT_REVIEW_INFRASTRUCTURE_ARTIFACT_BLOCKED');
+  }
 });
 
 test('only bounded read-only transient conditions are retryable', () => {

@@ -16,12 +16,6 @@ const PR_GLOBAL_ID_404 = /Could not resolve to a node with the global id of ["']
 const TRANSIENT_HTTP_STATUSES = new Set([502, 503, 504]);
 const RATE_LIMIT_BODY = /(?:API rate limit exceeded|secondary rate limit|rate limit exceeded)/i;
 const RETRY_DELAYS_MS = Object.freeze([250, 750]);
-const FAILURE_CODES = new Set([
-  'GITHUB_READ_NETWORK',
-  'GITHUB_READ_TRANSIENT_HTTP',
-  'GITHUB_READ_PR_GLOBAL_ID_404',
-  'GITHUB_READ_RATE_LIMIT',
-]);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -30,6 +24,59 @@ function text(value) {
 function positiveInteger(value) {
   const number = Number(value);
   return Number.isSafeInteger(number) && number > 0 ? number : 0;
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validFailureDetails({ method, path, code, status, attempts, retryAtUtc }) {
+  const statusMatches = code === 'GITHUB_READ_NETWORK' ? status === null
+    : code === 'GITHUB_READ_TRANSIENT_HTTP' ? TRANSIENT_HTTP_STATUSES.has(status)
+      : code === 'GITHUB_READ_PR_GLOBAL_ID_404' ? status === 404
+        : code === 'GITHUB_READ_RATE_LIMIT' ? status === 403 || status === 429
+          : false;
+  return method === 'GET'
+    && typeof path === 'string' && path.startsWith('/')
+    && Number.isSafeInteger(attempts) && attempts >= 1 && attempts <= GITHUB_READ_MAX_ATTEMPTS
+    && statusMatches
+    && (retryAtUtc == null || (typeof retryAtUtc === 'string'
+      && EXPLICIT_TIMEZONE.test(retryAtUtc) && Number.isFinite(Date.parse(retryAtUtc))));
+}
+
+export class GitHubResponseBoundError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'GitHubResponseBoundError';
+  }
+}
+
+// Enforce the caller's existing response cap before retaining each chunk.
+// A cap violation is a permanent refusal, never a retryable network failure.
+export async function readGitHubResponseBytes(response, maxResponseBytes = 0) {
+  if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 0) {
+    throw new GitHubResponseBoundError('GitHub response byte bound is invalid.');
+  }
+  if (response.body === null) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw new TypeError('GitHub response body is not a byte stream.');
+      if (maxResponseBytes && value.byteLength > maxResponseBytes - length) {
+        await reader.cancel().catch(() => {});
+        throw new GitHubResponseBoundError(`GitHub response exceeded the ${maxResponseBytes}-byte response bound.`);
+      }
+      length += value.byteLength;
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, length);
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function canonicalJson(value) {
@@ -113,12 +160,11 @@ export class GitHubReadInfrastructureError extends Error {
   constructor(input = {}) {
     const method = text(input.method || 'GET').toUpperCase();
     const path = text(input.path);
-    const status = Number.isInteger(input.status) && input.status > 0 ? input.status : null;
-    const attempts = positiveInteger(input.attempts);
+    const status = input.status == null ? null : input.status;
+    const attempts = input.attempts;
     const code = text(input.code);
     const retryAtUtc = text(input.retryAtUtc);
-    if (method !== 'GET' || !path.startsWith('/') || !attempts || !FAILURE_CODES.has(code)
-      || (retryAtUtc && (!EXPLICIT_TIMEZONE.test(retryAtUtc) || !Number.isFinite(Date.parse(retryAtUtc))))) {
+    if (!validFailureDetails({ method, path, status, attempts, code, retryAtUtc: retryAtUtc || null })) {
       throw new Error('GitHub read infrastructure error identity is invalid.');
     }
     super(`REVIEW_INFRASTRUCTURE_BLOCKED: ${code} after ${attempts} attempt(s) for ${method} ${path}${status ? ` (${status})` : ''}`);
@@ -155,7 +201,7 @@ export function buildIndependentReviewInfrastructureBlockedArtifact(input = {}) 
     || !workflowRunAttempt
     || !EXPLICIT_TIMEZONE.test(createdAtUtc)
     || !Number.isFinite(Date.parse(createdAtUtc))
-    || !failure) {
+    || !failure || !validFailureDetails(failure)) {
     throw new Error('Independent review infrastructure-blocked artifact identity is invalid.');
   }
 
@@ -194,6 +240,14 @@ export function buildIndependentReviewInfrastructureBlockedArtifact(input = {}) 
 
 export function validateIndependentReviewInfrastructureBlockedArtifact(artifact = {}, options = {}) {
   const blockers = [];
+  if (!isRecord(artifact)) {
+    blockers.push('artifact-invalid');
+    artifact = {};
+  }
+  if (!isRecord(options)) {
+    blockers.push('options-invalid');
+    options = {};
+  }
   const expectedRepository = text(options.repository);
   const expectedPrNumber = positiveInteger(options.prNumber);
   const expectedBranch = text(options.branch);
@@ -202,7 +256,9 @@ export function validateIndependentReviewInfrastructureBlockedArtifact(artifact 
   const expectedRunId = positiveInteger(options.workflowRunId);
   const expectedAttempt = positiveInteger(options.workflowRunAttempt);
 
-  if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) blockers.push('artifact-invalid');
+  if (!REPOSITORY.test(expectedRepository) || !expectedPrNumber || !BRANCH.test(expectedBranch)
+    || expectedBranch.includes('..') || !FULL_SHA.test(expectedHead) || !FULL_SHA.test(expectedBase)
+    || !expectedRunId || !expectedAttempt) blockers.push('expected-identity-invalid');
   if (artifact.schemaVersion !== INDEPENDENT_REVIEW_INFRASTRUCTURE_BLOCKED_SCHEMA_VERSION) blockers.push('schema-mismatch');
   if (artifact.kind !== INDEPENDENT_REVIEW_INFRASTRUCTURE_BLOCKED_KIND) blockers.push('kind-mismatch');
   if (artifact.reviewMode !== INDEPENDENT_REVIEW_INFRASTRUCTURE_BLOCKED_MODE) blockers.push('mode-mismatch');
@@ -217,11 +273,7 @@ export function validateIndependentReviewInfrastructureBlockedArtifact(artifact 
   if (artifact.artifactName !== `stephanos-independent-review-${expectedRunId}-attempt-${expectedAttempt}`) blockers.push('name-mismatch');
   if (artifact.blocker?.code !== 'REVIEW_INFRASTRUCTURE_BLOCKED'
     || artifact.blocker?.retryable !== true
-    || !FAILURE_CODES.has(text(artifact.blocker?.providerCode))
-    || text(artifact.blocker?.method) !== 'GET'
-    || !text(artifact.blocker?.path).startsWith('/')
-    || !positiveInteger(artifact.blocker?.attempts)
-    || (artifact.blocker?.retryAtUtc != null && (!EXPLICIT_TIMEZONE.test(text(artifact.blocker.retryAtUtc)) || !Number.isFinite(Date.parse(artifact.blocker.retryAtUtc))))
+    || !validFailureDetails({ ...artifact.blocker, code: artifact.blocker?.providerCode })
     || !SHA256.test(text(artifact.blocker?.messageSha256))) {
     blockers.push('blocker-invalid');
   }

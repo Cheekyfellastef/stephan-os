@@ -22,9 +22,11 @@ import {
 import {
   GITHUB_READ_MAX_ATTEMPTS,
   GitHubReadInfrastructureError,
+  GitHubResponseBoundError,
   buildIndependentReviewInfrastructureBlockedArtifact,
   classifyGitHubReadFailure,
   githubReadRetryDelayMs,
+  readGitHubResponseBytes,
 } from '../shared/agents/githubReadResilienceV1.mjs';
 import { resolve } from 'node:path';
 import {
@@ -104,6 +106,7 @@ async function githubRequest(path, {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     let response;
+    let rawBytes;
     try {
       response = await fetch(`https://api.github.com${path}`, {
         method: normalizedMethod,
@@ -117,8 +120,18 @@ async function githubRequest(path, {
         },
         ...(body === null ? {} : { body: JSON.stringify(body) }),
       });
+      rawBytes = await readGitHubResponseBytes(response, maxResponseBytes);
     } catch (error) {
-      const classification = classifyGitHubReadFailure({
+      if (error instanceof GitHubResponseBoundError) throw error;
+      // A body failure cannot erase a rate limit already proven by headers.
+      const headerFailure = response ? classifyGitHubReadFailure({
+        method: normalizedMethod,
+        status: response.status,
+        rateLimitRemaining: response.headers.get('x-ratelimit-remaining'),
+        rateLimitResetEpochSeconds: response.headers.get('x-ratelimit-reset'),
+      }) : null;
+      const classification = headerFailure?.code === 'GITHUB_READ_RATE_LIMIT'
+        ? headerFailure : classifyGitHubReadFailure({
         method: normalizedMethod,
         networkError: true,
       });
@@ -132,15 +145,12 @@ async function githubRequest(path, {
         code: classification.code,
         method: normalizedMethod,
         path,
+        status: classification.code === 'GITHUB_READ_RATE_LIMIT' ? response.status : null,
         attempts: attempt,
         retryAtUtc: classification.retryAtUtc,
       });
     }
 
-    const rawBytes = Buffer.from(await response.arrayBuffer());
-    if (maxResponseBytes && rawBytes.length > maxResponseBytes) {
-      throw new Error(`GitHub ${normalizedMethod} ${path} exceeded the ${maxResponseBytes}-byte response bound.`);
-    }
     const raw = new TextDecoder('utf-8', { fatal: true }).decode(rawBytes);
     const classification = classifyGitHubReadFailure({
       method: normalizedMethod,

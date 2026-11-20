@@ -109,6 +109,25 @@ function parseJsonOutput(stdout = '') {
   return null;
 }
 
+// A native Tailscale Serve banner may precede PowerShell's pretty-printed JSON.
+// Only the complete single final JSON object is eligible: no extra suffix,
+// multiple JSON objects, caller-selected source or extra execution authority.
+export function parseSovereignCommanderTailnetOutputV1(stdout = '') {
+  if (typeof stdout !== 'string') return null;
+  const raw = stdout.trim();
+  if (!raw || Buffer.byteLength(raw, 'utf8') > 32_768) return null;
+  const start = raw.indexOf('{');
+  if (start < 0) return null;
+  const prefix = raw.slice(0, start);
+  if (prefix.includes('}') || (prefix && !/\r?\n[ \t]*$/.test(prefix))) return null;
+  try {
+    const parsed = JSON.parse(raw.slice(start));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      && parsed.schemaVersion === 'stephanos.sovereign-commander-tailnet-route.v1'
+      ? parsed : null;
+  } catch { return null; }
+}
+
 async function waitForHealth(fetchFn, { attempts = 20, delayMs = 500, requiredCapabilityVersion = '' } = {}) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -361,7 +380,7 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
   if (!tailnetRun.ok) {
     return fail('SOVEREIGN_COMMANDER_TAILNET_ROUTE_CONFIGURE_FAILED', { status: tailnetRun.status });
   }
-  const tailnetReceipt = parseJsonOutput(tailnetRun.stdout);
+  const tailnetReceipt = parseSovereignCommanderTailnetOutputV1(tailnetRun.stdout);
   if (!tailnetReceipt
     || tailnetReceipt.schemaVersion !== 'stephanos.sovereign-commander-tailnet-route.v1'
     || tailnetReceipt.configured !== true

@@ -9,6 +9,7 @@ param(
     [int]$NoGameGraceSeconds = 35,
     [int]$TailLines = 3500,
     [string]$PerfLogPath = '',
+    [string]$ProviderTelemetryPath = '',
     [switch]$Once
 )
 
@@ -130,6 +131,203 @@ function Get-Rounded {
     return [Math]::Round([double]$Value, $Digits)
 }
 
+function Get-LatestOpenXrVisualEvent {
+    $tracePath = Join-Path $WorkspaceRoot ('vr\telemetry\sessions\' + $LaunchSessionId + '\openxr-visual.jsonl')
+    if (-not (Test-Path -LiteralPath $tracePath -PathType Leaf)) { return $null }
+    try {
+        $lines = @(Get-Content -LiteralPath $tracePath -Tail 500 -ErrorAction Stop)
+        for ($i = $lines.Count - 1; $i -ge 0; $i -= 1) {
+            $line = [string]$lines[$i]
+            if ($line -notmatch '"event"\s*:\s*"end_frame"') { continue }
+            try {
+                $event = $line | ConvertFrom-Json
+                if ([string]$event.launchSessionId -ne $LaunchSessionId) { continue }
+                $event | Add-Member -NotePropertyName tracePath -NotePropertyValue $tracePath -Force
+                $event | Add-Member -NotePropertyName fileObservedAtUtc -NotePropertyValue ((Get-Item -LiteralPath $tracePath).LastWriteTimeUtc.ToString('o')) -Force
+                return $event
+            } catch {}
+        }
+    } catch {}
+    return $null
+}
+
+function Get-OperatorMarkerState {
+    $markerPath = Join-Path $WorkspaceRoot ('vr\telemetry\sessions\' + $LaunchSessionId + '\operator-markers.jsonl')
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        return [pscustomobject]@{ count = 0; lastRecordedAtUtc = ''; lastSource = ''; path = $markerPath }
+    }
+    try {
+        $lines = @(Get-Content -LiteralPath $markerPath -ErrorAction Stop | Where-Object { $_.Trim() })
+        $last = $null
+        if ($lines.Count -gt 0) { try { $last = $lines[-1] | ConvertFrom-Json } catch {} }
+        return [pscustomobject]@{
+            count = $lines.Count
+            lastRecordedAtUtc = if ($last) { [string]$last.recordedAtUtc } else { '' }
+            lastSource = if ($last) { [string]$last.source } else { '' }
+            path = $markerPath
+        }
+    } catch {
+        return [pscustomobject]@{ count = 0; lastRecordedAtUtc = ''; lastSource = ''; path = $markerPath }
+    }
+}
+
+function Get-ProviderTelemetryState {
+    if (-not $ProviderTelemetryPath -or -not (Test-Path -LiteralPath $ProviderTelemetryPath -PathType Leaf)) {
+        return [pscustomobject]@{
+            available = $false
+            event = ''
+            sequenceFaultCount = 0
+            prev = $null
+            current = $null
+            delta = $null
+            prevParity = $null
+            currentParity = $null
+            engine = $null
+            render = $null
+            presenter = $null
+            renderLoop = $null
+        }
+    }
+    try {
+        $lines = @(Get-Content -LiteralPath $ProviderTelemetryPath -Tail 5000 -ErrorAction Stop)
+        $faults = @($lines | Where-Object { [string]$_ -like 'SEQUENCE_FAULT,*' })
+        $candidate = if ($faults.Count -gt 0) { [string]$faults[-1] } else {
+            [string]($lines | Where-Object { [string]$_ -like 'ACTIVE,*' } | Select-Object -Last 1)
+        }
+        if (-not $candidate) {
+            return [pscustomobject]@{ available = $false; event = ''; sequenceFaultCount = 0 }
+        }
+        $parts = @($candidate -split ',')
+        $values = @{}
+        foreach ($part in $parts | Select-Object -Skip 1) {
+            $pair = @($part -split '=', 2)
+            if ($pair.Count -eq 2) { $values[$pair[0]] = $pair[1] }
+        }
+        $number = {
+            param([string]$Name)
+            if (-not $values.ContainsKey($Name)) { return $null }
+            $parsed = 0.0
+            if ([double]::TryParse([string]$values[$Name], [ref]$parsed)) { return $parsed }
+            return $null
+        }
+        $sequenceFaultCount = $faults.Count
+        if ($values.ContainsKey('fault')) {
+            $parsedFault = 0
+            if ([int]::TryParse([string]$values['fault'], [ref]$parsedFault) -and $parsedFault -ge 0) {
+                $sequenceFaultCount = [Math]::Max($sequenceFaultCount, $parsedFault)
+            }
+        }
+        return [pscustomobject]@{
+            available = $true
+            event = [string]$parts[0]
+            sequenceFaultCount = $sequenceFaultCount
+            prev = & $number 'prev'
+            current = & $number 'current'
+            delta = & $number 'delta'
+            prevParity = & $number 'prevParity'
+            currentParity = & $number 'currentParity'
+            engine = & $number 'engine'
+            render = & $number 'render'
+            presenter = & $number 'presenter'
+            renderLoop = & $number 'renderLoop'
+        }
+    } catch {
+        return [pscustomobject]@{ available = $false; event = ''; sequenceFaultCount = 0 }
+    }
+}
+
+function Add-ProviderTelemetryToRuntimeMetrics {
+    param($Payload, $ProviderState)
+    $Payload['providerTelemetryAvailable'] = [bool]$ProviderState.available
+    $Payload['aerTelemetryEvent'] = [string]$ProviderState.event
+    $Payload['aerSequenceFaultCount'] = [int]$ProviderState.sequenceFaultCount
+    $Payload['aerPrevPresenterFrame'] = $ProviderState.prev
+    $Payload['aerCurrentPresenterFrame'] = $ProviderState.current
+    $Payload['aerPresenterDelta'] = $ProviderState.delta
+    $Payload['aerPrevParity'] = $ProviderState.prevParity
+    $Payload['aerCurrentParity'] = $ProviderState.currentParity
+    $Payload['aerEngineFrame'] = $ProviderState.engine
+    $Payload['aerRenderFrame'] = $ProviderState.render
+    $Payload['aerPresenterFrame'] = $ProviderState.presenter
+    $Payload['aerRenderLoopFrame'] = $ProviderState.renderLoop
+}
+
+function Add-VisualTelemetryToRuntimeMetrics {
+    param($Payload, $Visual, $Marker)
+    if (-not $Visual) {
+        $Payload['visualTelemetryAvailable'] = $false
+        $Payload['operatorMarkerCount'] = [int]$Marker.count
+        $Payload['lastOperatorMarkerAtUtc'] = [string]$Marker.lastRecordedAtUtc
+        $Payload['lastOperatorMarkerSource'] = [string]$Marker.lastSource
+        return
+    }
+
+    $eyes = @($Visual.eyes)
+    $left = if ($eyes.Count -ge 1) { $eyes[0] } else { $null }
+    $right = if ($eyes.Count -ge 2) { $eyes[1] } else { $null }
+    $leftPresent = Get-OptionalDouble -Object $left -Name 'releaseToEndMs'
+    $rightPresent = Get-OptionalDouble -Object $right -Name 'releaseToEndMs'
+    $eyeSkew = Get-OptionalDouble -Object $Visual -Name 'eyePresentationSkewMs'
+    $poseDelta = Get-OptionalDouble -Object $Visual -Name 'poseDisplayDeltaMs'
+    $predictionDelta = Get-OptionalDouble -Object $Visual -Name 'predictionDeltaMs'
+
+    if ($null -ne $leftPresent -and $leftPresent -ge 0) { $Payload['leftEyePresentMs'] = Get-Rounded $leftPresent 4 }
+    if ($null -ne $rightPresent -and $rightPresent -ge 0) { $Payload['rightEyePresentMs'] = Get-Rounded $rightPresent 4 }
+    if ($null -ne $eyeSkew -and $eyeSkew -ge 0) { $Payload['eyePresentationSkewMs'] = Get-Rounded $eyeSkew 4 }
+    if ($null -ne $poseDelta) { $Payload['poseAgeMs'] = Get-Rounded ([Math]::Abs($poseDelta)) 4 }
+    $Payload['stereoMode'] = if ([int]$Visual.projectionViews -ge 2) { 'OPENXR_PRIMARY_STEREO' } else { 'OPENXR_STEREO_INCOMPLETE' }
+    $Payload['visualTelemetryAvailable'] = $true
+    $Payload['visualFrameSerial'] = [long]$Visual.frame
+    $Payload['visualFrameState'] = [string]$Visual.visualFrameState
+    $Payload['visualProjectionLayers'] = [int]$Visual.projectionLayers
+    $Payload['visualProjectionViews'] = [int]$Visual.projectionViews
+    $Payload['visualLocatedViews'] = [int]$Visual.locatedViews
+    $Payload['visualShouldRender'] = [bool]$Visual.shouldRender
+    $Payload['visualReleaseMissing'] = [bool]$Visual.releaseMissing
+    $Payload['visualReleaseReused'] = [bool]$Visual.releaseReused
+    $Payload['visualEndFrameResult'] = [int]$Visual.result
+    $Payload['visualPredictionDeltaMs'] = if ($null -ne $predictionDelta) { Get-Rounded $predictionDelta 4 } else { $null }
+    $Payload['visualPoseDisplayDeltaMs'] = if ($null -ne $poseDelta) { Get-Rounded $poseDelta 4 } else { $null }
+    $Payload['visualPixelContentState'] = [string]$Visual.pixelContentState
+    $Payload['visualTracePath'] = [string]$Visual.tracePath
+    $Payload['visualObservedAtUtc'] = [string]$Visual.fileObservedAtUtc
+    $Payload['operatorMarkerCount'] = [int]$Marker.count
+    $Payload['lastOperatorMarkerAtUtc'] = [string]$Marker.lastRecordedAtUtc
+    $Payload['lastOperatorMarkerSource'] = [string]$Marker.lastSource
+}
+
+function New-VisualOnlyRuntimeMetrics {
+    param([DateTime]$ObservedAtUtc)
+    return [ordered]@{
+        schemaVersion = 'stephanos.starfield-vr-runtime-metrics.v1'
+        source = 'STEPHANOS_OPENXR_VISUAL_TELEMETRY'
+        observedAtUtc = $ObservedAtUtc.ToString('o')
+        launchSessionId = $LaunchSessionId
+        provider = $Provider
+        applicationFrameTimeMs = $null
+        deliveredCadenceHz = $null
+        headsetRefreshRateHz = $null
+        droppedFrames = $null
+        reprojectionState = ''
+        aswState = ''
+        encodeLatencyMs = $null
+        networkLatencyMs = $null
+        decodeLatencyMs = $null
+        airLinkBitrateMbps = $null
+        packetLossPct = $null
+        jitterMs = $null
+        openXrRenderWidth = $null
+        openXrRenderHeight = $null
+        renderScalePct = $null
+        leftEyePresentMs = $null
+        rightEyePresentMs = $null
+        eyePresentationSkewMs = $null
+        poseAgeMs = $null
+        stereoMode = ''
+        meta = [ordered]@{}
+    }
+}
+
 function Convert-XrsStatsToRuntimeMetrics {
     param($Stats, [DateTime]$EventUtc)
 
@@ -226,31 +424,47 @@ function Convert-XrsStatsToRuntimeMetrics {
 
 $sessionStartUtc = [DateTime]::Parse($SessionStartedAtUtc).ToUniversalTime()
 $outputPath = Join-Path $WorkspaceRoot 'vr\starfield-vr-runtime-metrics-current.json'
-$lastEventStamp = ''
+$lastMetaEventStamp = ''
+$lastVisualFrameSerial = -1
 $gameMissingSince = $null
 
 do {
     try {
         $path = Get-LatestPerfLogPath
-        if ($path) {
-            $stats = Get-LatestXrsStatsEvent -Path $path
-            if ($stats) {
-                $eventUtc = Get-EventUtc -Stats $stats
-                if ($eventUtc -and $eventUtc -ge $sessionStartUtc.AddSeconds(-2)) {
-                    $eventStamp = $eventUtc.ToString('o')
-                    if ($eventStamp -ne $lastEventStamp -or -not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
-                        $payload = Convert-XrsStatsToRuntimeMetrics -Stats $stats -EventUtc $eventUtc
-                        $payload['sourcePath'] = $path
-                        $payload['writtenAtUtc'] = (Get-Date).ToUniversalTime().ToString('o')
-                        Write-JsonNoBom -Path $outputPath -Value $payload
-                        $lastEventStamp = $eventStamp
-                    }
-                }
+        $stats = if ($path) { Get-LatestXrsStatsEvent -Path $path } else { $null }
+        $eventUtc = if ($stats) { Get-EventUtc -Stats $stats } else { $null }
+        if ($eventUtc -and $eventUtc -lt $sessionStartUtc.AddSeconds(-2)) {
+            $stats = $null
+            $eventUtc = $null
+        }
+
+        $visual = Get-LatestOpenXrVisualEvent
+        $marker = Get-OperatorMarkerState
+        $providerState = Get-ProviderTelemetryState
+        $visualFrameSerial = if ($visual) { [long]$visual.frame } else { -1 }
+        $metaEventStamp = if ($eventUtc) { $eventUtc.ToString('o') } else { '' }
+        $metaChanged = [bool]($metaEventStamp -and $metaEventStamp -ne $lastMetaEventStamp)
+        $visualChanged = [bool]($visualFrameSerial -ge 0 -and $visualFrameSerial -ne $lastVisualFrameSerial)
+
+        if ($metaChanged -or $visualChanged -or -not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
+            $observedNow = (Get-Date).ToUniversalTime()
+            $payload = if ($stats -and $eventUtc) {
+                Convert-XrsStatsToRuntimeMetrics -Stats $stats -EventUtc $observedNow
+            } else {
+                New-VisualOnlyRuntimeMetrics -ObservedAtUtc $observedNow
             }
+            $payload['metaSourceObservedAtUtc'] = $metaEventStamp
+            $payload['sourcePath'] = if ($path) { $path } else { '' }
+            Add-VisualTelemetryToRuntimeMetrics -Payload $payload -Visual $visual -Marker $marker
+            Add-ProviderTelemetryToRuntimeMetrics -Payload $payload -ProviderState $providerState
+            $payload['writtenAtUtc'] = $observedNow.ToString('o')
+            Write-JsonNoBom -Path $outputPath -Value $payload
+            if ($metaChanged) { $lastMetaEventStamp = $metaEventStamp }
+            if ($visualChanged) { $lastVisualFrameSerial = $visualFrameSerial }
         }
     }
     catch {
-        # Missing or mid-write Meta telemetry must never take the game down.
+        # Missing, mid-write or unavailable telemetry must never take the game down.
     }
 
     if ($Once) { break }

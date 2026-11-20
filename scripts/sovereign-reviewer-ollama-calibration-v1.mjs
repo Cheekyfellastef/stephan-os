@@ -8,7 +8,9 @@ import { createHash } from 'node:crypto';
 import { join, isAbsolute, normalize } from 'node:path';
 import { resolve } from 'node:path';
 import { evaluateSovereignCalibrationV1, SOVEREIGN_CALIBRATION_MANIFEST_SHA256 } from '../shared/agents/sovereignCalibrationV1.mjs';
-import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
+import { admitSovereignLocalOllamaBindingV1, matchesSovereignLocalOllamaCompletionV1, sovereignLocalOllamaFailureReasonV1 } from '../shared/agents/sovereignReviewerOllamaBindingV1.mjs';
 
 const MODEL_RE = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const SOURCE_ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
@@ -18,8 +20,10 @@ const SHA40 = /^[a-f0-9]{40}$/;
 const CRITICAL_REVIEW_FILES = Object.freeze([
   'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
   'shared/agents/sovereignCalibrationV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'scripts/sovereign-reviewer-v1.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
+  'scripts/battle-bridge-github-sync-policy.mjs',
 ]);
 const BRANCH = /^[a-z0-9][a-z0-9._/-]{0,180}$/i;
 const NO_AUTHORITY = Object.freeze({
@@ -48,7 +52,7 @@ export function inspectLocalCalibrationGitIdentityV1(env = process.env, {
     || branch.includes('..') || branch.endsWith('/')) {
     return Object.freeze({ ok: false, reason: 'CALIBRATION_EXACT_SOURCE_IDENTITY_INVALID' });
   }
-  const readGit = args => {
+  const readGit = (args, raw = false) => {
     const execution = resolveBattleBridgeGitExecution({ platform: 'linux', environment: env });
     const r = gitSpawn(execution.executable, [...execution.fixedConfigArgs, '-C', sourceRoot, ...args], {
       encoding: 'utf8', shell: false, timeout: 12_000, maxBuffer: 4096,
@@ -56,12 +60,25 @@ export function inspectLocalCalibrationGitIdentityV1(env = process.env, {
     });
     if (r?.error || r?.status !== 0 || typeof r.stdout !== 'string')
       throw new Error('LOCAL_GIT_UNAVAILABLE');
-    return r.stdout.trim();
+    return raw ? r.stdout : r.stdout.trim();
   };
   try {
+    const localConfig = readGit(['config', '--local', '--null', '--list', '--no-includes'], true);
+    if (!validateBattleBridgeLocalGitConfiguration(localConfig).ok) {
+      return Object.freeze({ ok: false, reason: 'CALIBRATION_SOURCE_GIT_UNPROVEN' });
+    }
     if (readGit(['rev-parse', 'HEAD']).toLowerCase() !== head
-      || readGit(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== branch
-      || readGit(['status', '--porcelain', '--untracked-files=normal']) !== '') {
+      || readGit(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== branch) {
+      return Object.freeze({ ok: false, reason: 'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED' });
+    }
+    // Keep raw status columns and both sides of a rename; runtime-only state
+    // may coexist with exact committed reviewer source, which is pinned below.
+    const statusOutput = readGit(['-c', 'status.renames=false', 'status', '--porcelain', '--untracked-files=normal'], true);
+    const statusLines = statusOutput === '' ? [] : statusOutput.replace(/\r?\n$/, '').split(/\r?\n/);
+    if (statusLines.some(line => !/^(?:[ MADTU]{2}|\?\?) [^\x00-\x1f\x7f]+$/.test(line)
+      || line.startsWith('  ') || line.slice(3) !== line.slice(3).trim()
+      || line.slice(3).split('/').some(part => part === '.' || part === '..'))
+      || classifyDirt(statusLines).blocksSync) {
       return Object.freeze({ ok: false, reason: 'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED' });
     }
     readGit(['merge-base', '--is-ancestor', base, head]);
@@ -189,7 +206,7 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   const beforePin = await modelPin(model, {fetchImpl});
   if (!beforePin?.ok || !/^[a-f0-9]{64}$/.test(beforePin.digest??''))
     return held(beforePin?.reason || 'CALIBRATION_MODEL_DIGEST_UNPROVEN');
-  const immutableModel = 'sha256:' + beforePin.digest;
+  let bindingFailure = '';
   const input = {
     repository: env.STEPHANOS_REVIEW_REPOSITORY,
     sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
@@ -231,6 +248,19 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         }
       }, 500);
       try {
+      let binding;
+      try {
+        binding = await admitSovereignLocalOllamaBindingV1(beforePin.digest, {
+          fetchImpl, signal: gamingAbort.signal,
+        });
+      } catch (error) {
+        bindingFailure = sovereignLocalOllamaFailureReasonV1(error);
+        throw error;
+      }
+      if (gamingDenied || gamingAbort.signal.aborted
+        || !gamingGuard(env, { platform })?.ok) {
+        throw new Error('CALIBRATION_GAMING_RESOURCE_PROTECTED');
+      }
       const response = await fetchImpl('http://127.0.0.1:11434/api/generate', {
         // Never follow a redirect to a nonlocal endpoint with private diff text.
         // Node fetch follows 3xx by default, including cross-origin redirects.
@@ -238,7 +268,7 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: immutableModel, prompt, stream: false, format: 'json',
+          model: binding.model, prompt, stream: false, format: 'json',
           // Release GPU residency after each bounded candidate challenge.
           keep_alive: 0,
           options: { temperature: 0, num_ctx: 8192 },
@@ -257,10 +287,8 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         throw new Error('LOCAL_OLLAMA_RESPONSE_UNBOUNDED');
       }
       const result = JSON.parse(bytes);
-      // An incomplete/truncated response or different actual model cannot
-      // substantiate the claimed ten-case security qualification exam.
-      const completedModel = String(result?.model ?? '').toLowerCase();
-      if (![immutableModel, 'sha256-' + beforePin.digest].includes(completedModel)
+      // The selector echo is protocol consistency, not served-model attestation.
+      if (!matchesSovereignLocalOllamaCompletionV1(result, binding)
         || result?.done !== true
         || result?.done_reason !== 'stop'
         || typeof result.response !== 'string'
@@ -285,7 +313,9 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   const afterPin=await modelPin(model,{fetchImpl});
   if (!afterPin?.ok || afterPin.digest!==beforePin.digest)
     return held('CALIBRATION_MODEL_DIGEST_CHANGED_OR_UNOBSERVED');
-  return Object.freeze({...evaluation,modelDigestSha256:beforePin.digest});
+  return Object.freeze({...evaluation,
+    ...(bindingFailure ? { reason: bindingFailure } : {}),
+    modelDigestSha256:beforePin.digest});
 }
 // Read-only model availability preflight. Ollama's /api/tags endpoint does
 // NOT load a model or modify the host. No user path, URL, tokens, inventory,

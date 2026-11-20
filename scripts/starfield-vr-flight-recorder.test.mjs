@@ -1,8 +1,55 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-
 import { validateStarfieldVrPhysicalVerdict } from './report-starfield-vr-telemetry.mjs';
+
+test('Windows VR diagnosis handles zero, one and conflicting providers without inventing missing metrics', { skip: process.platform !== 'win32' }, async () => {
+  const scriptPath = fileURLToPath(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url));
+  for (const [sessionProvider, summaryProvider, expectedIdentity, expectedProvider, samples] of [
+    ['', '', 'UNKNOWN_PROVIDER', 'UNKNOWN', []],
+    ['mutar-openxr', '', 'VERIFIED_PROVIDER', 'mutar-openxr', [20]],
+    ['vorpx', 'vorpx', 'VERIFIED_PROVIDER', 'vorpx', [20, 40]],
+    ['mutar-openxr', 'vorpx', 'PROVIDER_IDENTITY_CONFLICT', 'UNKNOWN', [20, 40]],
+    ['vorpx', '', 'VERIFIED_PROVIDER', 'vorpx', [null]],
+  ]) {
+    const workspace = await mkdtemp(join(tmpdir(), 'sovereign-vr-diagnosis-'));
+    try {
+      if (samples.length) {
+        const sessions = join(workspace, 'vr', 'starfield-vr-performance-sessions');
+        await mkdir(sessions, { recursive: true });
+        const base = join(sessions, 'starfield-vr-performance-fixture');
+        await writeFile(base + '.csv', 'timestampUtc,gpuUtilPct\n'
+          + samples.map((value, index) => `2026-10-12T00:00:0${index}Z,${value ?? ''}\n`).join(''));
+        await writeFile(base + '.json', JSON.stringify({ routeIdentity: { provider: sessionProvider } }));
+        await writeFile(base + '.summary.json', JSON.stringify({ routeIdentity: { provider: summaryProvider } }));
+      }
+      const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-WorkspaceRoot', workspace,
+      ], { encoding: 'utf8', shell: false, windowsHide: true, timeout: 20_000 });
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      const receipt = JSON.parse(result.stdout);
+      assert.equal(receipt.context.providerIdentityStatus, expectedIdentity);
+      assert.equal(receipt.context.provider, expectedProvider);
+      const measured = samples.filter(value => typeof value === 'number');
+      assert.equal(receipt.metrics.sampleCount, samples.length);
+      assert.equal(receipt.metrics.avgGpuUtilPct, measured.length
+        ? measured.reduce((sum, value) => sum + value, 0) / measured.length : null);
+      assert.equal(receipt.metrics.maxGpuUtilPct, measured.length ? Math.max(...measured) : null);
+      assert.equal(receipt.metrics.avgApplicationFrameTimeMs, null);
+      assert.equal(receipt.metrics.frameTimeTelemetryAvailable, false);
+      assert.equal(receipt.metrics.storageTelemetryAvailable, false);
+      assert.equal(receipt.boundaries.readOnly, true);
+      assert.equal(receipt.boundaries.mutationAuthority, false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
+});
 
 const performance = await readFile(new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url), 'utf8');
 const recorder = await readFile(new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url), 'utf8');
@@ -27,6 +74,12 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /rightEyePresentMs/);
   assert.match(recorder, /eyePresentationSkewMs/);
   assert.match(recorder, /poseAgeMs/);
+  assert.match(recorder, /visualFrameState/);
+  assert.match(recorder, /visualProjectionViews/);
+  assert.match(recorder, /operatorMarkerCount/);
+  assert.match(recorder, /aerSequenceFaultCount/);
+  assert.match(recorder, /openXrVisualSubmission/);
+  assert.match(recorder, /visualFaultMarkerCapability/);
   assert.match(recorder, /Get-StarfieldVrControllerSample/);
   assert.match(recorder, /xinputModuleLoaded/);
   assert.match(recorder, /RUNTIME_METRICS_LAUNCH_IDENTITY_MISMATCH/);
@@ -78,7 +131,11 @@ test('Meta Air Link runtime metrics producer feeds measured render and transport
   assert.match(runtimeProducer, /app_render_height/);
   assert.match(runtimeProducer, /SessionStartedAtUtc/);
   assert.match(runtimeProducer, /NoGameGraceSeconds = 35/);
-  assert.match(runtimeProducer, /eventUtc -ge \$sessionStartUtc\.AddSeconds\(-2\)/);
+  assert.match(runtimeProducer, /eventUtc -lt \$sessionStartUtc\.AddSeconds\(-2\)/);
+  assert.match(runtimeProducer, /Get-LatestOpenXrVisualEvent/);
+  assert.match(runtimeProducer, /Get-ProviderTelemetryState/);
+  assert.match(runtimeProducer, /visualFrameState/);
+  assert.match(runtimeProducer, /aerSequenceFaultCount/);
   assert.match(performance, /starfield-vr-runtime-metrics-producer\.ps1/);
   assert.match(performance, /source = 'META_OCULUS_PERFLOG_XRS_STATS'/);
   assert.match(performance, /freshnessSeconds = 75/);
@@ -102,6 +159,9 @@ test('playtest guard adapts capture cadence and produces configuration, crash an
   assert.match(performance, /Get-StarfieldVrConfigurationFingerprint/);
   assert.match(performance, /Get-StarfieldVrCrashFingerprint/);
   assert.match(performance, /adaptiveCaptureReason/);
+  assert.match(performance, /VISUAL_SUBMISSION_ANOMALY/);
+  assert.match(performance, /OPERATOR_VISUAL_FAULT/);
+  assert.match(performance, /AER_SEQUENCE_FAULT/);
   assert.match(performance, /sampleIntervalSeconds = if \(\$adaptiveCaptureActive\) \{ 1 \}/);
   assert.match(performance, /p95ApplicationFrameTimeMs/);
   assert.match(performance, /p99ApplicationFrameTimeMs/);
@@ -128,6 +188,10 @@ test('diagnosis classifies frame, stereo, transport and input evidence and expos
   assert.match(diagnosis, /air-link-packet-loss-observed/);
   assert.match(diagnosis, /air-link-jitter-high/);
   assert.match(diagnosis, /controller-problem-observed/);
+  assert.match(diagnosis, /visual-submission-anomaly-observed/);
+  assert.match(diagnosis, /missing-stereo-eye-observed/);
+  assert.match(diagnosis, /operator-visual-fault-marked/);
+  assert.match(diagnosis, /aer-sequence-fault-observed/);
   assert.match(diagnosis, /'RENDERING_OR_STEREO'/);
   assert.match(diagnosis, /'STREAMING_TRANSPORT'/);
   assert.match(diagnosis, /'TRACKING_OR_INPUT'/);
@@ -138,6 +202,11 @@ test('diagnosis classifies frame, stereo, transport and input evidence and expos
 test('shared telemetry surfaces recorder completeness and operator physical verdict without inference', () => {
   assert.match(reporter, /frameTimeTelemetryAvailable/);
   assert.match(reporter, /maxEyePresentationSkewMs/);
+  assert.match(reporter, /visualAnomalySampleCount/);
+  assert.match(reporter, /missingStereoEyeSampleCount/);
+  assert.match(reporter, /operatorVisualFaultMarkerCount/);
+  assert.match(reporter, /maxAerSequenceFaultCount/);
+  assert.match(reporter, /pixelContentState/);
   assert.match(reporter, /telemetryCompleteness/);
   assert.match(reporter, /skyrimBaselineComparison/);
   assert.match(reporter, /physicalVerdict/);
