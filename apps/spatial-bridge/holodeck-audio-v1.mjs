@@ -64,7 +64,7 @@ export function createHolodeckAudioControls({
   function closeOwner(owner){
     if(!owner||owner.closed)return;
     owner.closed=true;owner.cancel();
-    for(const [track,listener] of owner.listeners)try{track.removeEventListener?.('ended',listener);}catch{}
+    for(const [track,event,listener] of owner.listeners)try{track.removeEventListener?.(event,listener);}catch{}
     owner.listeners=[];
     stopTracks(owner.stream);owner.stream=null;
     if(owner.oscillator){owner.oscillator.onended=null;try{owner.oscillator.stop();}catch{}}
@@ -220,13 +220,25 @@ export function createHolodeckAudioControls({
         publish({microphoneActive:false,microphonePending:false,status:reason});
         return {ok:false,reason};
       }
+      // Quest Link, browser tab suspension or headset loss can mute a still-live
+      // track. A muted local test is not evidence of an active microphone route.
+      // Revoke the one owned grant and require a new deliberate Test click.
+      const stopForMute=()=>{
+        if(!ownsMic(owner))return;
+        releaseMicrophone();
+        publish({microphoneActive:false,microphonePending:false,
+          status:'Microphone was muted or interrupted. Local test stopped. Check the Quest route and explicitly restart; ChatGPT Voice is separate.'});
+      };
       for(const track of tracks){
         const ended=()=>{if(ownsMic(owner)){
           releaseMicrophone();publish({microphoneActive:false,microphonePending:false,status:'Microphone test ended. Start a new test when ready.'});
         }};
-        owner.listeners.push([track,ended]);track.addEventListener?.('ended',ended,{once:true});
+        owner.listeners.push([track,'ended',ended],[track,'mute',stopForMute]);
+        track.addEventListener?.('ended',ended,{once:true});
+        track.addEventListener?.('mute',stopForMute,{once:true});
       }
       if(tracks.some(track=>track.readyState==='ended')){releaseMicrophone();publish({microphoneActive:false,microphonePending:false,status:'Microphone test ended. Start a new test when ready.'});return stoppedResult('Microphone');}
+      if(tracks.some(track=>track.muted===true)){stopForMute();return stoppedResult('Microphone');}
       if(typeof AudioContextCtor==='function'){
         const context=new AudioContextCtor();owner.context=context;
         owner.source=context.createMediaStreamSource(stream);
@@ -238,6 +250,7 @@ export function createHolodeckAudioControls({
         }
       }
       if(!ownsMic(owner))return stoppedResult('Microphone');
+      if(tracks.some(track=>track.muted===true)){stopForMute();return stoppedResult('Microphone');}
       const reason='Microphone opened locally. Windows and ChatGPT still control Voice input.';
       publish({microphoneActive:true,microphonePending:false,status:reason});
       accepted=ownsMic(owner);return accepted?{ok:true,reason}:stoppedResult('Microphone');

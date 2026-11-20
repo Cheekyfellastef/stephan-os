@@ -5,11 +5,12 @@ import { createHolodeckAudioControls,readSpatialAudioPreferences } from '../apps
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 const drain=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
 function mediaStream(deviceId='headset'){
-  const listeners=new Set();
-  const track={readyState:'live',stops:0,getSettings(){return {deviceId};},stop(){this.stops++;this.readyState='ended';},
-    addEventListener(event,listener){assert.equal(event,'ended');listeners.add(listener);},
-    removeEventListener(event,listener){assert.equal(event,'ended');listeners.delete(listener);},
-    end(){this.readyState='ended';for(const listener of [...listeners])listener();}};
+  const listeners={ended:new Set(),mute:new Set()};
+  const track={readyState:'live',muted:false,stops:0,getSettings(){return {deviceId};},stop(){this.stops++;this.readyState='ended';},
+    addEventListener(event,listener){assert.ok(event in listeners);listeners[event].add(listener);},
+    removeEventListener(event,listener){assert.ok(event in listeners);listeners[event].delete(listener);},
+    end(){this.readyState='ended';for(const listener of [...listeners.ended])listener();},
+    mute(){this.muted=true;for(const listener of [...listeners.mute])listener();}};
   return {track,getTracks:()=>[track],getAudioTracks:()=>[track]};
 }
 function microphoneHarness(options={}){
@@ -488,4 +489,31 @@ test('duplicate Quest audio IDs revoke both routes and cannot silently restore s
   assert.equal(audio.setOutput('quest-speaker'),true,'only fresh explicit selection can restore the speaker hint');
   assert.deepEqual([micRequests,speakerContexts],[0,0],'selection is never a media grant or ChatGPT Voice session');
   audio.dispose();
+});
+
+test('Quest microphone mute revokes the owned local test without automatic regrant',async()=>{
+  const h=microphoneHarness();await h.audio.listDevices();assert.equal(h.audio.setInput('headset'),true);
+  const opening=h.audio.testMicrophone(),stream=mediaStream();h.requests[0].resolve(stream);
+  assert.equal((await opening).ok,true);assert.equal(h.audio.getState().microphoneActive,true);
+  stream.track.mute();
+  assert.equal(stream.track.stops,1,'a muted Quest route must release its owned track');
+  assert.equal(h.audio.getState().microphoneActive,false);
+  assert.equal(h.audio.getState().microphonePending,false);
+  assert.match(h.audio.getState().status,/muted or interrupted.*stopped/i);
+  assert.equal(h.requests.length,1,'mute must never retry permission or start ChatGPT Voice');
+  stream.track.muted=false;await drain();
+  assert.equal(h.audio.getState().microphoneActive,false,'later unmute cannot regrant local capture');
+  h.audio.dispose();assert.equal(stream.track.stops,1);
+});
+
+test('already-muted Quest grant cannot report a live microphone',async()=>{
+  const h=microphoneHarness();await h.audio.listDevices();assert.equal(h.audio.setInput('headset'),true);
+  const opening=h.audio.testMicrophone(),stream=mediaStream();
+  stream.track.muted=true;h.requests[0].resolve(stream);
+  assert.equal((await opening).ok,false);
+  assert.equal(stream.track.stops,1);
+  assert.equal(h.audio.getState().microphoneActive,false);
+  assert.equal(h.audio.getState().microphonePending,false);
+  assert.match(h.audio.getState().status,/muted or interrupted/i);
+  h.audio.dispose();assert.equal(stream.track.stops,1);
 });
