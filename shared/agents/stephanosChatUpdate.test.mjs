@@ -301,7 +301,7 @@ test('genuine covering canonical scoped proof remains admissible through the exa
   assert.equal(result.ok,true);assert.equal(supervisorCount(calls),1);
 });
 
-async function actualCanonicalAdoptionFixture(changedPaths,{custody=false,auxiliaryFailure=false}={}) {
+async function actualCanonicalAdoptionFixture(changedPaths,{custody=false,auxiliaryFailure=false,startupScope=''}={}) {
   const directory=mkdtempSync(path.join(tmpdir(),'chat-update-existing-owner-'));
   const paths={repoRoot:path.join(directory,'repo'),workspaceRoot:path.join(directory,'workspace')};
   mkdirSync(paths.repoRoot);mkdirSync(paths.workspaceRoot);
@@ -315,7 +315,7 @@ async function actualCanonicalAdoptionFixture(changedPaths,{custody=false,auxili
   const syncRecord={...createSharedWorkspaceStatusRecord({statusId:'battle-bridge-github-sync-current',participantId:'mission-orchestrator',
     timestampUtc:new Date().toISOString(),status:'SYNC_NO_CHANGE'}),classification:'SYNC_NO_CHANGE',localHeadBefore:head,remoteHeadObserved:head,pendingRefresh:null};
   writeFileSync(path.join(paths.workspaceRoot,'status','battle-bridge-github-sync-current.json'),JSON.stringify(syncRecord));
-  const proof=await runBattleBridgeIgnitionSyncPreflight({platform:'win32',repoRoot:paths.repoRoot,canonicalRepoRoot:paths.repoRoot,
+  const proof=await runBattleBridgeIgnitionSyncPreflight({startupScope,platform:'win32',repoRoot:paths.repoRoot,canonicalRepoRoot:paths.repoRoot,
     syncAndRefreshFn:()=>runBattleBridgeSyncAndRefresh({paths,expectedPaths:paths,platform:'win32',
       pendingReader:readPendingPostSyncRefresh,capacityObservationHeartbeat:async()=>({ok:true,capacityObservationOnly:true}),
       goalDiscoveryHeartbeat:async()=>({ok:true}),controlPlaneReconciler:()=>auxiliaryFailure?{ok:false,blocker:'CONTROL_PLANE_FIXED_INSTALLER_FAILED'}:{ok:true},
@@ -340,6 +340,39 @@ test('changed optional-only transitions use real canonical writer reader and pre
       script==='battle-bridge-post-sync-refresh.mjs'?refreshReply(actual.producer):preflightReply(actual.proof)}});
     assert.equal(result.ok,true,classification);assert.equal(supervisorCount(calls),1);assert.equal(result.desktopIgnitionReadiness,'UNPROVEN');
     assert.equal((await actual.reader()).spans.length,auxiliaryFailure?0:1);
+  }
+});
+
+test('three-app scoped startup cross-checks exact canonical optional debt without granting native commissioning',async()=>{
+  for(const path of ['plugins/sovereign-commander/plugin.json','scripts/spatial-window-host.mjs']){
+    const actual=await actualCanonicalAdoptionFixture([path],{startupScope:'THREE_APP_DESKTOP_STARTUP'});
+    assert.equal(actual.proof.ok,true,path);
+    assert.equal(actual.proof.classification,'IGNITION_SYNC_PREFLIGHT_PASS_THREE_APP_STARTUP',path);
+    assert.equal(actual.proof.startupAdmission.mandatoryRemaining.length,0,path);
+    const {result,calls}=await adoptionFixture({adoptionEvidenceReader:actual.reader,spawn:{stageReply:script=>
+      script==='battle-bridge-post-sync-refresh.mjs'?refreshReply(actual.producer):preflightReply(actual.proof)}});
+    assert.equal(result.ok,true,path);assert.equal(supervisorCount(calls),1,path);
+    assert.equal(result.desktopIgnitionReadiness,'UNPROVEN',path);
+  }
+});
+
+test('three-app scoped preflight cannot forge source, residual debt, scope or admission',async()=>{
+  const actual=await actualCanonicalAdoptionFixture(['plugins/sovereign-commander/plugin.json'],
+    {startupScope:'THREE_APP_DESKTOP_STARTUP'});
+  assert.equal(actual.proof.ok,true);
+  const changes=[
+    proof=>{proof.startupScope='ALL_SERVICES';},
+    proof=>{proof.startupAdmission.mandatoryRemaining=['governor'];},
+    proof=>{proof.startupAdmission.globalRefreshState='COMPLETE';},
+    proof=>{proof.refreshObligations.remaining=[];},
+    proof=>{proof.refreshBlocker='';},
+    proof=>{proof.extraAuthority=true;},
+  ];
+  for(const change of changes){
+    const forged=JSON.parse(JSON.stringify(actual.proof));change(forged);
+    const {result,calls}=await adoptionFixture({adoptionEvidenceReader:actual.reader,spawn:{stageReply:script=>
+      script==='battle-bridge-post-sync-refresh.mjs'?refreshReply(actual.producer):preflightReply(forged)}});
+    assert.equal(result.ok,false,change.toString());assert.equal(supervisorCount(calls),0,change.toString());
   }
 });
 

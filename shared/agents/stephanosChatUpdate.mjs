@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
 import { projectIgnitionInertEvidenceV1, projectIgnitionOwnerResultV1,
-  projectPostSyncRemainingIgnitionObligationsV1 } from './postSyncRuntimeRefreshCoordinator.mjs';
+  projectPostSyncRemainingIgnitionObligationsV1, projectThreeAppDesktopStartupAdmissionV1,
+  THREE_APP_DESKTOP_STARTUP_SCOPE_V1 } from './postSyncRuntimeRefreshCoordinator.mjs';
 import { collectPostSyncRefreshDebt, resolvePostSyncRefreshDebt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
 import { createFixedSyncAndRefreshAdapter, SYNC_AND_REFRESH_CHILD_BUDGET_MS,
   SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS, readCanonicalPostSyncRefreshEvidenceV1,
@@ -167,15 +168,21 @@ async function admitCanonicalUpdateRuntime({ repoRoot, sync, spawnSyncFn, adopti
   if (!preflight.ok) return result(false, preflight.blocker);
   const proof = preflight.parsed;
   const classifications = ['IGNITION_SYNC_PREFLIGHT_PASS', 'IGNITION_SYNC_PREFLIGHT_PASS_CONTROL_PLANE_DEGRADED',
-    'IGNITION_SYNC_PREFLIGHT_PASS_COMMANDER_CUSTODY_DEGRADED', 'IGNITION_SYNC_PREFLIGHT_PASS_PLUGIN_HOST_DEGRADED'];
+    'IGNITION_SYNC_PREFLIGHT_PASS_COMMANDER_CUSTODY_DEGRADED', 'IGNITION_SYNC_PREFLIGHT_PASS_PLUGIN_HOST_DEGRADED',
+    'IGNITION_SYNC_PREFLIGHT_PASS_THREE_APP_STARTUP'];
+  const scoped = proof.classification === classifications[4];
   const common = ['schemaVersion','ok','skipped','classification','sourceHead','syncClassification','syncBlockerReason',
     'refreshCount','pendingRefreshObserved','sourceForwardedBeforeRefresh','refreshDebtCoalesced','controlPlaneRepairObserved','blocker','finalVerdict'];
+  const reports = ['refreshBlocker','refreshObligations'];
+  const scopeFields = scoped ? ['startupScope','startupAdmission'] : [];
   const optional = proof.classification === classifications[1] ? ['controlPlaneDegraded','controlPlaneBlocker']
     : proof.classification === classifications[2] ? ['commanderDegraded','commanderBlocker']
-      : proof.classification === classifications[3] ? ['pluginHostDegraded','pluginHostBlocker'] : [];
+      : proof.classification === classifications[3] ? ['pluginHostDegraded','pluginHostBlocker']
+        : scoped && proof.controlPlaneDegraded === true ? ['controlPlaneDegraded','controlPlaneBlocker'] : [];
   if (proof.schemaVersion !== 'stephanos.battle-bridge-ignition-sync-preflight.v1' || proof.ok !== true
     || proof.skipped !== false || proof.sourceHead !== sourceHead || !classifications.includes(proof.classification)
-    || common.some(key => !Object.hasOwn(proof,key)) || Object.keys(proof).some(key => !common.includes(key) && !optional.includes(key))
+    || common.some(key => !Object.hasOwn(proof,key))
+    || Object.keys(proof).some(key => ![...common,...optional,...reports,...scopeFields].includes(key))
     || proof.syncClassification !== 'SYNC_NO_CHANGE' || typeof proof.syncBlockerReason !== 'string'
     || !Number.isSafeInteger(proof.refreshCount) || proof.refreshCount < 0 || proof.refreshCount > 3
     || ['pendingRefreshObserved','sourceForwardedBeforeRefresh','refreshDebtCoalesced','controlPlaneRepairObserved'].some(key => typeof proof[key] !== 'boolean')
@@ -184,11 +191,28 @@ async function admitCanonicalUpdateRuntime({ repoRoot, sync, spawnSyncFn, adopti
     return result(false, 'CHAT_UPDATE_ADOPTION_PREFLIGHT_UNPROVEN');
   const afterEvidence = await canonicalEvidence();
   if (!afterEvidence.ok) return result(false, afterEvidence.blocker);
-  if (proof.classification !== classifications[0] && (!afterEvidence.records.refreshRecord
-    || afterEvidence.records.refreshRecord.afterHead !== sourceHead))
+  const refresh = afterEvidence.records.refreshRecord;
+  if (proof.classification !== classifications[0] && (!refresh || refresh.afterHead !== sourceHead))
     return result(false, 'CHAT_UPDATE_OPTIONAL_ADOPTION_COHORT_UNPROVEN');
-  if (!afterEvidence.paid) {
-    const refresh = afterEvidence.records.refreshRecord;
+  // Reporting fields and scoped startup are not caller-granted authority. Check
+  // both against a separately read, exact-head canonical record, not stdout.
+  const sameFrame = (provided, canonical) => JSON.stringify(provided) === JSON.stringify(canonical);
+  const hasReports = reports.some(key => Object.hasOwn(proof, key));
+  if (hasReports) {
+    const obligations = refresh && projectPostSyncRemainingIgnitionObligationsV1(refresh, sourceHead);
+    if (!reports.every(key => Object.hasOwn(proof, key)) || !obligations
+      || typeof proof.refreshBlocker !== 'string' || proof.refreshBlocker !== refresh.blocker
+      || !sameFrame(proof.refreshObligations, obligations))
+      return result(false, 'CHAT_UPDATE_CANONICAL_PREFLIGHT_REPORT_MISMATCH');
+  }
+  if (scoped) {
+    const admission = refresh && projectThreeAppDesktopStartupAdmissionV1(refresh, sourceHead);
+    if (!hasReports || !admission || admission.admitted !== true
+      || proof.startupScope !== THREE_APP_DESKTOP_STARTUP_SCOPE_V1
+      || !sameFrame(proof.startupAdmission, admission))
+      return result(false, 'CHAT_UPDATE_THREE_APP_CANONICAL_ADMISSION_UNPROVEN');
+  }
+  if (!afterEvidence.paid && !scoped) {
     if (!refresh || refresh.afterHead !== sourceHead) return result(false, 'CHAT_UPDATE_OPTIONAL_ADOPTION_COHORT_UNPROVEN');
     // Reuse the exact canonical optional-hold decision over the actual current
     // record. This is a pure check, with no additional sync/writer/executor.
