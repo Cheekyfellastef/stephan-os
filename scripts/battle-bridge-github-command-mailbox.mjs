@@ -70,7 +70,7 @@ import { MAILBOX_ROTATION_OPERATION, MAILBOX_ROTATION_REQUEST_ID, auditMailboxRo
   parseMailboxRotationComment, mailboxRotationCommandAllowed, projectMailboxRotation,
   validateMailboxRotationRecord, projectMailboxRotationReceipt } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
-import { attestHistoricalMailboxTerminal, projectHistoricalTerminalAttestation,
+import { inspectHistoricalMailboxTerminal, projectHistoricalTerminalAttestation,
   HISTORICAL_TERMINAL_ATTESTATION_VERDICT } from '../shared/agents/mailboxHistoricalTerminalAttestationV1.mjs';
 import { executeMailboxRotationOnHost, readMailboxAuthorityLiteral, verifyMailboxRotationActivationPull } from './canonical-mailbox-rotation-host-v1.mjs';
 import { buildMailboxRotationFence, findMailboxRotationFence } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
@@ -4493,16 +4493,17 @@ export async function readMailboxReceipt(command = {}, {
       return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_JSON_INVALID', targetRequestId };
     }
     if (String(receipt?.requestId || '') !== targetRequestId) {
-      const historicalTerminalAttestation = attestHistoricalMailboxTerminal({
+      const historical = inspectHistoricalMailboxTerminal({
         command, identity, processSourceHead, readCommentId, unidentifiedReceipt: receipt,
         readLedger: readExecutionLedger, now,
       });
+      const historicalTerminalAttestation = historical.attestation;
       if (historicalTerminalAttestation) return {
         ...identity, ok: true, finalVerdict: HISTORICAL_TERMINAL_ATTESTATION_VERDICT,
         historicalTerminalAttestation,
         arbitraryFilesystemAccess: false, commandExecutionAccess: false, sourceMutationAccess: false,
       };
-      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
+      return { ...identity, ok: false, blocker: historical.blocker || 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
     }
     return {
       ...identity,

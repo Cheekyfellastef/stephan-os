@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   HISTORICAL_TERMINAL_TARGETS, HISTORICAL_TERMINAL_ATTESTATION_VERDICT,
-  attestHistoricalMailboxTerminal, historicalTerminalDigest, historicalTerminalTextSha256,
+  attestHistoricalMailboxTerminal, inspectHistoricalMailboxTerminal, historicalTerminalDigest, historicalTerminalTextSha256,
   validateHistoricalTerminalAttestation, projectHistoricalTerminalAttestation,
 } from '../shared/agents/mailboxHistoricalTerminalAttestationV1.mjs';
 import { auditMailboxRotationComments } from '../shared/agents/canonicalMailboxRotationV1.mjs';
@@ -140,7 +140,7 @@ test('actual READ filesystem path returns typed evidence without writes or ledge
     assert.equal(result.receipt, undefined); assert.equal(result.targetRequestId, undefined); assert.equal(reads, 2);
     assert.equal(readFileSync(path, 'utf8'), bytes); assert.deepEqual(record, ledger(target));
     const absent = await readMailboxReceipt(command(target), { ...options, readExecutionLedger: () => null });
-    assert.equal(absent.ok, false); assert.equal(absent.blocker, 'MAILBOX_RECEIPT_ID_MISMATCH');
+    assert.equal(absent.ok, false); assert.equal(absent.blocker, 'MAILBOX_HISTORICAL_LEDGER_NOT_FOUND');
   }
 });
 test('real projection, full serializer and forced compaction preserve exact safe evidence', () => {
@@ -241,3 +241,92 @@ test('a malformed competing READ result holds instead of crashing the inventory'
   assert.deepEqual(audit([...comments, malformed]).pendingBeforeBarrier, [targets[0].requestId]);
   assert.deepEqual(projectHistoricalTerminalAttestation(null, null), {});
 });
+
+function diagnostic(patch = {}) {
+  return inspectHistoricalMailboxTerminal({ command: command(), identity: identity(),
+    processSourceHead: head, readCommentId: 8000000001, unidentifiedReceipt: unidentified(),
+    readLedger: () => ledger(), now: () => observedAt, ...patch });
+}
+test('known-target diagnostic codes distinguish every failed ledger predicate without exposing records', () => {
+  const cases = [
+    ['LEDGER_NOT_FOUND', () => null],
+    ['LEDGER_INVALID', () => ({ ...ledger(), schemaVersion: 'untrusted' })],
+    ['LEDGER_IDENTITY_MISMATCH', () => ({ ...ledger(), requestId: targets[1].requestId })],
+    ['LEDGER_IDENTITY_MISMATCH', () => ({ ...ledger(), issueNumber: 3552 })],
+    ['LEDGER_IMPORTED_WITHOUT_DIGEST', () => ({ ...ledger(), commandDigest: '' })],
+    ['LEDGER_COMMAND_DIGEST_MISMATCH', () => ({ ...ledger(), commandDigest: 'f'.repeat(64) })],
+    ['LEDGER_RESERVED', () => ({ ...ledger(), phase: 'RESERVED' })],
+    ['LEDGER_RETIRED', () => ({ ...ledger(), phase: 'RETIRED' })],
+    ['LEDGER_NOT_TERMINAL', () => ({ ...ledger(), phase: 'UNKNOWN' })],
+    ['LEDGER_TERMINAL_STATE_UNPROVEN', () => { const value = ledger(); delete value.terminalState; return value; }],
+    ['LEDGER_INVALID', () => ({ ...ledger(), privatePayload: 'must-not-escape' })],
+    ['LEDGER_INVALID', () => ({ ...ledger(), terminalProofHash: '' })],
+    ['EVIDENCE_READ_FAILED', () => { throw Error('private-path-or-credential-must-not-escape'); }],
+  ];
+  for (const [suffix, readLedger] of cases) {
+    const result = diagnostic({ readLedger });
+    assert.deepEqual(result, { attestation: null, blocker: 'MAILBOX_HISTORICAL_' + suffix });
+    assert.equal(JSON.stringify(result).includes('must-not-escape'), false);
+    assert.equal(JSON.stringify(result).includes(targets[0].requestId), false);
+  }
+  let reads = 0;
+  assert.deepEqual(diagnostic({ readLedger: () => ++reads === 1 ? ledger() : null }),
+    { attestation: null, blocker: 'MAILBOX_HISTORICAL_LEDGER_UNSTABLE' });
+});
+test('diagnostics preserve admission, receipt conflict, expiry and unknown-target holds', () => {
+  for (const [patch, suffix] of [
+    [{ processSourceHead: 'b'.repeat(40) }, 'READ_BINDING_INVALID'],
+    [{ unidentifiedReceipt: { ...unidentified(), requestId: 'another-request-0001' } }, 'RECEIPT_IDENTITY_CONFLICT'],
+    [{ unidentifiedReceipt: unidentified(targets[0], 'DONE') }, 'RECEIPT_STATE_CONFLICT'],
+    [{ now: () => '2026-11-20T19:00:00.000Z' }, 'READ_EXPIRED'],
+  ]) assert.deepEqual(diagnostic(patch), { attestation: null, blocker: 'MAILBOX_HISTORICAL_' + suffix });
+  let ledgerReads = 0;
+  const unknown = diagnostic({ command: { ...command(), targetRequestId: 'unrelated-historical-001' },
+    readLedger: () => { ledgerReads++; return ledger(); } });
+  assert.deepEqual(unknown, { attestation: null, blocker: '' });
+  assert.equal(ledgerReads, 0);
+  assert.equal(diagnostic().blocker, '');
+  assert.deepEqual(diagnostic().attestation, proof());
+});
+test('actual failed READ retains only its typed blocker through full and compact public serialization', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'historical-mailbox-diagnostic-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const target of targets) {
+    const cmd = command(target);
+    const path = join(root, createWindowsSafeMailboxReceiptFilename(target.requestId));
+    const bytes = JSON.stringify(unidentified(target)); writeFileSync(path, bytes);
+    const result = await readMailboxReceipt(cmd, { receiptRoot: root,
+      readSourceIdentity: async () => identity(), processSourceHead: head, readCommentId: 8000000001,
+      readExecutionLedger: () => ({ ...ledger(target), phase: 'RESERVED' }), now: () => observedAt });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'MAILBOX_HISTORICAL_LEDGER_RESERVED');
+    assert.equal(result.historicalTerminalAttestation, undefined);
+    const raw = terminalReceipt(cmd, proof(target));
+    raw.state = 'BLOCKED'; raw.blocker = result.blocker;
+    raw.result = { ok: false, verdict: 'COMMAND_EXECUTION_BLOCKED',
+      requestId: cmd.requestId, operation: cmd.operation, result };
+    const projected = createSanitizedMailboxReceiptProjection(raw);
+    assert.equal(projected.blocker, result.blocker);
+    assert.equal(projected.operationResult.blocker, result.blocker);
+    for (const large of [false, true]) {
+      const value = structuredClone(raw);
+      if (large) value.result.result.blockers = Array(30).fill('X'.repeat(200));
+      const serialized = JSON.parse(serializeBoundedReceiptJson(value, large ? 9 * 1024 : 256 * 1024));
+      assert.equal(serialized.blocker, result.blocker);
+      assert.equal(serialized.result.result.blocker, result.blocker);
+      assert.equal(serialized.result.result.historicalTerminalAttestation, undefined);
+      if (large) assert.equal(serialized.githubProjectionTruncated, true);
+      const comments = [originals.find(original => original.id === target.originalCommentId),
+        ownerComment(cmd, 8000000001), ownerComment(serialized, 8000000002, true, '2026-11-20T18:00:04Z')];
+      assert.deepEqual(audit(comments).pendingBeforeBarrier, [target.requestId]);
+      assert.equal(JSON.stringify(serialized).includes(target.requestId), false);
+    }
+    assert.equal(readFileSync(path, 'utf8'), bytes);
+  }
+  const unrelated = { ...command(), targetRequestId: 'unrelated-historical-001' };
+  writeFileSync(join(root, createWindowsSafeMailboxReceiptFilename(unrelated.targetRequestId)), JSON.stringify(unidentified()));
+  const ordinary = await readMailboxReceipt(unrelated, { receiptRoot: root, readSourceIdentity: async () => identity(),
+    readExecutionLedger: () => { throw Error('unknown target must not read ledger'); } });
+  assert.equal(ordinary.blocker, 'MAILBOX_RECEIPT_ID_MISMATCH');
+});
+

@@ -81,35 +81,52 @@ const proofFields = ['schemaVersion', 'configSha256', 'targetRequestSha256', 'or
 
 // The source identity and original canonical ledger reader are trusted internal
 // dependencies, never caller-selected paths, records or proof fields.
-export function attestHistoricalMailboxTerminal({
+export function inspectHistoricalMailboxTerminal({
   command, identity, processSourceHead, readCommentId, unidentifiedReceipt, readLedger, now = () => new Date(),
 } = {}) {
+  const held = blocker => Object.freeze({ attestation: null, blocker });
   const target = targetForId(command?.targetRequestId);
-  if (!target || !validReadCommand(command, target) || typeof readLedger !== 'function'
+  if (!target) return held('');
+  if (!validReadCommand(command, target) || typeof readLedger !== 'function'
     || !Number.isSafeInteger(readCommentId) || readCommentId <= target.originalCommentId
     || identity?.ok !== true || identity.branch !== 'main' || identity.expectedHeadMatch !== true
     || identity.expectedHead !== command.expectedHead || identity.sourceHead !== command.expectedHead
-    || processSourceHead !== command.expectedHead
-    // A conflicting nonempty identity is not an erased historical identity.
-    || unidentifiedReceipt?.requestId !== ''
+    || processSourceHead !== command.expectedHead) return held('MAILBOX_HISTORICAL_READ_BINDING_INVALID');
+  // A conflicting nonempty identity is not an erased historical identity.
+  if (unidentifiedReceipt?.requestId !== ''
     || (unidentifiedReceipt.result?.requestId !== undefined && unidentifiedReceipt.result.requestId !== '')
     || unidentifiedReceipt.schemaVersion !== 'stephanos.battle-bridge-github-command-receipt.v1'
     || unidentifiedReceipt.repository !== repository || unidentifiedReceipt.issueNumber !== originalIssue
     || unidentifiedReceipt.branch !== 'main' || unidentifiedReceipt.operation !== originalOperation
     || unidentifiedReceipt.expectedHead !== target.originalExpectedHead
-    || !['ACCEPTED', 'DONE', 'BLOCKED'].includes(unidentifiedReceipt.state)) return null;
+    || !['ACCEPTED', 'DONE', 'BLOCKED'].includes(unidentifiedReceipt.state))
+    return held('MAILBOX_HISTORICAL_RECEIPT_IDENTITY_CONFLICT');
   try {
     const before = readLedger(target.requestId);
+    if (before == null) return held('MAILBOX_HISTORICAL_LEDGER_NOT_FOUND');
+    if (!object(before) || before.schemaVersion !== ledgerSchema)
+      return held('MAILBOX_HISTORICAL_LEDGER_INVALID');
+    if (before.requestId !== target.requestId || before.issueNumber !== originalIssue)
+      return held('MAILBOX_HISTORICAL_LEDGER_IDENTITY_MISMATCH');
+    if (before.commandDigest === '') return held('MAILBOX_HISTORICAL_LEDGER_IMPORTED_WITHOUT_DIGEST');
+    if (before.commandDigest !== target.normalizedCommandDigest)
+      return held('MAILBOX_HISTORICAL_LEDGER_COMMAND_DIGEST_MISMATCH');
+    if (before.phase === 'RESERVED') return held('MAILBOX_HISTORICAL_LEDGER_RESERVED');
+    if (before.phase === 'RETIRED') return held('MAILBOX_HISTORICAL_LEDGER_RETIRED');
+    if (before.phase !== 'TERMINAL') return held('MAILBOX_HISTORICAL_LEDGER_NOT_TERMINAL');
+    if (!terminal(before.terminalState)) return held('MAILBOX_HISTORICAL_LEDGER_TERMINAL_STATE_UNPROVEN');
     const record = ledgerProjection(before, target);
-    if (!record) return null;
+    if (!record) return held('MAILBOX_HISTORICAL_LEDGER_INVALID');
     // The malformed receipt supplies no authority. Only reject a contradiction;
     // never recover its timestamps, payload, native result, or blocker.
-    if (terminal(unidentifiedReceipt.state) && unidentifiedReceipt.state !== record.terminalState) return null;
+    if (terminal(unidentifiedReceipt.state) && unidentifiedReceipt.state !== record.terminalState)
+      return held('MAILBOX_HISTORICAL_RECEIPT_STATE_CONFLICT');
     const recordHash = historicalTerminalDigest(record);
     const after = readLedger(target.requestId);
-    if (!ledgerProjection(after, target) || historicalTerminalDigest(after) !== recordHash) return null;
+    if (!ledgerProjection(after, target) || historicalTerminalDigest(after) !== recordHash)
+      return held('MAILBOX_HISTORICAL_LEDGER_UNSTABLE');
     const observedAt = new Date(now()).toISOString();
-    if (Date.parse(observedAt) > Date.parse(command.expiresAt)) return null;
+    if (Date.parse(observedAt) > Date.parse(command.expiresAt)) return held('MAILBOX_HISTORICAL_READ_EXPIRED');
     const proof = {
       schemaVersion: HISTORICAL_TERMINAL_ATTESTATION_SCHEMA,
       configSha256: HISTORICAL_TERMINAL_CONFIG_SHA256,
@@ -136,10 +153,16 @@ export function attestHistoricalMailboxTerminal({
       replayPerformed: false,
       ledgerMutationPerformed: false,
     };
-    return Object.freeze({ ...proof, proofHash: historicalTerminalDigest(proof) });
+    return Object.freeze({ attestation: Object.freeze({ ...proof, proofHash: historicalTerminalDigest(proof) }), blocker: '' });
   } catch {
-    return null;
+    return held('MAILBOX_HISTORICAL_EVIDENCE_READ_FAILED');
   }
+}
+
+// Preserve the existing proof-or-null API. Diagnostics are finite non-authority
+// codes on the two known-target reads, never raw records, paths or exceptions.
+export function attestHistoricalMailboxTerminal(options = {}) {
+  return inspectHistoricalMailboxTerminal(options).attestation;
 }
 
 export function validateHistoricalTerminalAttestation(value) {
