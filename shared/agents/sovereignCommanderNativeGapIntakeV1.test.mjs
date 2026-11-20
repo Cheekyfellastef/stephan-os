@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+// Execute the guarded Skill Forge draft proof through this existing
+// Sovereign regression entrypoint without changing protected workflow authority.
+import '../skill-forge/skillGrowthProjectionV1.test.mjs';
 import { createSharedWorkspaceEventRecord } from './sharedAgentWorkspaceStore.mjs';
 import {
   extractSovereignNativeCapabilityGapsV1,

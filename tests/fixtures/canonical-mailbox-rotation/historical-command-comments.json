@@ -1,0 +1,30 @@
+[
+  {
+    "id": 6629817255,
+    "html_url": "https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-6629817255",
+    "issue_url": "https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3258",
+    "user": {
+      "login": "Cheekyfellastef",
+      "id": 267490109,
+      "type": "User"
+    },
+    "author_association": "OWNER",
+    "body": "```stephanos-battle-bridge-command\n{\n  \"schemaVersion\": \"stephanos.battle-bridge-github-command.v1\",\n  \"requestId\": \"openclaw-topstack-nonsecret-status-20261104-01\",\n  \"operation\": \"RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION\",\n  \"repository\": \"Cheekyfellastef/stephan-os\",\n  \"issueNumber\": 3258,\n  \"branch\": \"main\",\n  \"operatorApproval\": \"operator-approved\",\n  \"expectedHead\": \"1d8546ae4fd5980970dc16d0f95afe2e4dd89a15\",\n  \"expiresAt\": \"2026-11-04T12:08:00.000Z\",\n  \"remoteAction\": \"status-openclaw-whatsapp\"\n}\n```",
+    "created_at": "2026-11-04T11:49:10Z",
+    "updated_at": "2026-11-04T11:49:10Z"
+  },
+  {
+    "id": 6667748867,
+    "html_url": "https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-6667748867",
+    "issue_url": "https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3258",
+    "user": {
+      "login": "Cheekyfellastef",
+      "id": 267490109,
+      "type": "User"
+    },
+    "author_association": "OWNER",
+    "body": "<!-- stephanos:vr2707-20261105-1953-cf7-archive-1item-truncation-recovery-v1 -->\nFollow-up to same original #2707/#1591 read-only historical archive. First bounded 4-record [DONE #6667735974](https://github.com/Cheekyfellastef/stephan-os/issues/3258#issuecomment-6667735974) authentic outcome STARFIELD_VR_TELEMETRY_ARCHIVE_READY, exact expected process head, proofHash; but its public GitHub projection was `githubProjectionTruncated=true` and omitted session summary. This SECOND scoped page reduces telemetryLimit to 1 to try obtaining publishable session-level proof. It does not mutate game, governor, config, source, services, keys, approvals or source custody, and it is not physical Quest E2E acceptance. No duplicate of the earlier requestId.\n\n```stephanos-battle-bridge-command\n{\n  \"schemaVersion\": \"stephanos.battle-bridge-github-command.v1\",\n  \"requestId\": \"vr2707-20261105T1953Z-cf7-archive-single-session-v1\",\n  \"operation\": \"RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION\",\n  \"repository\": \"Cheekyfellastef/stephan-os\",\n  \"issueNumber\": 3258,\n  \"branch\": \"main\",\n  \"operatorApproval\": \"operator-approved\",\n  \"expectedHead\": \"cf7cd85b7afa96a696fd092b1ceb2e734f198a77\",\n  \"expiresAt\": \"2026-11-05T20:20:00.000Z\",\n  \"remoteAction\": \"starfield-vr-telemetry-archive\",\n  \"telemetryOffset\": 0,\n  \"telemetryLimit\": 1\n}\n```",
+    "created_at": "2026-11-05T19:52:06Z",
+    "updated_at": "2026-11-05T19:52:06Z"
+  }
+]

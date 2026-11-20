@@ -76,7 +76,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 300);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 302);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -98,7 +98,7 @@ test('isolated captured package proves imports and both source-owned runtime-rea
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 300);
+    assert.equal(complete.memberCount, 302);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);
@@ -177,7 +177,7 @@ test('fresh pinned preparation retains the installer, builder and dot-sourced ha
     const omitted=closure(root,lock);
     for(const item of expected.filter(row=>row.target===lock))
       assert.ok(omitted.missing.some(row=>JSON.stringify(row)===JSON.stringify(item)),JSON.stringify(item));
-    assert.equal(complete.memberCount,300);
+    assert.equal(complete.memberCount,302);
   } finally {dispose(root);}
 });
 
@@ -294,7 +294,7 @@ test('caravan package captures exactly five members including its fixed read-onl
     'shared/agents/battleBridgeMobileInstallationV1.mjs',
   ];
   const records = candidateRecords();
-  assert.equal(records.length, 300);
+  assert.equal(records.length, 302);
   for (const file of members) {
     assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(file));
     assert.throws(() => candidate(records.filter(row => row.path !== file)), /EXACT_SOURCE_REQUIRED/);

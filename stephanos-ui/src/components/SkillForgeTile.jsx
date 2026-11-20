@@ -104,10 +104,16 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
       <div className="skill-metrics">
         <article><span>Seed proposals</span><strong>{view.summary.proposals}</strong><small>Not installed skills</small></article>
         <article><span>Learning events</span><strong>{view.summary.witnessedLearning}</strong><small>Typed events in history</small></article>
+        <article><span>Sovereign draft skills</span><strong>{view.summary.sovereignDrafts}</strong><small>Not executable or activated</small></article>
         <article><span>Lessons qualified</span><strong>{view.summary.verifiedLessons}</strong><small>Passed exam + proof</small></article>
         <article><span>Published skill records</span><strong>{view.summary.publishedSkillRecords}</strong><small>Verified provenance schema</small></article>
         <article><span>Active recipients</span><strong>{view.summary.provenActiveTargets}</strong><small>Exact target runtime receipts</small></article>
       </div>
+      <section className="skill-panel" data-testid="skill-forge-sovereign-growth">
+        <div className="skill-section-head"><div><span className="skill-kicker">SOVEREIGN COMMANDER · REAL BUILD FEED</span><h3>Guarded skill conjuration</h3></div><span>Source: {view.summary.sovereignStatusTruth}</span></div>
+        <p>Live draft packets: <strong>{view.summary.sovereignDrafts}</strong> · Sovereign's own unmet abilities: <strong>{view.summary.sovereignNativeGaps}</strong> · Remote Commander parity gaps: <strong>{view.summary.sovereignParityGaps}</strong></p>
+        <p className="skill-truth-note">Source records come from canonical goal #2573. The blueprint vault shows these as non-installed drafts. Missing or stale data never proves completion. Actual construction, review, permission and runtime acceptance stay on the existing guarded build path.</p>
+      </section>
       <ConversationLearningJourney
         placement="skill-forge"
         uplift={conversationUplift}
@@ -160,7 +166,7 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
         <p className="skill-truth-note">Intake is review-only. No marketplace install, executable shell, automatic approval, new authority, global OpenClaw propagation or Battle Bridge activation is enabled. OpenClaw Local is the only initial candidate recipient.</p>
       </section>
       <section className="skill-panel">
-        <div className="skill-section-head"><div><span className="skill-kicker">CANDIDATE LIBRARY</span><h3>Skill blueprint vault</h3></div><span>{filtered.length} of {view.skillCandidates.length} seeds</span></div>
+        <div className="skill-section-head"><div><span className="skill-kicker">CANDIDATE LIBRARY</span><h3>Skill blueprint vault</h3></div><span>{filtered.length} of {view.skillCandidates.length} proposals</span></div>
         <div className="skill-filters" aria-label="Filter skill candidates">
           {FILTERS.map(value => <button type="button" key={value} className={filter === value ? 'selected' : ''} onClick={() => setFilter(value)}>{value.replaceAll('-', ' ')}</button>)}
         </div>
