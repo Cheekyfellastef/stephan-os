@@ -234,6 +234,17 @@ test('waiting-window retry is time-bounded, never relaunches game or replays sav
   assert.doesNotMatch(handoff, /Send-MonitorCommand|Start-StarfieldVrLauncherProcess|Start-MonitorFromHybridCard/);
 });
 
+test('same-run game identity drift fails closed before foreground or confirmation retarget', () => {
+  const receiver = functionSource('Receive-MonitorEvent');
+  assert.match(receiver, /\\$monitorState\\.RunId -ceq \\$event\\.runId/);
+  assert.match(receiver, /\\$monitorState\\.GameProcess\\.pid -ne \\$event\\.process\\.pid/);
+  assert.match(receiver, /\\$monitorState\\.GameProcess\\.createdFileTime -cne \\$event\\.process\\.createdFileTime/);
+  assert.match(receiver, /throw 'monitor-state-game-identity-drift'/);
+  assert.ok(receiver.indexOf("throw 'monitor-state-game-identity-drift'") <
+    receiver.indexOf('$monitorState.GameProcess = $event.process'));
+  assert.doesNotMatch(receiver, /Start-Process|Stop-Process|\\.Kill\\(/);
+});
+
 test('a broken monitor transport terminates all foreground retry work before closing child input', () => {
   const fault = functionSource('Stop-MonitorTransport');
   const retry = functionSource('Invoke-MonitorWaitingGameFocus');
