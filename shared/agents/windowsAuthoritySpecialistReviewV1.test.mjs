@@ -366,7 +366,7 @@ test('routes exact #3439 Reviewer bootstrap escalation before frozen fallback', 
       severity:'P0',code:'unsupported-high-risk-surface',path})),counts:{P0:3,P1:0,P2:0}},
     lineageEvidence:{schemaVersion:'stephanos.windows-authority-reconciliation-lineage.v1',
       repository:'Cheekyfellastef/stephan-os',sourceHead:head,sourceCommitSha:head,baseSha:base,
-      liveMainBeforeSha:base,liveMainAfterSha:base,parents:[],
+      liveMainBeforeSha:base,liveMainAfterSha:base,parents:['c'.repeat(40)],
       comparison:{status:'ahead',aheadBy:1,behindBy:0,baseCommitSha:base,mergeBaseCommitSha:base}},
     sources:[],
   });
