@@ -545,3 +545,21 @@ test('explicit malformed GitHub HEAD identities cannot inherit green review-read
  assert.equal(inconsistent.status,'BLOCKED');
  assert.equal(inconsistent.blocked[0].kind,'pr-head-invalid');
 });
+
+
+test('claimed HEAD cannot substitute for absent GitHub HEAD when promoting review readiness',()=>{
+ const claimed='a'.repeat(40);
+ for(const headFields of [{},{headSha:''},{headRefOid:null}]){
+  const briefing=buildGitHubOperatorBriefing({pullRequests:[{
+   number:1500,publicationVerified:true,checksStatus:'pass',claimedHeadSha:claimed,...headFields,
+  }]});
+  assert.equal(briefing.status,'BLOCKED');
+  assert.equal(briefing.readyForReview.length,0);
+  assert.equal(briefing.blocked[0].kind,'pr-head-unverified');
+ }
+ const verified=buildGitHubOperatorBriefing({pullRequests:[{
+  number:1500,publicationVerified:true,checksStatus:'pass',claimedHeadSha:claimed,headRefOid:claimed,
+ }]});
+ assert.equal(verified.status,'PASS');
+ assert.equal(verified.readyForReview.length,1);
+});

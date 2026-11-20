@@ -183,6 +183,12 @@ export function buildGitHubOperatorBriefing(input={}){
   const pubOk=pr.publicationVerified===true || hasProof(evidence,n,'PR_PUBLICATION_VERIFIER_PASS');
   if(!pubOk){ missing=true; waitingForProof.push(item('pr-missing-publication-proof',pr,'Missing PR publication proof from PRPublicationVerifier.')); }
   if(text(pr.headSha)&&text(pr.headRefOid)&&text(pr.headSha)!==text(pr.headRefOid)){ blocked.push(item('pr-head-evidence-conflict',pr,'Conflicting GitHub HEAD identities require reconciliation.')); continue; }
+  // A claimed head is not an authenticated GitHub observation. Without an
+  // observed head there is no source identity against which to verify the claim.
+  if(text(pr.claimedHeadSha)&&!prHead(pr)){
+   blocked.push(item('pr-head-unverified',pr,'Claimed HEAD has no observed GitHub HEAD for exact-identity verification.'));
+   continue;
+  }
   if(text(pr.claimedHeadSha)&&prHead(pr)&&text(pr.claimedHeadSha)!==prHead(pr)){ blocked.push(item('pr-head-mismatch',pr,'Claimed HEAD does not match GitHub/Battle Bridge proof.')); continue; }
   if(n===1444 && !(pr.hardenedRuntimeProof===true || hasProof(evidence,1444,'HARDENED_RUNTIME_PROOF_PASS'))){ blocked.push(item('pr-runtime-blocked',pr,'Runtime-blocked until hardened runtime proof exists.')); continue; }
   if(arr(pr.blockers).length){ blocked.push({...item('pr-blocked',pr,arr(pr.blockers).join(' | ')), blockers:arr(pr.blockers).map(text)}); continue; }
