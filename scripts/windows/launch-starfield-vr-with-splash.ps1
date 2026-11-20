@@ -102,6 +102,7 @@ $monitorState = [pscustomobject]@{
     ConfirmationToken = $null
     RunId = $null
     GameProcess = $null
+    GameProcessIdentity = $null # Per-run immutable identity survives null cleanup frames
     Result = $null
     DetailText = ''
     FocusAttemptedRunId = ''
@@ -808,10 +809,17 @@ function Receive-MonitorEvent {
     # well-typed later frame cannot silently retarget foreground or confirmation.
     # A null process is allowed for terminal cleanup after the game exits.
     if ($monitorState.RunId -and $event.runId -and $monitorState.RunId -ceq $event.runId -and
-        $monitorState.GameProcess -and $event.process -and
-        ($monitorState.GameProcess.pid -ne $event.process.pid -or
-         $monitorState.GameProcess.createdFileTime -cne $event.process.createdFileTime)) {
+        $monitorState.GameProcessIdentity -and $event.process -and
+        ($monitorState.GameProcessIdentity.pid -ne $event.process.pid -or
+         $monitorState.GameProcessIdentity.createdFileTime -cne $event.process.createdFileTime)) {
         throw 'monitor-state-game-identity-drift'
+    }
+    # The live frame may legitimately omit the process during cleanup. Keep the
+    # original witnessed identity until the run ID changes, rather than allowing
+    # a later same-run frame to substitute a different game process.
+    if ($monitorState.RunId -cne $event.runId) { $monitorState.GameProcessIdentity = $null }
+    if ($event.process -and -not $monitorState.GameProcessIdentity) {
+        $monitorState.GameProcessIdentity = $event.process
     }
     $monitorState.Mode = $event.mode
     $monitorState.Busy = $event.busy
