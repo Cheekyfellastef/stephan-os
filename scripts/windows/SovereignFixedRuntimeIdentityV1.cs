@@ -45,7 +45,7 @@ namespace Stephanos.Sovereign {
   }
   public static partial class CoreJobCustodyV1 {
     // A capacity bound, never a replacement for exact installed membership.
-    const int RuntimeSourceMemberLimitV1 = 302;
+    const int RuntimeSourceMemberLimitV1 = 300;
     const string RuntimeSourceRootV1 = @"C:\Users\Stephan Callear\Documents\GitHub\stephan-os";
     const string RuntimeProtectedRootV1 = @"C:\Program Files\Stephanos\SovereignFixedRuntimeV1";
     static bool RuntimeHexV1(string value,int length) {
@@ -393,8 +393,6 @@ namespace Stephanos.Sovereign {
             !(row.Path=="package.json" || row.Path==".gitattributes" ||
               row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs" ||
               row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs" ||
-              row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs" ||
-              row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc2-gateway-provider.mjs" ||
               row.Path=="src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp" ||
               System.Text.RegularExpressions.Regex.IsMatch(row.Path,@"^(scripts|shared|stephanos-server)/[A-Za-z0-9._/-]+$")) ||
             row.Path.Contains("..") || row.Path.Contains("//") || !RuntimeHexV1(row.Sha256,64) ||

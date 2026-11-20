@@ -4,8 +4,6 @@
     ".gitattributes",
     "integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs",
     "integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs",
-    "integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs",
-    "integrations/openclaw/stephanos-builder-provider/lib/oc2-gateway-provider.mjs",
     "package.json",
     "scripts/battle-bridge-caravan-http-v1.mjs",
     "scripts/battle-bridge-caravan-page-v1.mjs",

@@ -76,7 +76,7 @@ function closure(root, omitted) {
 }
 
 test('directory package captures exactly three dependencies and rejects incomplete or extra records', () => {
-  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 302);
+  assert.equal(FIXED_RUNTIME_SOURCE_PATHS_V1.length, 300);
   for (const path of directoryPaths) assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(path), path);
   const records = candidateRecords();
   assert.throws(() => candidate(records.filter(row => !directoryPaths.includes(row.path))), /EXACT_SOURCE_REQUIRED/);
@@ -94,45 +94,11 @@ test('directory package captures exactly three dependencies and rejects incomple
   assert.equal(artifact.operatorApprovalProven, false);
 });
 
-test('existing OC2 worker imports are captured without admitting other provider files', () => {
-  const members = [
-    'integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs',
-    'integrations/openclaw/stephanos-builder-provider/lib/oc2-gateway-provider.mjs',
-  ];
-  assert.deepEqual(FIXED_RUNTIME_SOURCE_PATHS_V1.filter(path => path.includes('/lib/oc2-')), members);
-  const installer = readFileSync(join(repo, 'scripts/windows/install-sovereign-fixed-runtime-v1.ps1'), 'utf8');
-  const pathRule = installer.match(/\$row\.Path -cnotmatch '([^']+)'/);
-  assert.ok(pathRule, 'existing installer member admission rule');
-  const admitted = new RegExp(pathRule[1]);
-  for (const member of members) assert.equal(admitted.test(member), true, member);
-  for (const name of ['oc2-unreviewed.mjs', 'oc2-repository-scout.mjs', 'oc1-deterministic-test-build.mjs'])
-    assert.equal(admitted.test('integrations/openclaw/stephanos-builder-provider/lib/' + name), false, name);
-  const records = candidateRecords();
-  for (const member of members) {
-    assert.throws(() => candidate(records.filter(row => row.path !== member)), /EXACT_SOURCE_REQUIRED/);
-    const changed = records.map(row => row.path === member ? { ...row,
-      contentBase64: Buffer.concat([Buffer.from(row.contentBase64, 'base64'), Buffer.from('\n// changed\n')]).toString('base64'),
-    } : row);
-    assert.throws(() => candidate(changed), /SOURCE_BLOB_MISMATCH/);
-  }
-  const root = packagedCandidate();
-  try {
-    const complete = closure(root);
-    assert.deepEqual(complete.missing, []);
-    assert.deepEqual(complete.bare, []);
-    for (const member of members) {
-      assert.ok(complete.edges.some(edge => edge.file === 'scripts/mission-orchestrator-worker.mjs'
-        && edge.target === member && edge.role === 'import'), member);
-      assert.ok(closure(root, member).missing.some(row => row.target === member), member);
-    }
-  } finally { dispose(root); }
-});
-
 test('isolated captured package proves imports and both source-owned runtime-read edges', () => {
   const root = packagedCandidate();
   try {
     const complete = closure(root);
-    assert.equal(complete.memberCount, 302);
+    assert.equal(complete.memberCount, 300);
     assert.deepEqual(complete.missing, []);
     assert.deepEqual(complete.bare, []);
     assert.equal(complete.repositoryModulesEvaluated, false);
@@ -211,7 +177,7 @@ test('fresh pinned preparation retains the installer, builder and dot-sourced ha
     const omitted=closure(root,lock);
     for(const item of expected.filter(row=>row.target===lock))
       assert.ok(omitted.missing.some(row=>JSON.stringify(row)===JSON.stringify(item)),JSON.stringify(item));
-    assert.equal(complete.memberCount,302);
+    assert.equal(complete.memberCount,300);
   } finally {dispose(root);}
 });
 
@@ -328,7 +294,7 @@ test('caravan package captures exactly five members including its fixed read-onl
     'shared/agents/battleBridgeMobileInstallationV1.mjs',
   ];
   const records = candidateRecords();
-  assert.equal(records.length, 302);
+  assert.equal(records.length, 300);
   for (const file of members) {
     assert.ok(FIXED_RUNTIME_SOURCE_PATHS_V1.includes(file));
     assert.throws(() => candidate(records.filter(row => row.path !== file)), /EXACT_SOURCE_REQUIRED/);
