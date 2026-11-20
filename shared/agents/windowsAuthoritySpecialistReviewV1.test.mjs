@@ -525,6 +525,37 @@ test('composite review refuses contradictory typed counts and verdict before del
       assert.deepEqual(denied.proofRefs, [], field + ' count accessor must not yield proof');
       assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID');
     }
+    // Route discovery must not run getters even when they return the exact P0
+    // identity. Both partner routes use this same candidate matcher.
+    for (const index of [0, 1]) {
+      for (const field of ['severity', 'code', 'path']) {
+        const forgedFindings = analysis.findings.map((entry) => ({ ...entry }));
+        const literal = forgedFindings[index][field];
+        let getterCalls = 0;
+        Object.defineProperty(forgedFindings[index], field, {
+          enumerable: true,
+          get() { getterCalls++; return literal; },
+        });
+        const denied = review({ findings: forgedFindings });
+        assert.equal(getterCalls, 0, 'candidate discovery must not run ' + field + ' getter at ' + index);
+        assert.equal(denied.clean, false);
+        assert.deepEqual(denied.proofRefs, []);
+      }
+    }
+    // Getter-backed array indices are also executable, not wire findings.
+    for (const index of [0, 1]) {
+      const forgedFindings = analysis.findings.map((entry) => ({ ...entry }));
+      const literal = forgedFindings[index];
+      let getterCalls = 0;
+      Object.defineProperty(forgedFindings, String(index), {
+        enumerable: true,
+        get() { getterCalls++; return literal; },
+      });
+      const denied = review({ findings: forgedFindings });
+      assert.equal(getterCalls, 0, 'candidate discovery must not run index getter ' + index);
+      assert.equal(denied.clean, false);
+      assert.deepEqual(denied.proofRefs, []);
+    }
     // A valid upstream envelope may not carry prototype-forged P0 finding fields.
     for (const index of [0, 1]) {
       for (const field of ['severity', 'code', 'path']) {

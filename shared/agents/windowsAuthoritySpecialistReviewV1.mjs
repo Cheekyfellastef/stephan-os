@@ -147,15 +147,50 @@ const STARFIELD_VR_SPLASH_LAUNCH_PATH = 'scripts/windows/launch-starfield-vr-wit
 const STARFIELD_VR_LAUNCHER_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
 const STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0];
 
-function starfieldVrCompositeFindings(analysis = {}) {
-  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
-  if (findings.length !== 2) return null;
-  const expected = new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
-  const paths = findings.map((item) => String(item?.path || '').trim());
+
+function inertCompositeField(value, key) {
+  // Walk literal data descriptors only. Never execute a getter while selecting
+  // the specialist route; strict own-field checks still decide admission.
+  let cursor = value;
+  while (cursor !== null && (typeof cursor === 'object' || typeof cursor === 'function')) {
+    const slot = Object.getOwnPropertyDescriptor(cursor, key);
+    if (slot) return Object.hasOwn(slot, 'value') ? slot.value : undefined;
+    cursor = Object.getPrototypeOf(cursor);
+  }
+  return undefined;
+}
+
+function inertTwoP0CompositeFindings(analysis, expected) {
+  const findings = inertCompositeField(analysis, 'findings');
+  if (!Array.isArray(findings) || findings.length !== 2) return null;
+  // Two adjacent accessors cannot create a trusted two-P0 candidate.
+  const entries = [inertCompositeField(findings, '0'), inertCompositeField(findings, '1')];
+  const identities = entries.map((item) => ({
+    path: inertCompositeField(item, 'path'),
+    severity: inertCompositeField(item, 'severity'),
+    code: inertCompositeField(item, 'code'),
+  }));
+  const known = [STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH];
+  // Let the matching composite own a known partner; never intercept the other.
+  if (identities.some(({ path }) => typeof path === 'string'
+    && known.includes(path.trim()) && !expected.has(path.trim()))) return null;
+  // Any malformed identity beside a known candidate must fail closed through
+  // the strict validator, not be evaluated to discover the candidate.
+  if (identities.some(({ path, severity, code }) => typeof path !== 'string'
+    || typeof severity !== 'string' || typeof code !== 'string')) {
+    return identities.some(({ path }) => typeof path === 'string' && expected.has(path.trim()))
+      ? findings : null;
+  }
+  const paths = identities.map(({ path }) => path.trim());
   if (new Set(paths).size !== 2 || paths.some((path) => !expected.has(path))) return null;
-  if (findings.some((item) => String(item?.severity || '').toUpperCase() !== 'P0'
-    || String(item?.code || '') !== 'unsupported-high-risk-surface')) return null;
+  if (identities.some(({ severity, code }) => severity.toUpperCase() !== 'P0'
+    || code !== 'unsupported-high-risk-surface')) return null;
   return findings;
+}
+
+function starfieldVrCompositeFindings(analysis = {}) {
+  return inertTwoP0CompositeFindings(analysis,
+    new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]));
 }
 
 function singleFindingAnalysis(analysis, finding) {
@@ -193,13 +228,16 @@ function exactTwoP0CompositeEnvelope(analysis) {
 // Do not let one-element JSON arrays masquerade as scalar P0 identities.
 // This is reviewer-only source classification; it grants no game/runtime action.
 function exactCompositeFindingScalars(findings) {
-  // The candidate matcher tolerates case and whitespace, but child routing
-  // requires literal P0 and exact source paths. Refuse normalized aliases.
-  return findings.every((item) => ownCompositeReviewData(item, ['severity', 'code', 'path'])
-    && item.severity === 'P0'
-    && item.code === 'unsupported-high-risk-surface'
-    && typeof item?.path === 'string'
-    && item.path === item.path.trim());
+  // Array index accessors are executable too; inspect descriptors first.
+  return Array.isArray(findings) && findings.length === 2 && [0, 1].every((index) => {
+    const slot = Object.getOwnPropertyDescriptor(findings, String(index));
+    const item = slot && Object.hasOwn(slot, 'value') ? slot.value : null;
+    return ownCompositeReviewData(item, ['severity', 'code', 'path'])
+      && item.severity === 'P0'
+      && item.code === 'unsupported-high-risk-surface'
+      && typeof item.path === 'string'
+      && item.path === item.path.trim();
+  });
 }
 
 function rejectedCompositeEnvelope(paths) {
@@ -257,14 +295,8 @@ function analyzeStarfieldVrCompositeReview(input = {}) {
 }
 
 function starfieldVrAerCompositeFindings(analysis = {}) {
-  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
-  if (findings.length !== 2) return null;
-  const expected = new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
-  const paths = findings.map((item) => String(item?.path || '').trim());
-  if (new Set(paths).size !== 2 || paths.some((path) => !expected.has(path))) return null;
-  if (findings.some((item) => String(item?.severity || '').toUpperCase() !== 'P0'
-    || String(item?.code || '') !== 'unsupported-high-risk-surface')) return null;
-  return findings;
+  return inertTwoP0CompositeFindings(analysis,
+    new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]));
 }
 
 function analyzeStarfieldVrAerCompositeReview(input = {}) {
