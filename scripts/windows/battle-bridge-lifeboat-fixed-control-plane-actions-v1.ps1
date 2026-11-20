@@ -95,7 +95,7 @@ function Get-TaskSnapshot([string]$TaskName) {
     }
 
     $taskPrincipalSid = Resolve-IdentitySid ([string]$task.Principal.UserId)
-    $expectedLogonType = if ($TaskName -eq $recoveryMeshTask) { 'S4U' } else { 'Interactive' }
+    $expectedLogonType = if ($TaskName -eq $recoveryMeshTask -or $TaskName -eq $commanderWatchdogTask) { 'S4U' } else { 'Interactive' }
     $authorityIdentityValid = [bool](
         [string]$task.TaskPath -eq '\' -and
         $taskPrincipalSid -eq $currentUserSid -and

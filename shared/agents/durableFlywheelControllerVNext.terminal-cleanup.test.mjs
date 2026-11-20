@@ -160,7 +160,7 @@ test('exact merged terminal lease finalizes despite unrelated programme HOLD aft
   });
   assert.deepEqual(
     fixture.heartbeats.map(({ cycleState }) => cycleState),
-    ['STARTING', 'FINALIZING', 'FINALIZING', 'IDLE'],
+    ['RECONCILING', 'FINALIZING', 'FINALIZING', 'IDLE'],
   );
   assert.equal(result.actionResult?.finalized, true);
   assert.equal(result.authoritativeProjection.blockers.includes('worker-heartbeat-stale'), true);

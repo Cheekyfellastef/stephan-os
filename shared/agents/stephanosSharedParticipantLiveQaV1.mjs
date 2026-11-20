@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import { DEFAULT_PROVIDER_KEY } from '../ai/providerDefaults.mjs';
 import { queryStephanosAI } from '../ai/stephanosClient.mjs';
 import {
-  createStephanosWorkspaceAnswerRecord,
-  decodeStephanosWorkspaceQuestionRecord,
+  createStephanosWorkspaceAnswerRecordByLineage,
+  decodeStephanosWorkspaceQuestionRecordByLineage,
 } from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION } from './stephanosConversationalCapabilityLadderV1.mjs';
 import { buildStephanosRichConversationalResponseV1 } from './stephanosRichConversationalResponseV1.mjs';
@@ -47,6 +47,10 @@ const DURABLE_SYSTEM_TRUTH_QUESTION_CLASSES = new Set([
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+export function isStephanosSharedParticipantSecretShapedText(value = '') {
+  return SECRET_SHAPED_TEXT.test(String(value ?? ''));
 }
 
 function hash(value) {
@@ -286,7 +290,7 @@ function makeAnswer({ question, response, outputText, answeredAtUtc, nowMs, fail
     schemaVersion: STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION,
     answerId: answerIdFor(question, outputText, response),
     questionId: question.questionId,
-    roundId: question.roundId,
+    ...(question.roundId ? { roundId: question.roundId } : {}),
     responderParticipantId: STEPHANOS_SHARED_PARTICIPANT_ID,
     answerText: outputText,
     epistemicState: failed
@@ -322,7 +326,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
   const now = options.now instanceof Date ? options.now : new Date();
   const nowMs = now.getTime();
   const answeredAtUtc = now.toISOString();
-  const decoded = decodeStephanosWorkspaceQuestionRecord(questionRecord, {
+  const decoded = decodeStephanosWorkspaceQuestionRecordByLineage(questionRecord, {
     workspaceValidationOptions: { nowMs },
     questionValidationOptions: options.questionValidationOptions,
   });
@@ -334,15 +338,26 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
   }
 
   const durableSystemTruthRequired = requiresDurableSystemTruth(question);
+  const questionPrompt = durableSystemTruthRequired
+    ? [
+      question.questionText,
+      '',
+      'Current programme truth evidence rule:',
+      '- Treat the live Mission Control / Goal Projection context supplied by the Stephanos backend as the primary source for current project state.',
+      '- Use durable memory only as secondary historical context; never let remembered blockers override fresher live projection fields.',
+      '- If the live projection is absent, stale, non-live, or contradictory, say that current truth is unavailable instead of guessing.',
+      '- When live projection fields are available, answer naturally from them and name the material evidence behind your assessment.',
+    ].join('\n')
+    : question.questionText;
   const queryFn = typeof options.queryFn === 'function' ? options.queryFn : queryStephanosAI;
   let rawResponse;
   try {
     rawResponse = await queryFn({
       provider: DEFAULT_PROVIDER_KEY,
-      messages: [{ role: 'user', content: question.questionText }],
+      messages: [{ role: 'user', content: questionPrompt }],
       context: {
         surface: 'shared-participant-qa',
-        roundId: question.roundId,
+        ...(question.roundId ? { roundId: question.roundId } : { correlationId: questionRecord.correlationId }),
         questionId: question.questionId,
         questionClass: question.questionClass,
         expectedEvidenceClass: question.expectedEvidenceClass,
@@ -375,7 +390,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
 
   let outputText = text(response.output_text);
   const responseSucceeded = response.success === true && outputText.length > 0;
-  if (outputText.length > MAX_ANSWER_TEXT || SECRET_SHAPED_TEXT.test(outputText)) {
+  if (outputText.length > MAX_ANSWER_TEXT || isStephanosSharedParticipantSecretShapedText(outputText)) {
     return blocked('AI_RESPONSE_UNSAFE_FOR_SHARED_WORKSPACE', ['ai-output-secret-shaped-or-oversized']);
   }
   if (!outputText) outputText = 'Stephanos could not complete this question through the existing AI route.';
@@ -384,7 +399,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
     ? ''
     : text(response.error) || 'Existing Stephanos AI route did not produce a successful answer.';
   const answer = makeAnswer({ question, response, outputText, answeredAtUtc, nowMs, failureReason });
-  const built = createStephanosWorkspaceAnswerRecord(answer, {
+  const built = createStephanosWorkspaceAnswerRecordByLineage(answer, questionRecord, {
     recipientParticipantId: question.askerParticipantId,
     relatedIssue: text(questionRecord.relatedIssue) || '#1308',
     relatedPr: text(questionRecord.relatedPr),
@@ -396,6 +411,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
   const richResponse = buildStephanosRichConversationalResponseV1({
     question,
     answer,
+    correlationId: decoded.lineage.correlationId,
     structured: options.richResponseStructured,
   });
   if (!richResponse.valid) return blocked('RICH_RESPONSE_BUILD_FAILED', richResponse.errors);

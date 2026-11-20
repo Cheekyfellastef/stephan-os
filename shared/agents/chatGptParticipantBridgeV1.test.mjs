@@ -32,6 +32,16 @@ import {
   verifyOperatorApprovalSeparation,
 } from './chatGptParticipantBridgeV1.mjs';
 import { createStephanosSharedConversationTurnRecord } from './stephanosSharedConversationThreadV1.mjs';
+import { projectChatHandoffContinuity } from './chatHandoffContinuityV1.mjs';
+
+// Original #1290 proof-index suites are included in this EXISTING CI-tested bridge
+// entrypoint, not by editing protected .github/workflows/build-stephanos-ui.yml.
+// These pure tests retain the same source ownership and fail-closed policies.
+import './sharedWorkspaceProofIndexV1.test.mjs';
+import './sharedWorkspaceProofIndexBridgeV1.test.mjs';
+import './sharedWorkspaceProofIndexIntegrationV1.test.mjs';
+import './sharedWorkspaceProofIndexScopedV1.test.mjs';
+import './shared-workspace-dashboard-feed.test.mjs';
 
 const NOW = Date.parse('2026-07-13T00:00:00.000Z');
 const EXPIRY = '2026-07-13T00:10:00.000Z';
@@ -57,7 +67,7 @@ function verify(request, options = {}) {
 }
 
 test('V1 exposes exact read/write allowlists and no generic file or execute capability', () => {
-  assert.deepEqual(CHATGPT_BRIDGE_READ_OPERATIONS, ['READ_CURRENT_STATUS', 'READ_LATEST_PROOF', 'READ_OPERATOR_ATTENTION', 'READ_DELIVERY_STATUS', CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION]);
+  assert.deepEqual(CHATGPT_BRIDGE_READ_OPERATIONS, ['READ_CURRENT_STATUS', 'READ_LATEST_PROOF', 'READ_PROOF_INDEX', 'READ_OPERATOR_ATTENTION', 'READ_DELIVERY_STATUS', CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION]);
   assert.deepEqual(CHATGPT_BRIDGE_WRITE_OPERATIONS, [
     'WRITE_GOAL_INTENT_PROPOSAL',
     'WRITE_NEXT_ACTION_PACKET',
@@ -498,4 +508,41 @@ test('controller fleet projection is sanitized and exposed to ChatGPT from Share
   assert.equal(projection.controllerFleet.controllers[0].activeLaneCount, 2);
   assert.deepEqual(projection.controllerFleet.controllers[0].proofRefs, ['proof/controller-action']);
   assert.equal('activeLanes' in projection.controllerFleet.controllers[0], false);
+});
+
+
+test('native ChatGPT handoff rejection selects the proven Sovereign Relay fast carrier without widening authority', () => {
+  const continuity = projectChatHandoffContinuity({
+    directHandoffStatus: 'REJECTED',
+    sovereignRelay: {
+      daemonHealthy: true,
+      carrierHealthy: true,
+      heartbeatAtUtc: '2026-10-03T17:29:55.000Z',
+      deliveryState: 'FAST_ACTIVE',
+      scheduledMailboxFallbackExpected: true,
+    },
+  }, { nowMs: Date.parse('2026-10-03T17:30:00.000Z') });
+  assert.equal(continuity.directHandoffFailedBeforeReceipt, true);
+  assert.equal(continuity.selectedRoute, 'SOVEREIGN_RELAY_FAST_CARRIER');
+  assert.equal(continuity.sameTaskIdentityRequired, true);
+  assert.equal(continuity.duplicateDispatchAllowed, false);
+  assert.equal(continuity.authorityWideningAllowed, false);
+  assert.equal(continuity.operatorActionRequired, false);
+});
+
+test('ChatGPT bridge projection turns a rejected native handoff into guarded mailbox continuity when the fast carrier is not proven', async () => {
+  const projection = await createSanitizedSharedWorkspaceProjection({
+    timestampUtc: '2026-10-03T17:30:00.000Z',
+    directHandoffStatus: 'REJECTED',
+    scheduledMailboxAvailable: true,
+    latest: {
+      goal: { kind: 'goal', timestampUtc: '2026-10-03T17:30:00.000Z', title: 'Handoff continuity', status: 'open' },
+      status: { kind: 'status', timestampUtc: '2026-10-03T17:30:00.000Z', status: 'CURRENT', summary: 'Mailbox continuity available.' },
+      proof: { kind: 'proof', timestampUtc: '2026-10-03T17:30:00.000Z', status: 'PASS', summary: 'Guarded route proof.', proofRefs: ['proof/handoff-continuity'] },
+    },
+  });
+  assert.equal(projection.handoffContinuity.directHandoffFailedBeforeReceipt, true);
+  assert.equal(projection.handoffContinuity.selectedRoute, 'SCHEDULED_GITHUB_MAILBOX');
+  assert.equal(projection.handoffContinuity.operatorActionRequired, false);
+  assert.equal(projection.handoffContinuity.mergeAuthorityAdded, false);
 });

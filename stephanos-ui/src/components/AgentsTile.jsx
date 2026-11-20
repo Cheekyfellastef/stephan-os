@@ -3,6 +3,7 @@ import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButton
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import CollapsiblePanel from './CollapsiblePanel';
 import AgentsWorkspaceCanvas from './AgentsWorkspaceCanvas';
+import SharedWorkspaceProofIndex from './SharedWorkspaceProofIndex';
 import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
 import { deriveAgentsWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
 
@@ -83,6 +84,7 @@ export default function AgentsTile({
   );
   const [manualReturnDraft, setManualReturnDraft] = useState('');
   const [workspaceFeed, setWorkspaceFeed] = useState(null);
+  const [workspaceSelectedAgentId, setWorkspaceSelectedAgentId] = useState(selectedAgentId || '');
 
   const workspaceRuntimeContext = useMemo(() => {
     const hostedSurface = isHostedBrowserSurface();
@@ -141,6 +143,17 @@ export default function AgentsTile({
     [workspaceFeed, view],
   );
 
+  useEffect(() => {
+    if (selectedAgentId) setWorkspaceSelectedAgentId(selectedAgentId);
+  }, [selectedAgentId]);
+
+  function handleWorkspaceSelectAgent(agentId) {
+    const nextAgentId = String(agentId || '').trim();
+    if (!nextAgentId) return;
+    setWorkspaceSelectedAgentId(nextAgentId);
+    if (visibleAgents.some((entry) => entry.agentId === nextAgentId)) onSelectAgent?.(nextAgentId);
+  }
+
   async function handleCopyCodexPacket() {
     if (!codexPacketText) {
       setCopyState(COPY_STATE.FAILURE);
@@ -162,16 +175,17 @@ export default function AgentsTile({
       <p className="muted">{view.operatorSummary || 'No agent projection available.'}</p>
       <AgentsWorkspaceCanvas
         view={agentsWorkspaceView}
-        selectedAgentId={selectedAgentId}
-        onSelectAgent={onSelectAgent}
+        selectedAgentId={workspaceSelectedAgentId || selectedAgentId}
+        onSelectAgent={handleWorkspaceSelectAgent}
       />
+      <SharedWorkspaceProofIndex feed={workspaceFeed} />
       <div className="agents-fleet-strip" role="list" aria-label="Agent fleet strip">
         {visibleAgents.map((agent) => (
           <button
             type="button"
             key={agent.agentId}
             className={`agent-pill ${agent.pulseToken} ${agent.agentId === view.actingAgentId ? 'acting' : ''} ${agent.agentId === selected?.agentId ? 'selected' : ''}`}
-            onClick={() => onSelectAgent?.(agent.agentId)}
+            onClick={() => handleWorkspaceSelectAgent(agent.agentId)}
           >
             <strong>{agent.displayName}</strong>
             <span>{agent.state}</span>

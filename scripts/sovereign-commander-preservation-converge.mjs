@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { writeAtomicJson } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { createSharedWorkspaceStatusRecord, writeAtomicJson } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { resolveCriticalBacklogRuntimePaths } from '../stephanos-server/services/criticalBacklogConveyorServiceCore.js';
 
 export const SOVEREIGN_PRESERVATION_CONVERGENCE_SCHEMA =
@@ -107,10 +107,26 @@ async function defaultPublishReceipt(receipt, {
   now = new Date(),
 } = {}) {
   const paths = resolveCriticalBacklogRuntimePaths({ env });
+  const { schemaVersion: convergenceSchemaVersion, ...convergenceFields } = receipt;
+  const record = {
+    ...convergenceFields,
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'sovereign-preservation-convergence-current',
+      participantId: 'sovereign-commander',
+      timestampUtc: receipt.timestampUtc,
+      relatedIssue: 2573,
+      relatedPr: receipt.relatedPr,
+      status: receipt.finalVerdict,
+      summary: 'History-preserving feature branch convergence verified.',
+    }),
+    convergenceSchemaVersion,
+    convergenceReceipt: receipt,
+    convergenceProofHashSource: 'convergenceReceipt',
+  };
   return writeAtomicJson(
     paths.workspaceRoot,
     ['status', 'sovereign-preservation-convergence-current.json'],
-    receipt,
+    record,
     { repoRoot: paths.repoRoot, nowMs: now.getTime() },
   );
 }

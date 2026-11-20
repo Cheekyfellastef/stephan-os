@@ -10,7 +10,9 @@ param(
     [string]$ProfilePath = '',
     [string]$ProfileSha256 = '',
     [string]$LaunchSessionId = '',
-    [string]$SourceHead = ''
+    [string]$SourceHead = '',
+    [string[]]$ProviderSensors = @(),
+    [string]$ProviderTelemetryPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -21,10 +23,92 @@ $telemetryReportScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'report-st
 $physicalVerdictPromptScript = Join-Path $PSScriptRoot 'starfield-vr-physical-verdict-prompt.ps1'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
 $flightRecorderScript = Join-Path $PSScriptRoot 'starfield-vr-flight-recorder.ps1'
+$runtimeMetricsProducerScript = Join-Path $PSScriptRoot 'starfield-vr-runtime-metrics-producer.ps1'
+$vrTelemetrySessionScript = Join-Path $PSScriptRoot 'new-vr-telemetry-session.ps1'
+$visualFaultMarkerScript = Join-Path $PSScriptRoot 'vr-visual-fault-marker.ps1'
 if (-not (Test-Path -LiteralPath $flightRecorderScript -PathType Leaf)) {
     throw 'Starfield VR flight recorder helper is missing.'
 }
+if (-not (Test-Path -LiteralPath $runtimeMetricsProducerScript -PathType Leaf)) {
+    throw 'Starfield VR runtime metrics producer is missing.'
+}
+if (-not (Test-Path -LiteralPath $vrTelemetrySessionScript -PathType Leaf)) {
+    throw 'VR telemetry session helper is missing.'
+}
+if (-not (Test-Path -LiteralPath $visualFaultMarkerScript -PathType Leaf)) {
+    throw 'VR visual fault marker helper is missing.'
+}
 . $flightRecorderScript
+
+function Set-VrProcessPriority {
+    param(
+        [int]$ProcessId,
+        [System.Diagnostics.ProcessPriorityClass]$Priority,
+        [hashtable]$OriginalPriorities
+    )
+    if ($ProcessId -le 0) { return $false }
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        $key = [string]$ProcessId
+        if (-not $OriginalPriorities.ContainsKey($key)) {
+            $OriginalPriorities[$key] = [pscustomobject]@{
+                processId = $ProcessId
+                processName = [string]$process.ProcessName
+                priorityClass = [string]$process.PriorityClass
+            }
+        }
+        if ($process.PriorityClass -ne $Priority) {
+            $process.PriorityClass = $Priority
+            return $true
+        }
+    } catch {}
+    return $false
+}
+
+function Apply-StarfieldVrPriorityBoost {
+    param(
+        [int]$GameProcessId,
+        [hashtable]$OriginalPriorities
+    )
+    $changed = 0
+    if (Set-VrProcessPriority -ProcessId $GameProcessId -Priority High -OriginalPriorities $OriginalPriorities) {
+        $changed += 1
+    }
+    foreach ($process in @(Get-Process -Name 'OVRServer_x64' -ErrorAction SilentlyContinue)) {
+        if (Set-VrProcessPriority -ProcessId $process.Id -Priority High -OriginalPriorities $OriginalPriorities) {
+            $changed += 1
+        }
+    }
+    foreach ($process in @(Get-Process -Name 'OculusDash' -ErrorAction SilentlyContinue)) {
+        if (Set-VrProcessPriority -ProcessId $process.Id -Priority AboveNormal -OriginalPriorities $OriginalPriorities) {
+            $changed += 1
+        }
+    }
+    return $changed
+}
+
+function Restore-StarfieldVrPriorities {
+    param([hashtable]$OriginalPriorities)
+    $restored = 0
+    foreach ($entry in @($OriginalPriorities.Values)) {
+        try {
+            $process = Get-Process -Id ([int]$entry.processId) -ErrorAction Stop
+            if (-not [string]::Equals([string]$process.ProcessName, [string]$entry.processName, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+            $target = [System.Enum]::Parse(
+                [System.Diagnostics.ProcessPriorityClass],
+                [string]$entry.priorityClass,
+                $true
+            )
+            if ($process.PriorityClass -ne $target) {
+                $process.PriorityClass = $target
+            }
+            $restored += 1
+        } catch {}
+    }
+    return $restored
+}
 
 function Get-IniScalar {
     param([string]$Raw, [string]$Key)
@@ -205,14 +289,20 @@ function Restore-Session {
     $audioRestore = Restore-AudioState -Session $Session
     $gamingResourceReconcile = Invoke-GamingResourceReconcile
 
-    if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
-        if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {
-            Start-Process -FilePath $Session.ollama.appPath | Out-Null
+    # A Starfield exit does not necessarily mean VR has ended. If Air Link or
+    # the gaming governor is still active, restoring Ollama here immediately
+    # fights the governor and can refill VRAM while the headset is still live.
+    $ollamaRestoreDeferred = [bool]$gamingResourceReconcile.active
+    if (-not $ollamaRestoreDeferred) {
+        if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
+            if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {
+                Start-Process -FilePath $Session.ollama.appPath | Out-Null
+            }
         }
-    }
-    elseif ($Session.ollama.serveWasRunning -and $Session.ollama.servePath -and (Test-Path -LiteralPath $Session.ollama.servePath)) {
-        if (-not (Get-Process -Name 'ollama' -ErrorAction SilentlyContinue)) {
-            Start-Process -FilePath $Session.ollama.servePath -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
+        elseif ($Session.ollama.serveWasRunning -and $Session.ollama.servePath -and (Test-Path -LiteralPath $Session.ollama.servePath)) {
+            if (-not (Get-Process -Name 'ollama' -ErrorAction SilentlyContinue)) {
+                Start-Process -FilePath $Session.ollama.servePath -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
+            }
         }
     }
     return [pscustomobject]@{
@@ -227,6 +317,7 @@ function Restore-Session {
         gamingResourceReconciled = [bool]$gamingResourceReconcile.reconciled
         gamingResourcePhase = [string]$gamingResourceReconcile.phase
         gamingResourceActive = [bool]$gamingResourceReconcile.active
+        ollamaRestoreDeferred = [bool]$ollamaRestoreDeferred
         gamingResourceReconcileError = [string]$gamingResourceReconcile.error
     }
 }
@@ -484,6 +575,38 @@ if ($Action -eq 'Enter') {
         telemetrySessionId = $telemetrySessionId
     }
 
+    $visualTelemetry = $null
+    $visualTelemetryError = ''
+    if ($routeIdentity.provider -eq 'mutar-openxr') {
+        try {
+            $sensorText = & $vrTelemetrySessionScript `
+                -WorkspaceRoot $WorkspaceRoot `
+                -GameId 'starfield' `
+                -Provider $routeIdentity.provider `
+                -LaunchSessionId $LaunchSessionId `
+                -TargetExecutable 'Starfield.exe' `
+                -SourceHead $routeIdentity.sourceHead `
+                -ProviderSensors $ProviderSensors `
+                -ProviderTelemetryPath $ProviderTelemetryPath 2>&1 | Out-String
+            # This in-process PowerShell helper throws on failure; it does not set LASTEXITCODE.
+            # A native exit code here can be absent or left over from an unrelated command.
+            if (-not $sensorText.Trim()) {
+                throw "VR visual telemetry session contract was not created: $($sensorText.Trim())"
+            }
+            $visualTelemetry = $sensorText.Trim() | ConvertFrom-Json
+            if ($visualTelemetry.ok -ne $true -or [bool]$visualTelemetry.capabilities.modifiesFrameData -ne $false) {
+                throw 'VR visual telemetry session contract did not prove pass-through observation.'
+            }
+        }
+        catch {
+            $visualTelemetry = $null
+            $visualTelemetryError = $_.Exception.Message
+            if (@($ProviderSensors).Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($ProviderTelemetryPath)) {
+                throw "Required provider diagnostic telemetry could not be armed: $visualTelemetryError"
+            }
+        }
+    }
+
     if (-not (Test-Path -LiteralPath $audioEndpointScript -PathType Leaf)) {
         throw 'Starfield VR audio endpoint helper is missing.'
     }
@@ -589,9 +712,12 @@ if ($Action -eq 'Enter') {
         hagsMode = $hagsMode
         storageStart = $storageStart
         configurationFingerprint = $configurationFingerprint
+        visualTelemetry = $visualTelemetry
+        visualTelemetryError = $visualTelemetryError
         runtimeMetricsContract = [ordered]@{
             path = Join-Path $WorkspaceRoot 'vr\starfield-vr-runtime-metrics-current.json'
-            freshnessSeconds = 15
+            source = 'META_OCULUS_PERFLOG_XRS_STATS'
+            freshnessSeconds = 75
             failClosedOnIdentityMismatch = $true
         }
         telemetryPath = $telemetryPath
@@ -642,6 +768,7 @@ if ($Action -eq 'Enter') {
         audioEndpointId = [string]$session.audio.questEndpointId
         hagsMode = $hagsMode
         routeIdentity = $routeIdentity
+        visualTelemetry = $visualTelemetry
         mutarComfortProfile = if ($mutarConfig) { $mutarConfig.appliedSettings } else { $null }
         recoveredSessionCount = $recoveredSessions.Count
     } | ConvertTo-Json -Compress
@@ -656,7 +783,9 @@ if ($Action -eq 'StartGuard') {
 
     $guardArguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Action Guard -SessionPath "' + $SessionPath + '" -GameProcessId ' + [string]$GameProcessId
     $guardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardArguments -WindowStyle Hidden -PassThru
-    $deadline = (Get-Date).AddSeconds(12)
+    # Guard allows up to 30 seconds for Starfield's launcher-to-game PID handoff.
+    # The startup proof window must be longer than that or a healthy handoff is killed as a false failure.
+    $deadline = (Get-Date).AddSeconds(45)
     $lastLifecycle = $null
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 250
@@ -762,7 +891,58 @@ $terminationKind = ''
 $lastGameProcess = $null
 $gameExitCode = $null
 $adaptiveCaptureCount = 0
+$priorityOriginals = @{}
+$priorityBoostChangeCount = 0
+$priorityRestoreCount = 0
+$runtimeMetricsProducer = $null
+$runtimeMetricsProducerError = ''
+$visualFaultMarkerProcess = $null
+$visualFaultMarkerError = ''
+$lastOperatorMarkerCount = 0
+$lastAerSequenceFaultCount = 0
+$runtimeMetricsFreshnessSeconds = 75
+try {
+    if ($session.runtimeMetricsContract -and $session.runtimeMetricsContract.PSObject.Properties['freshnessSeconds']) {
+        $runtimeMetricsFreshnessSeconds = [Math]::Max(15, [int]$session.runtimeMetricsContract.freshnessSeconds)
+    }
+} catch {}
+try {
+    $producerArgs = @(
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', ('"{0}"' -f $runtimeMetricsProducerScript),
+        '-WorkspaceRoot', ('"{0}"' -f $WorkspaceRoot),
+        '-LaunchSessionId', ('"{0}"' -f [string]$session.routeIdentity.launchSessionId),
+        '-Provider', ('"{0}"' -f [string]$session.routeIdentity.provider),
+        '-SessionStartedAtUtc', ('"{0}"' -f [string]$session.enteredAtUtc),
+        '-GameProcessId', [string]$currentGameProcessId
+    )
+    if ($session.visualTelemetry -and [string]$session.visualTelemetry.providerTelemetryPath) {
+        $producerArgs += @('-ProviderTelemetryPath', ('"{0}"' -f [string]$session.visualTelemetry.providerTelemetryPath))
+    }
+    $runtimeMetricsProducer = Start-Process -FilePath $powershellExecutable -ArgumentList $producerArgs -WindowStyle Hidden -PassThru
+}
+catch {
+    $runtimeMetricsProducerError = $_.Exception.Message
+}
+try {
+    if ($session.visualTelemetry -and [bool]$session.visualTelemetry.capabilities.operatorFaultMarkers) {
+        $markerArgs = @(
+            '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+            '-File', ('"{0}"' -f $visualFaultMarkerScript),
+            '-WorkspaceRoot', ('"{0}"' -f $WorkspaceRoot),
+            '-LaunchSessionId', ('"{0}"' -f [string]$session.routeIdentity.launchSessionId),
+            '-GameId', ('"{0}"' -f [string]$session.visualTelemetry.gameId),
+            '-TargetProcessName', 'Starfield',
+            '-InitialProcessId', [string]$currentGameProcessId
+        )
+        $visualFaultMarkerProcess = Start-Process -FilePath $powershellExecutable -ArgumentList $markerArgs -WindowStyle Hidden -PassThru
+    }
+}
+catch {
+    $visualFaultMarkerError = $_.Exception.Message
+}
 Set-SessionLifecycle -Session $session -Status 'GUARDING' -SessionPath $SessionPath -SampleCount 0 -CurrentGameProcessId $currentGameProcessId
+$priorityBoostChangeCount += [int](Apply-StarfieldVrPriorityBoost -GameProcessId $currentGameProcessId -OriginalPriorities $priorityOriginals)
 
 try {
 while ($true) {
@@ -797,6 +977,7 @@ while ($true) {
 
     $handoffDeadline = $null
     $lastGameProcess = $game
+    $priorityBoostChangeCount += [int](Apply-StarfieldVrPriorityBoost -GameProcessId $currentGameProcessId -OriginalPriorities $priorityOriginals)
     $sampledAt = Get-Date
     $gpu = Get-NvidiaSample
     $storage = Get-GameDriveSample -Root ([string]$session.gameRoot)
@@ -851,7 +1032,7 @@ while ($true) {
         [math]::Round(($gpu.gpuMemoryUsedMiB / $gpu.gpuMemoryTotalMiB) * 100, 1)
     } else { $null }
 
-    $runtimeMetrics = Get-StarfieldVrRuntimeMetricSample -WorkspaceRoot $WorkspaceRoot -LaunchSessionId ([string]$session.routeIdentity.launchSessionId) -Provider ([string]$session.routeIdentity.provider)
+    $runtimeMetrics = Get-StarfieldVrRuntimeMetricSample -WorkspaceRoot $WorkspaceRoot -LaunchSessionId ([string]$session.routeIdentity.launchSessionId) -Provider ([string]$session.routeIdentity.provider) -MaxAgeSeconds $runtimeMetricsFreshnessSeconds
     $controller = Get-StarfieldVrControllerSample -GameProcessId $currentGameProcessId
     $llamaServerCount = @((Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue)).Count
     $adaptiveCaptureReason = ''
@@ -863,6 +1044,18 @@ while ($true) {
     }
     elseif ($controller.controllerProblemCount -gt 0) {
         $adaptiveCaptureReason = 'CONTROLLER_PROBLEM'
+    }
+    elseif ($runtimeMetrics.available -and [bool]$runtimeMetrics.visualTelemetryAvailable -and
+        [string]$runtimeMetrics.visualFrameState -notin @('','SUBMISSION_PRESENT_PIXELS_UNOBSERVED','NOT_EXPECTED')) {
+        $adaptiveCaptureReason = 'VISUAL_SUBMISSION_ANOMALY'
+    }
+    elseif ($runtimeMetrics.available -and $null -ne $runtimeMetrics.operatorMarkerCount -and
+        [int]$runtimeMetrics.operatorMarkerCount -gt $lastOperatorMarkerCount) {
+        $adaptiveCaptureReason = 'OPERATOR_VISUAL_FAULT'
+    }
+    elseif ($runtimeMetrics.available -and $null -ne $runtimeMetrics.aerSequenceFaultCount -and
+        [int]$runtimeMetrics.aerSequenceFaultCount -gt $lastAerSequenceFaultCount) {
+        $adaptiveCaptureReason = 'AER_SEQUENCE_FAULT'
     }
     elseif ($runtimeMetrics.available -and $null -ne $runtimeMetrics.applicationFrameTimeMs -and [double]$runtimeMetrics.applicationFrameTimeMs -ge 16.7) {
         $adaptiveCaptureReason = 'FRAME_TIME_SPIKE'
@@ -921,6 +1114,34 @@ while ($true) {
         eyePresentationSkewMs = if ($runtimeMetrics.available) { $runtimeMetrics.eyePresentationSkewMs } else { $null }
         poseAgeMs = if ($runtimeMetrics.available) { $runtimeMetrics.poseAgeMs } else { $null }
         stereoMode = if ($runtimeMetrics.available) { [string]$runtimeMetrics.stereoMode } else { '' }
+        visualTelemetryAvailable = if ($runtimeMetrics.available) { [bool]$runtimeMetrics.visualTelemetryAvailable } else { $false }
+        visualFrameSerial = if ($runtimeMetrics.available) { $runtimeMetrics.visualFrameSerial } else { $null }
+        visualFrameState = if ($runtimeMetrics.available) { [string]$runtimeMetrics.visualFrameState } else { '' }
+        visualProjectionLayers = if ($runtimeMetrics.available) { $runtimeMetrics.visualProjectionLayers } else { $null }
+        visualProjectionViews = if ($runtimeMetrics.available) { $runtimeMetrics.visualProjectionViews } else { $null }
+        visualLocatedViews = if ($runtimeMetrics.available) { $runtimeMetrics.visualLocatedViews } else { $null }
+        visualShouldRender = if ($runtimeMetrics.available) { [bool]$runtimeMetrics.visualShouldRender } else { $false }
+        visualReleaseMissing = if ($runtimeMetrics.available) { [bool]$runtimeMetrics.visualReleaseMissing } else { $false }
+        visualReleaseReused = if ($runtimeMetrics.available) { [bool]$runtimeMetrics.visualReleaseReused } else { $false }
+        visualEndFrameResult = if ($runtimeMetrics.available) { $runtimeMetrics.visualEndFrameResult } else { $null }
+        visualPredictionDeltaMs = if ($runtimeMetrics.available) { $runtimeMetrics.visualPredictionDeltaMs } else { $null }
+        visualPoseDisplayDeltaMs = if ($runtimeMetrics.available) { $runtimeMetrics.visualPoseDisplayDeltaMs } else { $null }
+        visualPixelContentState = if ($runtimeMetrics.available) { [string]$runtimeMetrics.visualPixelContentState } else { '' }
+        operatorMarkerCount = if ($runtimeMetrics.available -and $null -ne $runtimeMetrics.operatorMarkerCount) { [int]$runtimeMetrics.operatorMarkerCount } else { 0 }
+        lastOperatorMarkerAtUtc = if ($runtimeMetrics.available) { [string]$runtimeMetrics.lastOperatorMarkerAtUtc } else { '' }
+        lastOperatorMarkerSource = if ($runtimeMetrics.available) { [string]$runtimeMetrics.lastOperatorMarkerSource } else { '' }
+        providerTelemetryAvailable = if ($runtimeMetrics.available) { [bool]$runtimeMetrics.providerTelemetryAvailable } else { $false }
+        aerTelemetryEvent = if ($runtimeMetrics.available) { [string]$runtimeMetrics.aerTelemetryEvent } else { '' }
+        aerSequenceFaultCount = if ($runtimeMetrics.available -and $null -ne $runtimeMetrics.aerSequenceFaultCount) { [int]$runtimeMetrics.aerSequenceFaultCount } else { 0 }
+        aerPrevPresenterFrame = if ($runtimeMetrics.available) { $runtimeMetrics.aerPrevPresenterFrame } else { $null }
+        aerCurrentPresenterFrame = if ($runtimeMetrics.available) { $runtimeMetrics.aerCurrentPresenterFrame } else { $null }
+        aerPresenterDelta = if ($runtimeMetrics.available) { $runtimeMetrics.aerPresenterDelta } else { $null }
+        aerPrevParity = if ($runtimeMetrics.available) { $runtimeMetrics.aerPrevParity } else { $null }
+        aerCurrentParity = if ($runtimeMetrics.available) { $runtimeMetrics.aerCurrentParity } else { $null }
+        aerEngineFrame = if ($runtimeMetrics.available) { $runtimeMetrics.aerEngineFrame } else { $null }
+        aerRenderFrame = if ($runtimeMetrics.available) { $runtimeMetrics.aerRenderFrame } else { $null }
+        aerPresenterFrame = if ($runtimeMetrics.available) { $runtimeMetrics.aerPresenterFrame } else { $null }
+        aerRenderLoopFrame = if ($runtimeMetrics.available) { $runtimeMetrics.aerRenderLoopFrame } else { $null }
         controllerDeviceCount = [int]$controller.controllerDeviceCount
         controllerProblemCount = [int]$controller.controllerProblemCount
         controllerHealthy = [bool]$controller.controllerHealthy
@@ -941,6 +1162,12 @@ while ($true) {
     $samples.Add($sample)
     $sample | Export-Csv -LiteralPath $session.telemetryPath -NoTypeInformation -Append
     Set-SessionLifecycle -Session $session -Status 'GUARDING' -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $sample.timestampUtc
+    if ($runtimeMetrics.available -and $null -ne $runtimeMetrics.operatorMarkerCount) {
+        $lastOperatorMarkerCount = [Math]::Max($lastOperatorMarkerCount, [int]$runtimeMetrics.operatorMarkerCount)
+    }
+    if ($runtimeMetrics.available -and $null -ne $runtimeMetrics.aerSequenceFaultCount) {
+        $lastAerSequenceFaultCount = [Math]::Max($lastAerSequenceFaultCount, [int]$runtimeMetrics.aerSequenceFaultCount)
+    }
     Start-Sleep -Seconds $sampleIntervalSeconds
 }
 $terminationKind = 'PROCESS_EXITED'
@@ -959,7 +1186,51 @@ try {
 } catch {}
 $crashEvidence = @(Get-StarfieldCrashEvidence -SinceUtc $startedAt.ToUniversalTime().AddMinutes(-1))
 $sessionOutcome = if ($guardFailure) { 'GUARD_FAILED' } elseif ($crashEvidence.Count -gt 0) { 'CRASHED' } else { 'EXITED' }
-$restored = Restore-Session -Session $session
+if ($runtimeMetricsProducer) {
+    try {
+        $runtimeMetricsProducer.Refresh()
+        if (-not $runtimeMetricsProducer.HasExited) {
+            if (-not $runtimeMetricsProducer.WaitForExit(4000)) {
+                $runtimeMetricsProducer.Kill()
+                $runtimeMetricsProducer.WaitForExit()
+            }
+        }
+    } catch {}
+}
+if ($visualFaultMarkerProcess) {
+    try {
+        $visualFaultMarkerProcess.Refresh()
+        if (-not $visualFaultMarkerProcess.HasExited) {
+            if (-not $visualFaultMarkerProcess.WaitForExit(4000)) {
+                $visualFaultMarkerProcess.Kill()
+                $visualFaultMarkerProcess.WaitForExit()
+            }
+        }
+    } catch {}
+}
+$priorityRestoreCount = Restore-StarfieldVrPriorities -OriginalPriorities $priorityOriginals
+$restoreFailure = ''
+try {
+    $restored = Restore-Session -Session $session
+}
+catch {
+    $restoreFailure = $_.Exception.Message
+    $restored = [pscustomobject]@{
+        prefsRestored = $false
+        mutarConfigRestored = $false
+        audioRestored = $false
+        audioRestoreAttempts = 0
+        audioStableConfirmations = 0
+        audioFinalEndpointId = ''
+        audioFinalEndpoints = $null
+        audioRestoreError = $restoreFailure
+        gamingResourceReconciled = $false
+        gamingResourcePhase = ''
+        gamingResourceActive = $false
+        ollamaRestoreDeferred = $false
+        gamingResourceReconcileError = $restoreFailure
+    }
+}
 $endedAt = Get-Date
 $summaryPath = [System.IO.Path]::ChangeExtension([string]$session.telemetryPath, '.summary.json')
 $gpuSamples = @($samples | Where-Object { $null -ne $_.gpuUtilPct })
@@ -985,6 +1256,16 @@ $networkLatencySamples = @($samples | Where-Object { $null -ne $_.networkLatency
 $packetLossSamples = @($samples | Where-Object { $null -ne $_.packetLossPct } | ForEach-Object { [double]$_.packetLossPct })
 $jitterSamples = @($samples | Where-Object { $null -ne $_.jitterMs } | ForEach-Object { [double]$_.jitterMs })
 $controllerProblemSamples = @($samples | Where-Object { [int]$_.controllerProblemCount -gt 0 })
+$visualSamples = @($samples | Where-Object { [bool]$_.visualTelemetryAvailable })
+$visualAnomalySamples = @($visualSamples | Where-Object { [string]$_.visualFrameState -notin @('','SUBMISSION_PRESENT_PIXELS_UNOBSERVED','NOT_EXPECTED') })
+$missingEyeSamples = @($visualSamples | Where-Object { [string]$_.visualFrameState -eq 'MISSING_STEREO_EYE' })
+$noProjectionSamples = @($visualSamples | Where-Object { [string]$_.visualFrameState -eq 'NO_PROJECTION_LAYER' })
+$releaseMissingSamples = @($visualSamples | Where-Object { [bool]$_.visualReleaseMissing })
+$releaseReusedSamples = @($visualSamples | Where-Object { [bool]$_.visualReleaseReused })
+$endFrameFailureSamples = @($visualSamples | Where-Object { $null -ne $_.visualEndFrameResult -and [int]$_.visualEndFrameResult -lt 0 })
+$providerTelemetrySamples = @($samples | Where-Object { [bool]$_.providerTelemetryAvailable })
+$maxAerSequenceFaultCount = if ($providerTelemetrySamples.Count) { ($providerTelemetrySamples | Measure-Object aerSequenceFaultCount -Maximum).Maximum } else { 0 }
+$maxOperatorMarkerCount = if ($samples.Count) { ($samples | Measure-Object operatorMarkerCount -Maximum).Maximum } else { 0 }
 $storageEnd = Get-GameDriveSample -Root ([string]$session.gameRoot)
 $summary = [ordered]@{
     schemaVersion = 'stephanos.starfield-vr-performance-summary.v1'
@@ -994,7 +1275,7 @@ $summary = [ordered]@{
     gameProcessId = $GameProcessId
     finalGameProcessId = $currentGameProcessId
     processHandoffCount = $handoffCount
-    observedGameProcessIds = @($observedGameProcessIds)
+    observedGameProcessIds = $observedGameProcessIds.ToArray()
     startedAtUtc = $startedAt.ToUniversalTime().ToString('o')
     endedAtUtc = $endedAt.ToUniversalTime().ToString('o')
     runtimeSeconds = [math]::Round(($endedAt - $startedAt).TotalSeconds, 1)
@@ -1002,6 +1283,15 @@ $summary = [ordered]@{
     terminationKind = $terminationKind
     partialTelemetry = [bool]($sessionOutcome -in @('CRASHED','GUARD_FAILED'))
     guardFailure = $guardFailure
+    runtimeMetricsProducerProcessId = if ($runtimeMetricsProducer) { [int]$runtimeMetricsProducer.Id } else { 0 }
+    runtimeMetricsProducerError = $runtimeMetricsProducerError
+    visualFaultMarkerProcessId = if ($visualFaultMarkerProcess) { [int]$visualFaultMarkerProcess.Id } else { 0 }
+    visualFaultMarkerError = $visualFaultMarkerError
+    visualTelemetry = $session.visualTelemetry
+    priorityBoostChangeCount = $priorityBoostChangeCount
+    priorityTrackedProcessCount = $priorityOriginals.Count
+    priorityRestoreCount = $priorityRestoreCount
+    restoreFailure = $restoreFailure
     gameExitCode = $gameExitCode
     crashEvidence = @($crashEvidence)
     sampleCount = $samples.Count
@@ -1041,6 +1331,19 @@ $summary = [ordered]@{
     headsetRefreshRateHz = if ($headsetRefreshSamples.Count) { [math]::Round(($headsetRefreshSamples | Measure-Object -Maximum).Maximum, 2) } else { $null }
     maxEyePresentationSkewMs = if ($eyeSkewSamples.Count) { ($eyeSkewSamples | Measure-Object -Maximum).Maximum } else { $null }
     maxPoseAgeMs = if ($poseAgeSamples.Count) { ($poseAgeSamples | Measure-Object -Maximum).Maximum } else { $null }
+    visualTelemetrySampleCount = $visualSamples.Count
+    visualAnomalySampleCount = $visualAnomalySamples.Count
+    missingStereoEyeSampleCount = $missingEyeSamples.Count
+    noProjectionLayerSampleCount = $noProjectionSamples.Count
+    eyeReleaseMissingSampleCount = $releaseMissingSamples.Count
+    eyeReleaseReusedSampleCount = $releaseReusedSamples.Count
+    endFrameFailureSampleCount = $endFrameFailureSamples.Count
+    operatorVisualFaultMarkerCount = if ($null -ne $maxOperatorMarkerCount) { [int]$maxOperatorMarkerCount } else { 0 }
+    providerTelemetrySampleCount = $providerTelemetrySamples.Count
+    maxAerSequenceFaultCount = if ($null -ne $maxAerSequenceFaultCount) { [int]$maxAerSequenceFaultCount } else { 0 }
+    aerSequenceFaultObserved = [bool]($providerTelemetrySamples.Count -gt 0 -and [int]$maxAerSequenceFaultCount -gt 0)
+    pixelContentSampling = $false
+    pixelContentState = 'UNOBSERVED'
     avgNetworkLatencyMs = if ($networkLatencySamples.Count) { [math]::Round(($networkLatencySamples | Measure-Object -Average).Average, 2) } else { $null }
     maxPacketLossPct = if ($packetLossSamples.Count) { ($packetLossSamples | Measure-Object -Maximum).Maximum } else { $null }
     maxJitterMs = if ($jitterSamples.Count) { ($jitterSamples | Measure-Object -Maximum).Maximum } else { $null }
@@ -1072,7 +1375,7 @@ $summary = [ordered]@{
         error = [string]$restored.audioRestoreError
     }
 }
-$summary['telemetryCompleteness'] = Get-StarfieldVrTelemetryCompleteness -Samples @($samples) -Summary ([pscustomobject]$summary)
+$summary['telemetryCompleteness'] = Get-StarfieldVrTelemetryCompleteness -Samples $samples.ToArray() -Summary ([pscustomobject]$summary)
 Write-JsonNoBom -Path $summaryPath -Value $summary
 $lastSampleAtUtc = if ($samples.Count) { [string]$samples[-1].timestampUtc } else { '' }
 Set-SessionLifecycle -Session $session -Status $sessionOutcome -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $lastSampleAtUtc -ErrorText $guardFailure

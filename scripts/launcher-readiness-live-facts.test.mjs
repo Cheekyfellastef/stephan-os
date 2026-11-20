@@ -3,8 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { collectLauncherReadinessLiveFacts, defaultWindowsSharedWorkspacePath, LIVE_COLLECTOR_AUTHORITY, main, resolveSharedWorkspaceRoot } from './launcher-readiness-live-facts.mjs';
+import { collectLauncherReadinessLiveFacts as collectRealLauncherFacts, defaultWindowsSharedWorkspacePath, LIVE_COLLECTOR_AUTHORITY, main, resolveSharedWorkspaceRoot } from './launcher-readiness-live-facts.mjs';
 import { createLauncherReadinessReport } from './launcher-readiness-report.mjs';
+import { createSharedWorkspaceStatusRecord, createSharedWorkspaceProofRecord, createSharedWorkspaceEventRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+
+// Fixtures must not silently read the operator's live Windows workspace.
+const collectLauncherReadinessLiveFacts = options => collectRealLauncherFacts({ platform: 'linux', ...options });
+function fixtureRecord(value, mtime, channel = 'status', id = 'fixture-current') {
+  const common = { ...value, participantId: 'fixture-publisher', timestampUtc: mtime.toISOString(),
+    proofRefs: ['proof/battle-bridge-current.json'], correlationId: 'fixture-publication', relatedIssue: '#2961' };
+  return channel === 'proof' ? createSharedWorkspaceProofRecord({ ...common, proofId: id })
+    : channel === 'events' ? createSharedWorkspaceEventRecord({ ...common, eventId: id })
+      : createSharedWorkspaceStatusRecord({ ...common, statusId: id });
+}
 
 async function withRepo(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-live-facts-'));
@@ -15,7 +26,7 @@ function writeCurrentRecord(repoRoot, name = 'status.json', value = { status: 'R
   const current = path.join(repoRoot, 'runtime-activity', 'shared-workspace', 'current');
   fs.mkdirSync(current, { recursive: true });
   const file = path.join(current, name);
-  fs.writeFileSync(file, JSON.stringify(value));
+  fs.writeFileSync(file, JSON.stringify(fixtureRecord(value, mtime)));
   fs.utimesSync(file, mtime, mtime);
 }
 
@@ -24,7 +35,7 @@ function writeExternalCurrentRecord(workspaceRoot, name = 'status.json', value =
   const current = path.join(workspaceRoot, 'current');
   fs.mkdirSync(current, { recursive: true });
   const file = path.join(current, name);
-  fs.writeFileSync(file, JSON.stringify(value));
+  fs.writeFileSync(file, JSON.stringify(fixtureRecord(value, mtime)));
   fs.utimesSync(file, mtime, mtime);
 }
 
@@ -191,7 +202,7 @@ function writeBattleBridgeCurrentRecord(workspaceRoot, channel, value = { status
   const dir = path.join(workspaceRoot, channel);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'battle-bridge-current.json');
-  fs.writeFileSync(file, JSON.stringify(value));
+  fs.writeFileSync(file, JSON.stringify(fixtureRecord(value, mtime, channel, 'battle-bridge-current')));
   fs.utimesSync(file, mtime, mtime);
   return file;
 }
@@ -237,7 +248,7 @@ test('fixture matching observed UNKNOWN old Battle Bridge records returns STALE_
     const report = createLauncherReadinessReport(facts);
     assert.equal(report.status, 'STALE_WORKSPACE');
     assert.match(report.staleWorkspaceRecords.join('\n'), /status.*stale ageSeconds=/);
-    assert.match(report.staleWorkspaceRecords.join('\n'), /proof.*UNKNOWN ageSeconds=/);
+    assert.match(report.staleWorkspaceRecords.join('\n'), /proof.*UNKNOWN .*ageSeconds=/);
     assert.equal(facts.observedFacts.services['shared-workspace'].evidence.foundRecords.some((record) => record.unknownStatus), true);
   } finally {
     fs.rmSync(workspaceRoot, { recursive: true, force: true });

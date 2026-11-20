@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   GENERIC_PLACEHOLDER_TITLE_KEY,
   PR_DISPOSITIONS,
@@ -13,15 +15,25 @@ export function normalizeFamily(input = {}) {
   if (!isPlainObject(input)) throw new Error('PR estate family record must be an object');
   const id = asText(input.id, '');
   if (!SAFE_FAMILY_ID.test(id)) throw new Error(`invalid PR estate family id: ${id || '<empty>'}`);
-  const membersField = hasOwn(input, 'members') ? input.members : input.prs;
-  if (!Array.isArray(membersField)) throw new Error(`family ${id} members array is required`);
-  const members = membersField.map((value) => {
-    const parsed = asPositiveInteger(value, null);
-    if (parsed === null) throw new Error(`invalid family member in ${id}: ${String(value)}`);
-    return parsed;
-  });
-  if (new Set(members).size !== members.length) throw new Error(`duplicate family member in ${id}`);
-  members.sort((a, b) => a - b);
+  // Both family-member aliases must describe exactly the same PR identities.
+  // Silently preferring one would discard contradictory operator-supplied custody.
+  function parseMembers(value) {
+    if (!Array.isArray(value)) throw new Error(`family ${id} members array is required`);
+    const parsed = value.map((member) => {
+      const number = asPositiveInteger(member, null);
+      if (number === null) throw new Error(`invalid family member in ${id}: ${String(member)}`);
+      return number;
+    });
+    if (new Set(parsed).size !== parsed.length) throw new Error(`duplicate family member in ${id}`);
+    return parsed.sort((a, b) => a - b);
+  }
+  const members = parseMembers(hasOwn(input, 'members') ? input.members : input.prs);
+  if (hasOwn(input, 'members') && hasOwn(input, 'prs')) {
+    const aliasMembers = parseMembers(input.prs);
+    if (members.length !== aliasMembers.length || members.some((number, index) => number !== aliasMembers[index])) {
+      throw new Error(`conflicting family member aliases in ${id}`);
+    }
+  }
 
   const canonicalProvided = hasOwn(input, 'canonicalPr') && input.canonicalPr !== null && input.canonicalPr !== undefined;
   const canonicalPr = canonicalProvided ? asPositiveInteger(input.canonicalPr, null) : null;
@@ -70,7 +82,17 @@ export function buildFamilyMaps(families) {
 }
 
 function titleKey(title) {
-  return asText(title, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  // Exact-title custody must not erase meaning-bearing punctuation (C++, C#).
+  // Only presentation differences in Unicode composition, case, and whitespace
+  // are normalized before the stable full-title SHA-256 family identity.
+  return asText(title, '').normalize('NFC').toLowerCase().replace(/\s+/gu, ' ').trim();
+}
+
+function isGenericPlaceholderTitle(key) {
+  // Legacy Codex placeholders have distinct hyphen/underscore/space spellings.
+  // Exclude those from implicit family selection without using their lossy
+  // punctuation-folding rule for any real source-work title.
+  return key.replace(/[^a-z0-9]+/g, ' ').trim() === GENERIC_PLACEHOLDER_TITLE_KEY;
 }
 
 export function deriveImplicitFamilies(prs, familyByPr) {
@@ -78,7 +100,7 @@ export function deriveImplicitFamilies(prs, familyByPr) {
   for (const pr of prs) {
     if (familyByPr.has(pr.number)) continue;
     const key = titleKey(pr.title);
-    if (!key || key === GENERIC_PLACEHOLDER_TITLE_KEY) continue;
+    if (!key || isGenericPlaceholderTitle(key)) continue;
     const group = groups.get(key) || [];
     group.push(pr.number);
     groups.set(key, group);
@@ -89,7 +111,11 @@ export function deriveImplicitFamilies(prs, familyByPr) {
     if (members.length < 2) continue;
     members.sort((a, b) => a - b);
     const family = {
-      id: `title-${key.replace(/\s+/g, '-').slice(0, 80)}`,
+      // Use the *whole* normalized title for a stable identity across rolling OPEN-PR
+      // snapshots. A member-derived ID changes when the oldest PR closes, even when
+      // other duplicate-title family members remain open. SHA-256 also avoids the
+      // previous lossily truncated-title collision without expanding the safe ID.
+      id: `title-key-${createHash('sha256').update(key, 'utf8').digest('hex')}`,
       label: `Exact-title duplicate: ${key}`,
       members,
       canonicalPr: null,

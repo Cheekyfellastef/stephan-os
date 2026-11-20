@@ -7,9 +7,9 @@ export const WINDOWS_AUTHORITY_MOBILE_RECOVERY_EXECUTOR_PATHS_V1 = Object.freeze
 
 const EXPECTED_BLOBS = Object.freeze({
   'docs/architecture/openclaw-battle-bridge-recovery-executor-v1.md': 'd0b4fce021231972273984642d5f65c6716ba104',
-  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': '7be783f013038618677889ad466d1a8b90903931',
+  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': 'cbe71f4f42e33620452145f6daf297b9877535b4',
   'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs': 'e692c1b50b66d29f4d707f871f9f6de8bb901c01',
-  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': '23a17aa9c1058112ed417b6cb74029c3a1b73ef5',
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': '21e34cf332e85b4a1bae4a6f4c87d64a5af3f8a8',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -77,7 +77,7 @@ function reviewPowerShell(source, path, findings) {
     ["$commanderWatchdogTask = 'Stephanos Commander Watchdog'", 'mobile-recovery-commander-watchdog-not-fixed'],
     ["authorityIdentityValid = [bool]$authorityIdentityValid", 'mobile-recovery-authority-proof-missing'],
     ["$taskPrincipalSid -eq $currentUserSid", 'mobile-recovery-sid-principal-proof-missing'],
-    ["$expectedLogonType = if ($TaskName -eq $recoveryMeshTask) { 'S4U' } else { 'Interactive' }", 'mobile-recovery-task-logon-map-missing'],
+    ["$expectedLogonType = if ($TaskName -eq $recoveryMeshTask -or $TaskName -eq $commanderWatchdogTask) { 'S4U' } else { 'Interactive' }", 'mobile-recovery-task-logon-map-missing'],
     ["[string]$task.Principal.LogonType -eq $expectedLogonType", 'mobile-recovery-task-specific-principal-proof-missing'],
     ["[string]$task.Principal.RunLevel -eq 'Limited'", 'mobile-recovery-limited-principal-proof-missing'],
     ["[string]$task.Settings.MultipleInstances -eq 'IgnoreNew'", 'mobile-recovery-ignore-new-proof-missing'],

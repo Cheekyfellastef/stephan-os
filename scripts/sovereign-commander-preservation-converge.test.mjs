@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { validateSharedWorkspaceRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 import {
   executeSovereignPreservationConvergence,
@@ -95,6 +97,54 @@ test('Sovereign preservation convergence non-force merges main into the existing
     assert.equal(git(fx.seed, ['merge-base', '--is-ancestor', fx.featureHead, remoteHead]), '');
     assert.equal(git(fx.seed, ['merge-base', '--is-ancestor', fx.mainHead, remoteHead]), '');
     assert.equal(receipt.proofHash, result.proofHash);
+  } finally {
+    await rm(fx.root, { recursive: true, force: true });
+  }
+});
+
+test('default publisher persists a valid workspace envelope and supports a retry without another push', async () => {
+  const fx = await fixture();
+  try {
+    const request = {
+      repoRoot: fx.work,
+      prNumber: 2561,
+      branch: 'feature/test',
+      expectedHead: fx.featureHead,
+      expectedMain: fx.mainHead,
+      gitExecutable: 'git',
+      env: { USERPROFILE: fx.root },
+    };
+    const result = await executeSovereignPreservationConvergence(request);
+    assert.equal(result.ok, true);
+    assert.equal(result.pushed, true);
+    const receiptPath = join(fx.root, 'Documents', 'Stephanos-openclaw-workspace', 'status', 'sovereign-preservation-convergence-current.json');
+    const record = JSON.parse(await readFile(receiptPath, 'utf8'));
+    assert.equal(validateSharedWorkspaceRecord(record).valid, true);
+    assert.equal(record.schemaVersion, 'shared-agent-workspace-record.v1');
+    assert.equal(record.convergenceSchemaVersion, result.schemaVersion);
+    assert.equal(record.statusId, 'sovereign-preservation-convergence-current');
+    assert.equal(record.participantId, 'sovereign-commander');
+    assert.equal(record.newHead, result.newHead);
+    assert.equal(record.proofHash, result.proofHash);
+    assert.equal(record.convergenceProofHashSource, 'convergenceReceipt');
+    assert.equal(record.convergenceReceipt.relatedPr, 2561);
+    assert.equal(typeof record.convergenceReceipt.relatedPr, 'number');
+    const { proofHash: nestedProofHash, ...nestedReceiptCore } = record.convergenceReceipt;
+    assert.equal(
+      createHash('sha256').update(JSON.stringify(nestedReceiptCore)).digest('hex'),
+      nestedProofHash,
+    );
+    assert.equal(record.oldHeadAncestorPreserved, true);
+    assert.equal(record.mainAncestorPreserved, true);
+    assert.equal(record.directMainWriteAllowed, false);
+    const retry = await executeSovereignPreservationConvergence({ ...request, expectedHead: result.newHead });
+    assert.equal(retry.ok, true);
+    assert.equal(retry.changed, false);
+    assert.equal(retry.pushed, false);
+    const retryRecord = JSON.parse(await readFile(receiptPath, 'utf8'));
+    assert.equal(validateSharedWorkspaceRecord(retryRecord).valid, true);
+    assert.equal(retryRecord.newHead, result.newHead);
+    assert.equal(retryRecord.proofHash, retry.proofHash);
   } finally {
     await rm(fx.root, { recursive: true, force: true });
   }

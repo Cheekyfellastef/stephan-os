@@ -20,6 +20,7 @@ import {
 import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import { reconcileBattleBridgeGitHubSyncTask } from '../shared/agents/battleBridgeGitHubSyncSelfRepairV1.mjs';
 import { runCompletionGuardian } from './completion-guardian.mjs';
+import { runTemporarySovereignRescueObservationV1 } from './temporary-sovereign-lease-rescue.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import {
   appendWorkspaceJsonl,
@@ -530,6 +531,35 @@ async function writeStateAtomically(statePath, value) {
   await rename(temporaryPath, statePath);
 }
 
+// No caller-supplied commands or output paths. Read ONLY the bounded
+// known result marker from the fixed child and preserve fail-closed telemetry.
+// No second process, shell, scheduler or mutation authority. Recovery Mesh
+// already owns the guarded Windows mutex and normal completion lifecycle.
+export function projectRecoveryMeshTemporaryRescueObservationV1(result = {}) {
+  const denied = (blocker) => Object.freeze({
+    observed: false, blocker,
+    canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+  });
+  const knownModes = new Set([
+    'EVIDENCE_HELD', 'ORIGINAL_OWNER_REPAIR_REQUIRED',
+    'WAITING_EXACT_RELEASE', 'CANONICAL_RECOVERY_NEEDS_WORKER_PROOF',
+  ]);
+  if (result?.publicationOk !== true || !knownModes.has(result?.mode)
+      || result?.schemaVersion !== 'stephanos.temporary-sovereign-lease-rescue.v1'
+      || result?.sourceMutationAllowed !== false
+      || result?.leaseSeizureAllowed !== false
+      || result?.newWriterAllowed !== false
+      || result?.physicalPickupProven !== false) {
+    return denied('RESCUE_OBSERVATION_UNVERIFIED');
+  }
+  return Object.freeze({
+    observed: true, mode: result.mode,
+    blocker: /^[A-Z][A-Z0-9_]{0,119}$/.test(text(result.blocker))
+      ? result.blocker : 'RESCUE_BLOCKER_UNVERIFIED',
+    canonicalLeaseReleaseProven: result.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+  });
+}
 export async function runBattleBridgeRecoveryMesh({
   env = process.env,
   now = new Date(),
@@ -701,6 +731,29 @@ export async function runBattleBridgeRecoveryMesh({
       }
     }
     const completionGuardianHealthy = completionGuardian?.ok === true;
+    // Emergency #2961 observes and reconciles ONLY through the canonical
+    // exact-bound guard. It runs inside the existing mutex-protected
+    // Recovery Mesh task, not through a dynamically spawned child.
+    // Core Recovery Mesh health does not depend on optional lease forensics.
+    let temporaryLeaseRescue = Object.freeze({
+      observed: false, blocker: 'RESCUE_NOT_ELIGIBLE',
+      canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+    });
+    if (process.platform === 'win32' && completionGuardianEligible) {
+      try {
+        const observation = await runTemporarySovereignRescueObservationV1({
+          env, now,
+          paths: { repoRoot: paths.repoRoot, workspaceRoot: paths.workspaceRoot },
+          sourceHead: syncRepairExpectedHead,
+        });
+        temporaryLeaseRescue = projectRecoveryMeshTemporaryRescueObservationV1(observation);
+      } catch {
+        temporaryLeaseRescue = Object.freeze({
+          observed: false, blocker: 'RESCUE_OBSERVATION_EXCEPTION',
+          canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+        });
+      }
+    }
     return Object.freeze({
       ok: coreHealthy && publication.ok && syncHealthy && completionGuardianHealthy,
       classification: !syncHealthy
@@ -714,6 +767,7 @@ export async function runBattleBridgeRecoveryMesh({
       publication,
       githubSyncSelfRepair,
       completionGuardian,
+      temporaryLeaseRescue,
       lock,
       acceptsRuntimeWork: coreHealthy && syncHealthy && completionGuardianHealthy,
       bulletproofAcceptanceClaimed: false,

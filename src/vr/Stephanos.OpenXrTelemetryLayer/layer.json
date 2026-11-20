@@ -1,0 +1,10 @@
+{
+  "file_format_version": "1.0.0",
+  "api_layer": {
+    "name": "XR_APILAYER_STEPHANOS_telemetry_v1",
+    "library_path": "..\\bin\\stephanos-openxr-telemetry-layer.dll",
+    "api_version": "1.0",
+    "implementation_version": "1",
+    "description": "Stephanos reusable OpenXR visual telemetry layer; pass-through observation only"
+  }
+}

@@ -11,6 +11,8 @@ import {
 } from './sharedAgentWorkspaceStore.mjs';
 import { validateDeliveryStatusSubject } from './sharedWorkspaceScopedDeliveryStatusV1.mjs';
 import { readSharedWorkspaceDashboardFeed } from './shared-workspace-dashboard-feed.mjs';
+import { projectSharedWorkspaceProofIndexV1 } from './sharedWorkspaceProofIndexV1.mjs';
+import { projectChatHandoffContinuity } from './chatHandoffContinuityV1.mjs';
 
 export const CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION = 'chatgpt-participant-bridge.v1';
 export const CHATGPT_BRIDGE_PARTICIPANT_ID = 'chatgpt-bridge';
@@ -26,6 +28,7 @@ export const CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION = 'READ_STARFIELD_V
 export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_CURRENT_STATUS',
   'READ_LATEST_PROOF',
+  'READ_PROOF_INDEX',
   'READ_OPERATOR_ATTENTION',
   'READ_DELIVERY_STATUS',
   CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION,
@@ -46,6 +49,7 @@ export const CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS = Object.freeze(['READ_FILE', '
 export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
   CURRENT_STATUS: 'current-status-projection',
   LATEST_PROOF: 'latest-proof-projection',
+  PROOF_INDEX: 'proof-index-projection',
   OPERATOR_ATTENTION: 'operator-attention-projection',
   DELIVERY_STATUS: 'delivery-status-projection',
   STARFIELD_VR_TELEMETRY: 'starfield-vr-telemetry-projection',
@@ -61,6 +65,7 @@ export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
 export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
   READ_CURRENT_STATUS: CHATGPT_BRIDGE_RECORD_KINDS.CURRENT_STATUS,
   READ_LATEST_PROOF: CHATGPT_BRIDGE_RECORD_KINDS.LATEST_PROOF,
+  READ_PROOF_INDEX: CHATGPT_BRIDGE_RECORD_KINDS.PROOF_INDEX,
   READ_OPERATOR_ATTENTION: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION,
   READ_DELIVERY_STATUS: CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS,
   [CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.STARFIELD_VR_TELEMETRY,
@@ -92,6 +97,7 @@ const SECRET_KEY_PATTERN = /secret|token|session|password|credential|private[_-]
 const SECRET_VALUE_PATTERN = /BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|\.env\b|browser cookies?|session\b/i;
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const IGNITION_SUPERVISOR_STATUS_MAX_BYTES = 64 * 1024;
+const SOVEREIGN_RELAY_STATUS_MAX_BYTES = 64 * 1024;
 const STARFIELD_VR_TELEMETRY_CURRENT_MAX_BYTES = 1024 * 1024;
 const STARFIELD_VR_TELEMETRY_HISTORY_MAX_BYTES = 2 * 1024 * 1024;
 const PATH_SHAPED_TEXT_PATTERN = /(?:^|[\s"'`])(?:[A-Za-z]:[\\/]|\\\\|\/(?:Users|home|var|tmp)(?:\/|\b))/i;
@@ -637,6 +643,44 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
   return { ok: true, record, validation };
 }
 
+export function sanitizeSovereignRelayStatus(status = {}) {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) {
+    return Object.freeze({ state: 'unverifiable', blocker: 'SOVEREIGN_RELAY_STATUS_JSON_INVALID' });
+  }
+  return Object.freeze({
+    state: 'observed',
+    schemaVersion: sanitizedProjectionText(status.schemaVersion),
+    daemonHealthy: status.daemonHealthy === true,
+    carrierHealthy: status.carrierHealthy === true,
+    carrier: sanitizedProjectionText(status.carrier),
+    executionOwner: sanitizedProjectionText(status.executionOwner),
+    authorityOwner: sanitizedProjectionText(status.authorityOwner),
+    heartbeatAtUtc: sanitizedProjectionText(status.heartbeatAtUtc),
+    deliveryState: sanitizedProjectionText(status.deliveryState),
+    scheduledMailboxFallbackExpected: status.scheduledMailboxFallbackExpected === true,
+    fallbackCovered: status.fallbackCovered === true,
+    retryIdentityPreserved: status.retryIdentityPreserved === true,
+    blocker: sanitizedProjectionText(status.blocker),
+    finalVerdict: sanitizedProjectionText(status.finalVerdict),
+  });
+}
+
+export async function readSanitizedSovereignRelayStatus(input = {}) {
+  if (!input.workspaceRoot || !input.repoRoot) {
+    return Object.freeze({ state: 'absent', blocker: 'SOVEREIGN_RELAY_WORKSPACE_CONTEXT_REQUIRED' });
+  }
+  const read = await readFixedWorkspaceJson({
+    workspaceRoot: input.workspaceRoot,
+    repoRoot: input.repoRoot,
+    segments: ['status', 'sovereign-relay-current.json'],
+    maxBytes: SOVEREIGN_RELAY_STATUS_MAX_BYTES,
+    readFileFn: input.readFileFn || readFile,
+    lstatFn: input.lstatFn || lstat,
+  });
+  if (!read.ok) return Object.freeze({ state: 'absent', blocker: read.reason });
+  return sanitizeSovereignRelayStatus(read.record);
+}
+
 export async function createSanitizedSharedWorkspaceProjection(input = {}) {
   let aggregation = { ok: true, reason: 'LATEST_STATUS_SUPPLIED', latest: input.latest || {} };
   if (!input.latest && input.workspaceRoot) {
@@ -666,6 +710,21 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     }
   }
   const controllerFleet = sanitizeControllerFleetProjection(dashboardFeed?.projection?.controllerFleet);
+  const proofIndex = projectSharedWorkspaceProofIndexV1({
+    sourceAvailable: dashboardFeed?.proofIndex?.sourceAvailable === true,
+    proofRecords: dashboardFeed?.records?.proofRecords,
+    nowMs: input.nowMs,
+    staleAfterMs: input.staleAfterMs,
+    maxItems: 8,
+  });
+  const sovereignRelay = await readSanitizedSovereignRelayStatus(input);
+  const handoffContinuity = projectChatHandoffContinuity({
+    directHandoffStatus: input.directHandoffStatus,
+    localSovereignCommanderAvailable: input.localSovereignCommanderAvailable === true,
+    sovereignRelay,
+    scheduledMailboxAvailable: input.scheduledMailboxAvailable === true,
+    tailscalePrivateAvailable: input.tailscalePrivateAvailable === true,
+  });
   const sanitizeRecord = (record = null) => record ? {
     kind: sanitizedProjectionText(record.kind),
     timestampUtc: sanitizedProjectionText(record.timestampUtc),
@@ -684,7 +743,10 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     currentGoal: sanitizeRecord(latest.goal),
     currentStatus: sanitizeRecord(latest.status),
     latestProof: sanitizeRecord(latest.proof),
+    proofIndex,
     controllerFleet,
+    sovereignRelay,
+    handoffContinuity,
     ignitionSupervisor,
     freshnessUtc: text(input.timestampUtc, new Date(0).toISOString()),
     arbitraryFilesystemAccess: false,
@@ -719,6 +781,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
     else if (operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION && !isExactStephanosQuestionDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION && !isExactSharedConversationTurnDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
+    else if (operation === 'READ_PROOF_INDEX' && (Object.keys(request.boundedPayload || {}).length !== 0)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {

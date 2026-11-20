@@ -1,8 +1,10 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
   SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  parseSovereignCommanderTailnetOutputV1,
   executeSovereignCommanderInstallOnBattleBridge,
   validateSovereignCommanderInstallCommandShape,
 } from './sovereignCommanderBattleBridgeV1.mjs';
@@ -15,7 +17,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-install-20260930-001',
     operation: SOVEREIGN_COMMANDER_INSTALL_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -49,6 +51,31 @@ function response({ status = 200, body = null, sessionId = '' } = {}) {
     async text() { return serialized; },
   };
 }
+
+test('native Serve banner plus pretty route JSON is a single exact tailnet proof', () => {
+  const expected = tailnetReceipt();
+  assert.deepEqual(parseSovereignCommanderTailnetOutputV1(JSON.stringify(expected)), expected);
+  assert.deepEqual(
+    parseSovereignCommanderTailnetOutputV1('Tailscale Serve configured\r\n' + JSON.stringify(expected, null, 2) + '\r\n'),
+    expected,
+  );
+});
+
+test('tailnet parser rejects ambiguous, foreign, extra and oversized output', () => {
+  const valid = JSON.stringify(tailnetReceipt(), null, 2);
+  for (const raw of [
+    '',
+    'Tailscale configured without proof',
+    'No line break before JSON ' + valid,
+    'Configured\n' + valid + '\ntrailing output',
+    'Configured\n{}\n' + valid,
+    'Configured\n' + valid + '\n{}',
+    'Configured\n' + valid.slice(0, -1),
+    'Configured\n' + JSON.stringify({ schemaVersion: 'wrong' }),
+    'Configured\n' + JSON.stringify([tailnetReceipt()]),
+    'Configured\n' + 'x'.repeat(32_769) + '\n' + valid,
+  ]) assert.equal(parseSovereignCommanderTailnetOutputV1(raw), null);
+});
 
 test('sovereign bootstrap command is exact-head and rejects widened fields', () => {
   const valid = validateSovereignCommanderInstallCommandShape(command());
@@ -109,7 +136,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-03-vr-acceptance-proof-v2',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -177,7 +204,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_INSTALLED_STARTED_AND_AUTHENTICATED');
   assert.equal(result.expectedHeadMatch, true);
   assert.equal(result.healthReady, true);
-  assert.equal(result.capabilityVersion, '2026-10-03-vr-acceptance-proof-v2');
+  assert.equal(result.capabilityVersion, '2026-10-18-island-action-contract-v6');
   assert.equal(result.authenticatedMcpReady, true);
   assert.equal(result.tailnetIgnitionReady, true);
   assert.equal(result.remoteIgnitionPath, '/ignite');
@@ -200,7 +227,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
   const runnerCall = processCalls.find((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')));
   assert.ok(runnerCall);
   assert.ok(runnerCall.args.includes('-RequireCapabilityVersion'));
-  assert.ok(runnerCall.args.includes('2026-10-03-vr-acceptance-proof-v2'));
+  assert.ok(runnerCall.args.includes('2026-10-18-island-action-contract-v6'));
 });
 
 
@@ -225,7 +252,7 @@ test('sovereign bootstrap reuses an existing healthy task without reinstalling i
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-03-vr-acceptance-proof-v2',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -297,7 +324,7 @@ test('sovereign bootstrap rejects failed outer config receipts even when nested 
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-03-vr-acceptance-proof-v2',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -370,7 +397,7 @@ test('sovereign bootstrap recycles an existing unhealthy scheduled task without 
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-03-vr-acceptance-proof-v2',
+      capabilityVersion: '2026-10-18-island-action-contract-v6',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -422,7 +449,7 @@ test('sovereign bootstrap recycles an existing unhealthy scheduled task without 
   const runnerCall = processCalls.find((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')));
   assert.ok(runnerCall);
   assert.ok(runnerCall.args.includes('-RequireCapabilityVersion'));
-  assert.ok(runnerCall.args.includes('2026-10-03-vr-acceptance-proof-v2'));
+  assert.ok(runnerCall.args.includes('2026-10-18-island-action-contract-v6'));
 });
 
 

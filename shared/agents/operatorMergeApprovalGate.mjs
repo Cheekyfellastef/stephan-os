@@ -62,6 +62,7 @@ const APPROVAL_BOUNDARY_PATHS = Object.freeze([
 
 const UNSUPPORTED_HIGH_RISK_PATH_PATTERNS = Object.freeze([
   /(^|\/)scripts\/windows\//i,
+  /(^|\/)src\/windows\//i,
   /(^|\/)openclaw/i,
   /credential|secret|token|billing|payment/i,
   /(^|\/)deployment/i,

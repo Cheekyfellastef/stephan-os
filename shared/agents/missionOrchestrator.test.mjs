@@ -5,7 +5,90 @@ import {
   applyMissionOrchestratorEvent,
   buildMissionOperationsSnapshot,
   createMissionOrchestratorState,
+  isRetryableAgentFailureBlocker,
+  projectNarrowedMissionSourceScopeV1,
 } from './missionOrchestrator.mjs';
+
+test('retry source scope is directional containment with unchanged path boundaries', () => {
+  const project = projectNarrowedMissionSourceScopeV1;
+  for (const [prior, next] of [
+    [['**'], ['shared/agents/example.mjs']],
+    [['shared/**'], ['shared/agents/example.mjs', 'shared/agents/example.mjs/**']],
+    [['shared/agents/example.mjs', 'scripts/**'], ['shared/agents/example.mjs']],
+  ]) assert.equal(project(prior, next).valid, true);
+  for (const [prior, next] of [
+    [['shared/agents/example.mjs'], ['shared/agents/example.mjs/**']],
+    [['shared/agents/**'], ['shared/**']],
+    [['shared/agents/**'], ['shared/agents-other/a.mjs']],
+    [['**'], ['**']], [['**'], []], [[], ['shared/a.mjs']],
+    [['**'], new Array(1)], [new Array(1), ['shared/a.mjs']],
+    [['**'], ['../shared/a.mjs']], [['**'], ['C:/shared/a.mjs']],
+    [['**'], ['shared//a.mjs']], [['**'], ['shared/./a.mjs']],
+    [['**'], ['.git/config']], [['**'], ['shared/token.mjs']],
+    [['**'], ['shared/a.mjs', 'SHARED/A.mjs']], [['**'], ['shared/*.mjs']],
+  ]) assert.equal(project(prior, next).valid, false, JSON.stringify([prior, next]));
+});
+
+test('failed task retry atomically narrows scope and strengthens acceptance without replacing its history', () => {
+  let state = createMissionOrchestratorState({...base, allowedFiles: ['**']}, {now: new Date(timestamp(0))});
+  state = event(state, 'WORKTREE_READY', {worktreePath: base.worktreePath, clean: true, receipt: receipt('worktree', 'narrow-worktree')});
+  state = event(state, 'AGENT_DISPATCHED', {agentId: 'foundry-forge'});
+  state = event(state, 'AGENT_RESULT_RECEIVED', {success: false, resultId: 'original-narrow-action', error: 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'});
+  state = event(state, 'MISSION_PARKED_FOR_REPAIR', {reason: 'Original failure', repairOwner: '#2961', receipt: receipt('park', 'narrow-park')});
+  const original = structuredClone(state);
+  const scope = ['shared/agents/example.mjs'];
+  const tests = [...original.requiredTests, 'node --test scripts/independent.test.mjs'];
+  const fields = { retryableBlockers: original.blockers, retryAllowedFiles: scope, retryRequiredTests: tests,
+    retryPlanSourceHead: 'a'.repeat(40), receipt: receipt('retry', 'narrow-retry') };
+  const next = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', fields);
+  assert.equal(next.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(next.repair.currentRound, original.repair.currentRound + 1);
+  assert.deepEqual(next.allowedFiles, scope);
+  assert.deepEqual(next.requiredTests, tests);
+  assert.deepEqual(next.repair.history.at(-1).previousAllowedFiles, ['**']);
+  assert.deepEqual(next.repair.history.at(-1).previousDispatch, original.dispatch);
+  assert.deepEqual(next.repair.history.at(-1).previousRequiredTests, original.requiredTests);
+  assert.deepEqual(next.continuity.history.slice(0, -1), original.continuity.history);
+  const dispatched = event(next, 'AGENT_DISPATCHED', {agentId: 'codex', adapter: 'codex'});
+  const outside = event(dispatched, 'AGENT_RESULT_RECEIVED', {success: true,
+    changedFiles: ['scripts/independent.test.mjs'], receipt: receipt('result', 'narrow-outside')});
+  assert.equal(outside.currentPhase, 'BLOCKED');
+  assert.match(outside.blockers.join(' '), /exceeded approved source scope/);
+  for (const change of [ {retryPlanSourceHead: ''}, {retryAllowedFiles: ['**']},
+    {retryRequiredTests: original.requiredTests}, {retryAllowedFiles: ['scripts/**']},
+    {retryRequiredTests: ['node --test scripts/independent.test.mjs']} ]) {
+    const rejected = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', {...fields, ...change});
+    assert.equal(rejected.currentPhase, 'BLOCKED');
+    assert.deepEqual(rejected.allowedFiles, original.allowedFiles);
+    assert.deepEqual(rejected.requiredTests, original.requiredTests);
+    assert.equal(rejected.repair.currentRound, original.repair.currentRound);
+  }
+});
+
+test('test failure retry binds the complete validated consumed test plan', () => {
+  const command = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+  const blocker = `PROVIDER_NEUTRAL_TEST_FAILED:${command}`;
+  for (const [plan, eligible] of [
+    [[command], true], [['npm run stephanos:verify', command], true],
+    [['npm run stephanos:verify'], false], [[], false],
+    [[command, 'npm install'], false], [[command, command], false],
+  ]) {
+    assert.equal(isRetryableAgentFailureBlocker(blocker, plan), eligible);
+    let state = createMissionOrchestratorState({ ...base, requiredTests: plan });
+    state.requiredTests = [...plan]; state.git.worktreeReady = true; state.git.clean = true;
+    state.currentPhase = 'BLOCKED'; state.dispatch.status = 'failed'; state.blockers = [blocker];
+    const next = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+      retryableBlockers: [blocker], receipt: receipt('retry', 'test-plan-retry'),
+    });
+    assert.equal(next.currentPhase, eligible ? 'AGENT_IMPLEMENTATION' : 'BLOCKED');
+    assert.equal(next.repair.currentRound, eligible ? 1 : 0);
+    assert.deepEqual(next.requiredTests, state.requiredTests);
+  }
+  for (const invalid of [command + ';whoami', command + ' --watch', command + '\nwhoami',
+    'node --test scripts/../secret.test.mjs', 'node --test scripts/*.test.mjs']) {
+    assert.equal(isRetryableAgentFailureBlocker('PROVIDER_NEUTRAL_TEST_FAILED:' + invalid, [invalid]), false);
+  }
+});
 
 const base = {
   missionId: 'mission-orchestrator-test',
@@ -121,6 +204,40 @@ test('unsafe, vague, or evidence-free intent blocks before dispatch', () => {
   assert.equal(unsafe.currentPhase, 'BLOCKED');
   assert.equal(unsafe.activeWriter, 'none');
   assert.match(unsafe.blockers.join(' '), /intent|required evidence|forbidden/i);
+});
+
+test('repository-wide scope permits safe source files but still blocks forbidden runtime paths', () => {
+  const scopedBase = { ...base, missionId: 'repo-wide-scope-test', allowedFiles: ['**'], branch: 'openclaw/repo-wide-scope-test' };
+  let safe = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  safe = event(safe, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'repo-wide-worktree'),
+  });
+  safe = event(safe, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  safe = event(safe, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'repo-wide-safe-result',
+    changedFiles: ['shared/agents/goal-safe.mjs', 'shared/runtime/runtimeAdjudicator.mjs', 'apps/music-tile/data/trackLibrary.js'],
+    receipt: receipt('openclaw result', 'repo-wide-safe-result-receipt'),
+  });
+  assert.equal(safe.currentPhase, 'VERIFYING');
+
+  let blocked = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  blocked = event(blocked, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'repo-wide-blocked-worktree'),
+  });
+  blocked = event(blocked, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  blocked = event(blocked, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'repo-wide-blocked-result',
+    changedFiles: ['runtime/unsafe.json'],
+    receipt: receipt('openclaw result', 'repo-wide-blocked-result-receipt'),
+  });
+  assert.equal(blocked.currentPhase, 'BLOCKED');
+  assert.match(blocked.blockers.join(' '), /exceeded approved source scope/i);
 });
 
 test('full implementation lifecycle requires evidence, exact approval, merge receipt, and all local deployment steps', () => {
@@ -381,4 +498,305 @@ test('current-main satisfaction rejects stale or mismatched canonical and worktr
   assert.equal(state.currentPhase, 'BLOCKED');
   assert.match(state.blockers.join(' '), /canonical main HEAD and worktree HEAD bound to the exact source revision/i);
   assert.equal(state.currentMainAcceptance.verified, false);
+});
+
+
+test('bounded retry admission reopens only a whitelisted failed agent result and consumes one repair round', () => {
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'retryable-agent-failure-test',
+    branch: 'openclaw/retryable-agent-failure-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'retry-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+  });
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.equal(state.dispatch.status, 'failed');
+  assert.equal(state.repair.currentRound, 0);
+
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: ['PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'retry-admission-1',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+  assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(state.dispatch.status, 'pending');
+  assert.equal(state.repair.currentRound, 1);
+  assert.equal(state.blockers.length, 0);
+  assert.equal(state.nextAction.type, 'DISPATCH_AGENT');
+  assert.equal(state.activeWriter, 'foundry-forge');
+});
+
+test('bounded retry admission accepts a semantic edit contract failure with safe path detail', () => {
+  const blocker = 'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1';
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'semantic-edit-retry-test',
+    branch: 'openclaw/semantic-edit-retry-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'semantic-retry-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: blocker,
+  });
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: [blocker],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'semantic-retry-admission-1',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+
+  assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(state.dispatch.status, 'pending');
+  assert.equal(state.repair.currentRound, 1);
+  assert.equal(state.blockers.length, 0);
+});
+
+test('bounded retry admission refuses semantic edit retry when path detail is protected', () => {
+  const blocker = 'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:.env';
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'semantic-edit-protected-path-test',
+    branch: 'openclaw/semantic-edit-protected-path-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'semantic-protected-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: blocker,
+  });
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: [blocker],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'semantic-protected-retry-admission',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.equal(state.dispatch.status, 'failed');
+  assert.equal(state.repair.currentRound, 0);
+  assert.ok(state.blockers.includes(blocker));
+});
+
+test('bounded retry admission refuses to clear unrelated blockers', () => {
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'nonretryable-agent-failure-test',
+    branch: 'openclaw/nonretryable-agent-failure-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'nonretry-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: 'UNRELATED_SOURCE_POLICY_FAILURE',
+  });
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: ['PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'retry-admission-invalid',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.equal(state.dispatch.status, 'failed');
+  assert.equal(state.repair.currentRound, 0);
+  assert.ok(state.blockers.includes('UNRELATED_SOURCE_POLICY_FAILURE'));
+});
+
+
+test('agent result accepts exact scheduler scope identity across Git path casing without widening scope', () => {
+  const scopedBase = {
+    ...base,
+    missionId: 'case-scope-test',
+    allowedFiles: ['shared/agents/battlebridgesupervisor.mjs'],
+    branch: 'openclaw/case-scope-test',
+  };
+  let state = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'case-scope-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'case-scope-result',
+    changedFiles: ['shared/agents/battleBridgeSupervisor.mjs'],
+    receipt: receipt('openclaw result', 'case-scope-result-receipt'),
+  });
+  assert.equal(state.currentPhase, 'VERIFYING');
+  assert.deepEqual(state.git.changedFiles, ['shared/agents/battleBridgeSupervisor.mjs']);
+
+  let blocked = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  blocked = event(blocked, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'case-scope-blocked-worktree'),
+  });
+  blocked = event(blocked, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  blocked = event(blocked, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'case-scope-blocked-result',
+    changedFiles: ['shared/agents/battleBridgeSupervisor.test.mjs'],
+    receipt: receipt('openclaw result', 'case-scope-blocked-result-receipt'),
+  });
+  assert.equal(blocked.currentPhase, 'BLOCKED');
+  assert.match(blocked.blockers.join(' '), /exceeded approved source scope/i);
+});
+
+test('Forge signed draft publication atomically advances commit, push, PR without merge authority', () => {
+  let state = createMissionOrchestratorState({
+    ...base, repository: 'cheekyfellastef/stephan-os',
+    missionId: 'critical-2732-elastic-goal', branch: 'openclaw/elastic-goal-2732',
+    requiredEvidence: ['focused test output'],
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath, clean: true,
+    receipt: receipt('isolated worktree', 'forge-worktree-receipt'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: true, resultId: 'forge-source-result', changedFiles: ['shared/agents/missionOrchestrator.mjs'],
+    receipt: receipt('forge result', 'forge-result-receipt'),
+    sourceArtifactEscrow: {
+      schemaVersion: 'stephanos.source-artifact-escrow.v1',
+      missionId: 'critical-2732-elastic-goal', repository: base.repository,
+      canonicalBranch: 'openclaw/elastic-goal-2732', canonicalPr: null,
+      completeArtifactSha256: 'c'.repeat(64),
+      exactParentHead: 'd'.repeat(40), exactResultTree: 'b'.repeat(40),
+      artifactRef: 'shared-workspace://source-artifacts/' + 'c'.repeat(64) + '.json',
+    },
+    offlinePublicationOutbox: {
+      schemaVersion: 'stephanos.offline-publication-outbox.v1',
+      outboxId: 'offline-publication-' + 'e'.repeat(24),
+      missionId: 'critical-2732-elastic-goal',
+      completeArtifactSha256: 'c'.repeat(64),
+      artifactRef: 'shared-workspace://source-artifacts/' + 'c'.repeat(64) + '.json',
+      publicationPaused: true, pushAuthority: false, mergeAuthority: false,
+    },
+  });
+  state = event(state, 'EVIDENCE_RECORDED', {
+    receipts: [receipt('focused test output', 'forge-tests')],
+  });
+  assert.equal(state.currentPhase, 'GITHUB_COMMIT');
+  const publication = {
+    finalVerdict: 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF',
+    repository: base.repository, branch: 'openclaw/elastic-goal-2732',
+    commitSha: 'a'.repeat(40), exactResultTree: 'b'.repeat(40),
+    sourceArtifactSha256: 'c'.repeat(64), prNumber: 3001, draft: true,
+    mergeAuthority: false, forcePushAllowed: false,
+  };
+  const invalid = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication: { ...publication, forcePushAllowed: true },
+    receipt: receipt('draft publication', 'forge-bad-publish'),
+  });
+  assert.equal(invalid.currentPhase, 'BLOCKED');
+  const lookalike = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication: { ...publication, repository: 'Cheekyfellastef/stephan-os-fork' },
+    receipt: receipt('draft publication', 'forge-lookalike-publish'),
+  });
+  assert.equal(lookalike.currentPhase, 'BLOCKED');
+  const published = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication,
+    receipt: receipt('draft publication', 'forge-publish'),
+    prUrl: 'https://github.com/Cheekyfellastef/stephan-os/pull/3001',
+  });
+  assert.equal(published.currentPhase, 'CHECK_PULL_REQUEST');
+  assert.equal(published.git.commitSha, publication.commitSha);
+  assert.equal(published.git.pushed, true);
+  assert.equal(published.pullRequest.number, 3001);
+  assert.equal(published.pullRequest.state, 'draft');
+  assert.equal(published.approval.status, 'not-requested');
+  assert.equal(published.pullRequest.merged, false);
+});
+
+test('pilot current-main source cannot silently complete while acceptance is missing', () => {
+  for (const issue of [1646,1717,1723]) {
+    const mission={...base,missionId:'critical-'+issue+'-elastic-goal'};
+    let state=createMissionOrchestratorState(mission,{now:new Date(timestamp(0))});
+    state=event(state,'WORKTREE_READY',{
+      worktreePath:mission.worktreePath,clean:true,
+      receipt:receipt('isolated worktree','pilot-worktree-'+issue),
+    });
+    const result=event(state,'CURRENT_MAIN_SATISFACTION_RECORDED',{
+      sourceRevision:'4'.repeat(40),canonicalMainHeadSha:'4'.repeat(40),
+      worktreeHeadSha:'4'.repeat(40),worktreeClean:true,changedFiles:[],
+    });
+    assert.notEqual(result.currentPhase,'COMPLETE');
+    assert.equal(result.currentMainAcceptance?.verified,false);
+    assert.match(result.blockers.join(' '),/independent goal-acceptance completion proof/);
+  }
+});
+
+test('accepted replacement repair prevents duplicate Forge pickup for VR Link',()=>{
+ const input={...base,missionId:'critical-1717-elastic-goal'};
+ let state=createMissionOrchestratorState(input,{now:new Date(timestamp(0))});
+ state=event(state,'WORKTREE_READY',{worktreePath:base.worktreePath,clean:true,receipt:receipt('isolated worktree','replaced-vr-link-worktree')});
+ state.continuity.history.push({eventType:'MISSION_REPAIR_PROVEN',receiptId:'verified-replacement-repair-e64fab30f247e954e06dbc73'});
+ const next=event(state,'AGENT_DISPATCHED',{agentId:'foundry-forge',adapter:'foundry-forge'});
+ assert.notEqual(next.dispatch.status,'running');
+ assert.match(next.blockers.join(' '),/REPLACEMENT_SOURCE_ALREADY_MERGED/);
+});
+
+test('parked source diff retry binds stronger independent tests while preserving the failed attempt', () => {
+  let state = createMissionOrchestratorState({...base, allowedFiles: ['shared/agents/example.mjs']}, {now: new Date(timestamp(0))});
+  state = event(state, 'WORKTREE_READY', {worktreePath: base.worktreePath, clean: true, receipt: receipt('worktree', 'eof-worktree')});
+  state = event(state, 'AGENT_DISPATCHED', {agentId: 'foundry-forge'});
+  state = event(state, 'AGENT_RESULT_RECEIVED', {success: false, resultId: 'original-eof-action', error: 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'});
+  state = event(state, 'MISSION_PARKED_FOR_REPAIR', {reason: 'Original EOF failure', repairOwner: '#2961', receipt: receipt('park', 'eof-park')});
+  const original = structuredClone(state);
+  const extra = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+  for (const plan of [undefined, [], state.requiredTests, [extra]]) {
+    const rejected = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', {retryableBlockers: original.blockers, retryRequiredTests: plan, receipt: receipt('retry', 'eof-retry-refuse')});
+    assert.equal(rejected.currentPhase, 'BLOCKED');
+    assert.equal(rejected.continuity.parkingStatus, 'PARKED_BLOCKED');
+    assert.deepEqual(rejected.requiredTests, original.requiredTests);
+  }
+  state = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', {retryableBlockers: original.blockers,
+    retryRequiredTests: [...original.requiredTests, extra], receipt: receipt('retry', 'eof-retry')});
+  assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(state.continuity.parkingStatus, 'ACTIVE');
+  assert.equal(state.repair.currentRound, 1);
+  assert.deepEqual(state.requiredTests, [...original.requiredTests, extra]);
+  assert.deepEqual(state.allowedFiles, original.allowedFiles);
+  assert.deepEqual(state.repair.history[0].previousDispatch, original.dispatch);
+  assert.deepEqual(state.repair.history[0].previousRequiredTests, original.requiredTests);
+  assert.deepEqual(state.continuity.history.slice(0, -1), original.continuity.history);
+  assert.ok(state.timeline.some(item => item.eventType === 'AGENT_RESULT_RECEIVED'));
+  const editable = structuredClone(original);
+  editable.allowedFiles.push('scripts/acceptance/**');
+  assert.equal(event(editable, 'AGENT_FAILURE_RETRY_ADMITTED', {retryableBlockers: editable.blockers,
+    retryRequiredTests: [...editable.requiredTests, extra], receipt: receipt('retry', 'eof-editable-refuse')}).currentPhase, 'BLOCKED');
+  const exhausted = structuredClone(original);
+  exhausted.repair.currentRound = MISSION_ORCHESTRATOR_MAX_REPAIR_ROUNDS;
+  assert.equal(event(exhausted, 'AGENT_FAILURE_RETRY_ADMITTED', {retryableBlockers: exhausted.blockers,
+    retryRequiredTests: [...exhausted.requiredTests, extra], receipt: receipt('retry', 'eof-budget-refuse')}).currentPhase, 'BLOCKED');
 });

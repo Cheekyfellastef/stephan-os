@@ -6,8 +6,10 @@ import { tmpdir } from 'node:os';
 
 import {
   GITHUB_LIFEBOAT_LANE7_CLAIM_ACK_KEEPER_SCHEMA,
-  refreshGitHubLifeboatLane7ClaimAck,
+  refreshGitHubLifeboatLane7ClaimAck as refreshClaimAck,
 } from './githubLifeboatLane7ClaimAckKeeper.js';
+
+const refreshGitHubLifeboatLane7ClaimAck = options => refreshClaimAck({ readWorkerHeartbeatAgeMs: () => 0, ...options });
 
 const HEAD = 'a'.repeat(40);
 const ACTION_ID = 'lane7-action-001';
@@ -127,4 +129,18 @@ test('multiple processing items fail closed instead of acknowledging an ambiguou
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('claim acknowledgement samples custody after awaited processing reads and fails closed', async () => {
+  const { root } = await fixture();
+  try {
+    for (const age of [120001, null, NaN, -1, undefined]) {
+      let writes = 0; let reads = 0;
+      const result = await refreshClaimAck({ queueRoot: root, sourceHead: HEAD,
+        readWorkerHeartbeatAgeMs: () => { reads++; return age; },
+        writeOutbox: async () => { writes++; return { ok: true }; } });
+      assert.equal(reads, 1); assert.equal(writes, 0);
+      assert.equal(result.reason, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
