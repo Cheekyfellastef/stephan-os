@@ -618,10 +618,13 @@ test('composite review refuses contradictory typed counts and verdict before del
       }
       const denied = review({ findings, counts });
       assert.equal(trapCalls, 0, kind + ' must not execute a Proxy trap');
-      assert.equal(denied.eligible, true, kind + ' must be explicitly classified');
+      // The router now rejects nested executable evidence BEFORE a sibling
+      // reviewer can inspect it; stricter pre-dispatch denial replaces the
+      // earlier post-dispatch composite-finding classification.
+      assert.equal(denied.eligible, false, kind + ' must be rejected before child dispatch');
       assert.equal(denied.clean, false, kind + ' must not qualify clean review');
       assert.deepEqual(denied.proofRefs, [], kind + ' must not create positive proof');
-      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID', kind);
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE', kind);
     }
 
     // Getter-backed array indices are also executable, not wire findings.
