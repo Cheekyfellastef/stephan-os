@@ -624,7 +624,8 @@ function Invoke-MonitorWaitingGameFocus {
     if ($monitorState.Mode -cne 'waiting' -or $monitorState.Busy -or -not $monitorState.Process -or
         -not $monitorState.GameProcess -or -not $monitorState.RunId -or
         $monitorState.FocusAttemptedRunId -cne $monitorState.RunId -or
-        $processState.CloseRequested -or $monitorState.TransportFailed -or $monitorState.FocusAttemptCount -ge 8) {
+        $processState.CloseRequested -or $monitorState.CloseRequested -or $monitorState.CloseSent -or
+        $monitorState.TransportFailed -or $monitorState.FocusAttemptCount -ge 8) {
         $focusRetryTimer.Stop()
         return
     }
@@ -736,7 +737,12 @@ function Send-MonitorCommand {
         $monitorState.Busy = $true
         $monitorState.AllowedActions = @('cancel', 'close')
     }
-    if ($Command -in @('cancel', 'close')) { $monitorState.CloseSent = $true }
+    if ($Command -in @('cancel', 'close')) {
+        # A terminal command revokes GUI focus retries immediately, before I/O flush.
+        # Closing the monitor input is independent of native game focus.
+        $monitorState.CloseSent = $true
+        $focusRetryTimer.Stop()
+    }
     try {
         $monitorState.Process.StandardInput.WriteLine(($request | ConvertTo-Json -Depth 6 -Compress))
         $monitorState.Process.StandardInput.Flush()
@@ -849,7 +855,9 @@ function Receive-MonitorEvent {
         $statusLabel.Text = 'Load your usual Starfield save'
         $statusHint.Text = 'Leave your character still, then click My save is loaded on the third card.'
         $progressFill.Width = 270
-        if ($event.process -and $event.runId -and $monitorState.FocusAttemptedRunId -cne $event.runId) {
+        if ($event.process -and $event.runId -and -not $monitorState.CloseRequested -and
+            -not $monitorState.CloseSent -and -not $monitorState.TransportFailed -and
+            $monitorState.FocusAttemptedRunId -cne $event.runId) {
             $monitorState.FocusAttemptedRunId = $event.runId
             $monitorState.FocusAttemptCount = 0
             Invoke-MonitorWaitingGameFocus
