@@ -251,3 +251,24 @@ test('readback revalidates canonical workspace schema and proof invariants after
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('rejects substituted message identity at workspace readback', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-substituted-workspace-'));
+  try {
+    const built = createStephanosAmbientWorkspaceQuestionRecord(question(), options());
+    assert.equal(built.valid, true, built.errors.join(', '));
+    const persisted = await persistStephanosWorkspaceQuestionRecord(root, built.record, options());
+    assert.equal(persisted.ok, true, persisted.reason);
+
+    // A valid workspace record placed under another identity must not be trusted.
+    const substituted = { ...built.record, messageId: 'qa-q-foreign-valid-id-001' };
+    await writeFile(join(root, 'inbox', `${built.record.messageId}.json`), `${JSON.stringify(substituted)}\n`, 'utf8');
+    const readback = await readPersistedStephanosWorkspaceQuestionRecord(root, built.record.messageId, options());
+    assert.equal(readback.ok, false);
+    assert.equal(readback.reason, 'workspace-question-message-id-mismatch');
+    assert.ok(readback.errors.includes('workspace-question-message-id-mismatch'));
+    assert.equal(readback.record, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

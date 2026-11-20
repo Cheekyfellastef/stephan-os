@@ -240,6 +240,7 @@ export async function readPersistedStephanosWorkspaceQuestionRecord(rootInput, m
   if (validation.stale) readbackErrors.push('stale-record');
   const recordMs = Date.parse(inspected.record.timestampUtc);
   if (Number.isFinite(recordMs) && recordMs > nowMs) readbackErrors.push('future-record');
+  if (inspected.record.messageId !== normalizedMessageId) readbackErrors.push('workspace-question-message-id-mismatch');
   if (!validation.valid || readbackErrors.length > 0) {
     const reason = readbackErrors[0] || 'workspace-record-invalid';
     return Object.freeze({ ok: false, reason, record: null, question: null, lineage: null, errors: Object.freeze([...new Set(readbackErrors)]) });
