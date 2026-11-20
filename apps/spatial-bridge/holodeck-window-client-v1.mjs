@@ -27,6 +27,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   // Keep an unverified native release in memory even if sessionStorage is blocked.
   // Losing this identity would permit a second session before the old one stopped.
   let unverifiedNativeReleaseToken=null;
+  // A delayed or replayed native frame must never restore input against an older picture.
+  let lastFrameGeneration=0,lastFrameSerial=-1;
   // Room-local acknowledgement, not native keyboard focus. Never infer an editor from a bind or frame.
   let editorClickConfirmed=false;
   // One owner spans picker, native revocation, playback and the accepted view.
@@ -105,7 +107,8 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     let old=unverifiedNativeReleaseToken||token;
     if(!old)try{old=sessionStore?.getItem(storageKey);}catch{}
     if(old)unverifiedNativeReleaseToken=old;
-    token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;busy=false;inputClickPending=false;editorClickConfirmed=false;
+    token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;
+    lastFrameGeneration=0;lastFrameSerial=-1;busy=false;inputClickPending=false;editorClickConfirmed=false;
     const oldTimer=timer;timer=null;
     if(previousCapture!==keepCapture)closeCapture(previousCapture);
     clearTimer(oldTimer);
@@ -278,7 +281,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       }
       if(current!==epoch||disposed)return false;
       const result=await request('/bind',{id});if(current!==epoch)return false;if(result.status!=='connected')throw new Error('bind');
-      active=true;sequence=0;queue=[];editorClickConfirmed=false;
+      active=true;sequence=0;queue=[];editorClickConfirmed=false;lastFrameGeneration=0;lastFrameSerial=-1;
       if(!publishCurrent(current,{status:'waiting',windows:[],title:selected.title,message:'Waiting for the selected app to draw.'})||!active)return false;
       timer=setTimer(()=>poll(current),0);return true;
     }catch{if(current===epoch)publish({status:'unavailable',message:'Could not connect that window. Restore it on your desktop and choose it again.'});return false;}
@@ -338,12 +341,24 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       }
       const frame=await request('/frame');
       if(!active||current!==epoch)return;
-      if(frame.status==='frame'&&Number.isSafeInteger(frame.serial)&&Number.isSafeInteger(frame.generation)&&typeof frame.jpeg==='string') {
-        if(frame.serial!==serial||frame.generation!==generation||state.status!=='live'){
+      if(frame.status==='frame'&&Number.isSafeInteger(frame.serial)&&frame.serial>=0&&
+        Number.isSafeInteger(frame.generation)&&frame.generation>=1&&typeof frame.jpeg==='string') {
+        const replay=frame.generation<lastFrameGeneration||
+          (frame.generation===lastFrameGeneration&&(frame.serial<lastFrameSerial||
+            (generation===0&&frame.serial===lastFrameSerial)));
+        if(replay){
+          // Keep the old picture inert. Waiting must not be cleared by the same
+          // stale revision; require a newly advanced native serial/generation.
+          generation=0;queue=[];editorClickConfirmed=false;
+          publish({status:'waiting',inputStatus:'Input paused. Native picture freshness is unverified.',
+            message:'Waiting for a new frame from the selected app.'});
+        }else if(frame.serial!==serial||frame.generation!==generation||state.status!=='live'){
           const next=documentRef.createElement('img');next.src='data:image/jpeg;base64,'+frame.jpeg;await next.decode();
           if(!active||current!==epoch)return;
           if(generation!==frame.generation){queue=[];editorClickConfirmed=false;}
-          image=next;generation=frame.generation;serial=frame.serial;publish({status:'live',...(state.status!=='live'?{inputStatus:''}:{}),message:'Connected to your original app. Point at its controls to interact.'});
+          image=next;generation=frame.generation;serial=frame.serial;
+          lastFrameGeneration=frame.generation;lastFrameSerial=frame.serial;
+          publish({status:'live',...(state.status!=='live'?{inputStatus:''}:{}),message:'Connected to your original app. Point at its controls to interact.'});
         }
       }else{generation=0;queue=[];editorClickConfirmed=false;publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
       if(active&&currentEpoch(current))timer=setTimer(()=>poll(current),queue.length?0:67);
