@@ -19,6 +19,7 @@ import { SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1,
   sovereignControlSystemGovernorHoldCodeV1,
   sovereignControlSystemGovernorObservationCodeV1,
   sovereignControlSystemOwnerDiagnosticCodeV1,
+  sovereignControlSystemQualificationDiagnosticCodeV1,
   projectSovereignControlSystemGovernorPermissionV1,
   sovereignControlSystemDiagnosticCodeV1 } from '../shared/agents/sovereignControlSystemStatusV1.mjs';
 
@@ -504,6 +505,10 @@ export async function inspectSovereignControlSystemV1(options = {}) {
     try {
       const native = dataRecord(await deps.inspectRuntime()), observedAtUtc = instant(deps.now);
       if (native.ok === false) {
+        const reason = sovereignControlSystemDiagnosticCodeV1(native.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+        const qualificationDiagnosticCode = reason === 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN'
+          && (!Object.hasOwn(native, 'sourceHead') || native.sourceHead === sourceHead)
+          ? sovereignControlSystemQualificationDiagnosticCodeV1(native.reason) : '';
         const governorHoldCode = native.reason === 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD'
           ? sovereignControlSystemGovernorHoldCodeV1(native.governorHoldCode) : '';
         const governorPermission = governorHoldCode === 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED'
@@ -511,7 +516,8 @@ export async function inspectSovereignControlSystemV1(options = {}) {
           && Object.hasOwn(native, 'governorPermission')
           ? projectSovereignControlSystemGovernorPermissionV1(native.governorPermission, observedAtUtc) : null;
         report.nativeRuntime = { available: true, qualificationObserved: false,
-          reason: sovereignControlSystemDiagnosticCodeV1(native.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN'), observedAtUtc,
+          reason, observedAtUtc,
+          ...(qualificationDiagnosticCode ? { qualificationDiagnosticCode } : {}),
           ...(governorHoldCode ? { governorHoldCode } : {}),
           ...(governorPermission ? { governorPermission } : {}) };
       }
@@ -555,6 +561,7 @@ export async function inspectSovereignControlSystemV1(options = {}) {
       delete report.nativeRuntime.profiles;
       delete report.nativeRuntime.governorHoldCode;
       delete report.nativeRuntime.governorPermission;
+      delete report.nativeRuntime.qualificationDiagnosticCode;
       if (report.governorObservation) report.governorObservation = governorUnavailable(report.source.reason);
       delete report.owner.diagnosticCode;
     }
