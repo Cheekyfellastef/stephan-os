@@ -194,6 +194,36 @@ test('direct governor reviewer rejects prototype-inherited finding identity even
   assert.deepEqual(rejected.proofRefs, []);
 });
 
+test('direct governor reviewer refuses executable or collection-valued blob identities without coercion', () => {
+  const baseline = input(governor);
+  assert.equal(analyzeWindowsAuthorityVrResourceGovernorReviewV1(baseline).clean, true);
+  for (const mode of ['toString', 'toPrimitive']) {
+    let calls = 0;
+    const objectSha = mode === 'toString'
+      ? { toString() { calls++; return baseline.sources[0].blobSha; } }
+      : { [Symbol.toPrimitive]() { calls++; return baseline.sources[0].blobSha; } };
+    const evidence = { ...baseline.sources[0], blobSha: objectSha };
+    const rejected = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor, { sources: [evidence] }));
+    assert.equal(calls, 0, mode + ': no user-defined hash coercion may execute');
+    assert.equal(rejected.eligible, true);
+    assert.equal(rejected.clean, false);
+    assert.deepEqual(rejected.proofRefs, []);
+    assert.ok(rejected.findings.some((item) =>
+      item.code === 'windows-authority-vr-resource-governor-source-evidence-invalid'));
+    for (const key of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(rejected[key], false, mode + ':' + key);
+    }
+  }
+  for (const invalid of [[baseline.sources[0].blobSha], 17, null]) {
+    const rejected = analyzeWindowsAuthorityVrResourceGovernorReviewV1(
+      input(governor, { sources: [{ ...baseline.sources[0], blobSha: invalid }] }));
+    assert.equal(rejected.eligible, true);
+    assert.equal(rejected.clean, false);
+    assert.deepEqual(rejected.proofRefs, []);
+  }
+});
+
 test('historical fixture preserves exact pre-repair main bytes without qualification authority', () => {
   assert.equal(historicalFixture.schemaVersion, 'stephanos.test-only-historical-vr-governor-fixture.v1');
   assert.equal(historicalFixture.repository, REPOSITORY);

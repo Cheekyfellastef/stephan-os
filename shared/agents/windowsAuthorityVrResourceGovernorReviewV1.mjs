@@ -29,7 +29,6 @@ const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: '844e5d11b74a7fa864c0160f76fffd7addfbc221', size: 64032, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true, objectRootOverride: true }),
 ]);
 
-const text = (value) => String(value ?? '').trim();
 const finding = (code, summary = code) => Object.freeze({
   severity: 'P0',
   code,
@@ -93,7 +92,8 @@ function exactSource(source, repository, head) {
     && source.size === size
     && size > 0
     && size <= 256 * 1024
-    && SHA.test(text(source.blobSha))
+    && typeof source.blobSha === 'string'
+    && SHA.test(source.blobSha)
     && source.blobSha === blobSha(body)
   );
 }
