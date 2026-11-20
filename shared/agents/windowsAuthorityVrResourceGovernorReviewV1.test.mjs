@@ -167,6 +167,42 @@ test('direct governor specialist refuses contradictory or noncanonical upstream 
   }
 });
 
+test('direct governor reviewer refuses inherited Proxy-backed optional clean evidence without traps', () => {
+  const baseline = input(governor);
+  let trapsCalled = 0;
+  const hostilePrototype = new Proxy({ clean: false }, {
+    has() { trapsCalled++; throw new Error('INHERITED_PROXY_HAS_TRAP_EXECUTED'); },
+    get() { trapsCalled++; throw new Error('INHERITED_PROXY_GET_TRAP_EXECUTED'); },
+    getOwnPropertyDescriptor() {
+      trapsCalled++; throw new Error('INHERITED_PROXY_DESCRIPTOR_TRAP_EXECUTED');
+    },
+  });
+  const inherited = Object.create(hostilePrototype);
+  for (const [key, value] of Object.entries(baseline.analysis)) {
+    Object.defineProperty(inherited, key, {
+      value, enumerable: true, configurable: true, writable: true,
+    });
+  }
+  const rejected = analyzeWindowsAuthorityVrResourceGovernorReviewV1(
+    input(governor, { analysis: inherited }));
+  assert.equal(trapsCalled, 0, 'no Proxy traps executed during inherited evidence classification');
+  assert.equal(rejected.eligible, false, 'nonliteral analysis prototype must not be admitted');
+  assert.equal(rejected.clean, false);
+  assert.deepEqual(rejected.proofRefs, []);
+  assert.equal(rejected.mergeAuthority, false);
+  assert.equal(rejected.providerQualificationAuthority, false);
+
+  const inheritedData = Object.assign(Object.create({ clean: false }), baseline.analysis);
+  const held = analyzeWindowsAuthorityVrResourceGovernorReviewV1(
+    input(governor, { analysis: inheritedData }));
+  assert.equal(held.eligible, false, 'even nonexecuting inherited clean must remain inadmissible');
+
+  const nullPrototype = Object.assign(Object.create(null), baseline.analysis);
+  const valid = analyzeWindowsAuthorityVrResourceGovernorReviewV1(
+    input(governor, { analysis: nullPrototype }));
+  assert.equal(valid.clean, true, 'literal null-prototype evidence remains compatible');
+});
+
 test('direct governor reviewer rejects prototype-inherited finding identity even with registered source', () => {
   const baseline = input(governor).analysis;
   const control = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor));

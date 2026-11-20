@@ -56,6 +56,11 @@ function exactEscalation(analysis = {}) {
   // Review findings, counts and verdict must be explicit, not inherited P0 claims.
   if (!ownDataFields(analysis, ['findings', 'counts', 'verdict'])
     || (Object.hasOwn(analysis, 'clean') && !ownDataFields(analysis, ['clean']))) return false;
+  // A Proxy in an inherited prototype can execute its HasProperty trap when
+  // the optional clean identity is checked. Only literal wire-object roots
+  // are admitted; checking the direct prototype does not invoke its traps.
+  const analysisPrototype = Object.getPrototypeOf(analysis);
+  if (analysisPrototype !== null && analysisPrototype !== Object.prototype) return false;
   // A Proxy can execute code even through a property-descriptor inspection.
   // Review claims must be inert arrays, including on revoked proxies.
   if (types.isProxy(analysis.findings)) return false;
