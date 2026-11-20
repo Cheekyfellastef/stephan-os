@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
+import { assertMailboxRotationWorkflowAdmission } from './canonical-mailbox-workflow-admission-v1.mjs';
 import {
   appendFileSync,
   readFileSync,
@@ -629,6 +630,7 @@ async function main() {
       blockers: receiptValidation.blockers,
     });
   }
+  await assertMailboxRotationWorkflowAdmission({ mode: 'protected', prNumber: receipt.prNumber, head: receipt.sourceHead });
   process.stdout.write(`${JSON.stringify({
     finalStatus: 'MERGE_QUEUE_REQUIRED_CHECK_READY',
     mutationAuthority: false,

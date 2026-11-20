@@ -26,6 +26,7 @@ export const MISSION_CONTROLLER_ROUTE = Object.freeze({
   OPENCLAW_STANDALONE: 'OPENCLAW_STANDALONE',
   OPENCLAW_LOCAL: 'OPENCLAW_LOCAL',
   DESKTOP_COMMANDER: 'DESKTOP_COMMANDER',
+  SOVEREIGN_COMMANDER: 'SOVEREIGN_COMMANDER',
   STEPHANOS_NATIVE: STEPHANOS_NATIVE_ROUTE,
   WAIT_FOR_PROVEN_CAPACITY: 'WAIT_FOR_PROVEN_CAPACITY',
 });
@@ -33,13 +34,22 @@ export const MISSION_CONTROLLER_ROUTE = Object.freeze({
 export const FORGE_LIFEBOAT_WORKER_ID = 'stephanos-forge-lifeboat-local';
 export const FORGE_LIFEBOAT_AUTHORITY_PREFIX = 'forge-lifeboat-local-source-';
 export const FORGE_LIFEBOAT_PROOF_PREFIX = 'proof/forge-lifeboat-local-capacity-';
+// The current Mission Worker and compiled SOURCE_TASK_V1 consumer admit only
+// focused work with one to four raw scope entries. Capacity is not native
+// qualification; the original worker still obtains that at actual pickup.
+export const FORGE_LIFEBOAT_LOCAL_TASK_CLASSES = Object.freeze([CODEX_TASK_CLASS.FOCUSED_REPAIR]);
+export const FORGE_LIFEBOAT_MAX_ALLOWED_FILES = 4;
 
 const RECEIPT_KEYS = Object.freeze([
   'schemaVersion', 'receiptId', 'route', 'repository', 'workerId', 'state',
   'supportedOperations', 'supportedTaskClasses', 'observedAtUtc', 'expiresAtUtc',
   'queueDepth', 'p95StartLatencySeconds', 'authorityReceiptIds', 'proofRefs',
 ]);
-const DESKTOP_COMMANDER_RECEIPT_KEYS = Object.freeze([...RECEIPT_KEYS, 'sourceHead']);
+const HEAD_BOUND_RECEIPT_KEYS = Object.freeze([...RECEIPT_KEYS, 'sourceHead']);
+const HEAD_BOUND_CAPACITY_ROUTES = new Set([
+  MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+  MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
+]);
 const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.CODEX]: 'codex',
   [MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB]: 'chatgpt-github',
@@ -47,12 +57,14 @@ const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE]: 'openclaw-standalone',
   [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL]: 'openclaw-local',
   [MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER]: 'desktop-commander',
+  [MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER]: 'sovereign-commander',
   [MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE]: STEPHANOS_NATIVE_ADAPTER,
 });
 const BUILD_LANE_CAPACITY_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
   MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+  MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
 ]);
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
@@ -90,6 +102,28 @@ export function forgeLifeboatAuthorityReceiptId(sourceHead = '') {
 export function forgeLifeboatProofRef(sourceHead = '') {
   const normalized = text(sourceHead).toLowerCase();
   return FULL_SHA.test(normalized) ? `${FORGE_LIFEBOAT_PROOF_PREFIX}${normalized}.json` : '';
+}
+
+export { taskForMission as projectMissionControllerTaskV1 };
+
+export function projectForgeLifeboatSourceCompatibilityV1(mission = {}, explicitTask = {}) {
+  const task = taskForMission(mission, explicitTask);
+  const scopes = mission.allowedFiles;
+  // Count the original representation, including path/** companions. Neither
+  // de-duplication nor path rewriting may make a wider contract appear focused.
+  const allowedFileCount = Array.isArray(scopes) ? scopes.length : 0;
+  const scopeSupported = Array.isArray(scopes) && allowedFileCount >= 1
+    && allowedFileCount <= FORGE_LIFEBOAT_MAX_ALLOWED_FILES
+    && scopes.every(scope => typeof scope === 'string' && scope.trim().length > 0);
+  const taskSupported = !task.windowsBound && FORGE_LIFEBOAT_LOCAL_TASK_CLASSES.includes(task.taskClass);
+  return frozen({
+    compatible: scopeSupported && taskSupported,
+    reason: !scopeSupported ? 'FORGE_LIFEBOAT_LOCAL_SOURCE_SCOPE_UNSUPPORTED'
+      : !taskSupported ? 'FORGE_LIFEBOAT_LOCAL_TASK_CLASS_UNSUPPORTED' : '',
+    taskClass: task.taskClass,
+    allowedFileCount,
+    maxAllowedFiles: FORGE_LIFEBOAT_MAX_ALLOWED_FILES,
+  });
 }
 
 function taskForMission(mission = {}, explicitTask = {}) {
@@ -151,8 +185,8 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
   const authorities = uniqueStrings(receipt?.authorityReceiptIds);
   const proofRefs = uniqueStrings(receipt?.proofRefs);
   const route = text(receipt?.route).toUpperCase();
-  const receiptKeys = route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
-    ? DESKTOP_COMMANDER_RECEIPT_KEYS
+  const receiptKeys = HEAD_BOUND_CAPACITY_ROUTES.has(route)
+    ? HEAD_BOUND_RECEIPT_KEYS
     : RECEIPT_KEYS;
   const expectedSourceHead = text(expected.sourceHead).toLowerCase();
   const receiptSourceHead = text(receipt?.sourceHead).toLowerCase();
@@ -160,7 +194,7 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
     && receipt.schemaVersion === BUILD_LANE_CAPACITY_RECEIPT_SCHEMA
     && SAFE_ID.test(text(receipt.receiptId))
     && BUILD_LANE_CAPACITY_ROUTES.has(route)
-    && (route !== MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+    && (!HEAD_BOUND_CAPACITY_ROUTES.has(route)
       || (FULL_SHA.test(receiptSourceHead)
         && FULL_SHA.test(expectedSourceHead)
         && receiptSourceHead === expectedSourceHead))
@@ -191,7 +225,7 @@ export function createBuildLaneCapacityStatusRecord(receipt, options = {}) {
     repository: receipt?.repository,
     taskClass: firstTaskClass,
     nowUtc: options.nowUtc || receipt?.observedAtUtc,
-    sourceHead: receipt?.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+    sourceHead: HEAD_BOUND_CAPACITY_ROUTES.has(receipt?.route)
       ? receipt?.sourceHead
       : '',
   });
@@ -200,7 +234,9 @@ export function createBuildLaneCapacityStatusRecord(receipt, options = {}) {
     ? 'chatgpt-github-build-capacity-current'
     : receipt.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
       ? 'desktop-commander-build-capacity-current'
-      : 'foundry-forge-build-capacity-current';
+      : receipt.route === MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER
+        ? 'sovereign-commander-build-capacity-current'
+        : 'foundry-forge-build-capacity-current';
   return frozen({
     ...createSharedWorkspaceStatusRecord({
       statusId,
@@ -284,7 +320,7 @@ function nativeCandidateForAdmission(candidate, expected, sourceHead) {
 
 function forgeLifeboatCandidate(receipt, expected, sourceHead) {
   const normalizedHead = text(sourceHead).toLowerCase();
-  if (!FULL_SHA.test(normalizedHead) || receipt?.workerId !== FORGE_LIFEBOAT_WORKER_ID) return null;
+  if (!FULL_SHA.test(normalizedHead) || text(receipt?.workerId) !== FORGE_LIFEBOAT_WORKER_ID) return null;
   const candidate = candidateForReceipt(receipt, expected);
   if (candidate?.route !== MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE) return null;
   const authorityId = forgeLifeboatAuthorityReceiptId(normalizedHead);
@@ -292,7 +328,7 @@ function forgeLifeboatCandidate(receipt, expected, sourceHead) {
   if (candidate.authorityReceiptIds.length !== 1 || candidate.authorityReceiptIds[0] !== authorityId) return null;
   if (candidate.proofRefs.length !== 1 || candidate.proofRefs[0] !== proofRef) return null;
   if (candidate.p95StartLatencySeconds > 600 || candidate.queueDepth > 64) return null;
-  return candidate;
+  return frozen({ ...candidate, workerId: FORGE_LIFEBOAT_WORKER_ID });
 }
 
 function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
@@ -305,16 +341,33 @@ function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
     if (github?.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB) candidates.push(github);
     const commander = candidateForReceipt(input.desktopCommanderLaneReceipt, expected);
     if (commander?.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER) candidates.push(commander);
+    const sovereign = candidateForReceipt(input.sovereignCommanderLaneReceipt, expected);
+    // Builder 8 does not inherit Desktop Commander's capacity. It must supply its
+    // own short-lived local proof on the exact source head before admission.
+    if (sovereign?.route === MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER
+      && sovereign.workerId === 'stephanos-sovereign-builder-08'
+      && sovereign.authorityReceiptIds.length === 1
+      && sovereign.authorityReceiptIds[0] === `sovereign-builder8-source-${expected.sourceHead}`
+      && sovereign.proofRefs.length === 1
+      && sovereign.proofRefs[0] === `proof/sovereign-builder8-capacity-${expected.sourceHead}.json`
+      && Date.parse(input.sovereignCommanderLaneReceipt.expiresAtUtc)
+        - Date.parse(input.sovereignCommanderLaneReceipt.observedAtUtc) <= 5 * 60_000
+      && sovereign.p95StartLatencySeconds <= 600
+      && sovereign.queueDepth <= 64) {
+      candidates.push(sovereign);
+    }
   }
   const forge = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });
-  const lifeboat = !task.windowsBound
+  const localForgeCompatible = projectForgeLifeboatSourceCompatibilityV1(input.mission, task).compatible;
+  const lifeboat = localForgeCompatible
     ? forgeLifeboatCandidate(input.forgeLaneReceipt, expected, input.sourceHead)
     : null;
   const forgeCandidate = candidateForReceipt(input.forgeLaneReceipt, expected);
   if (lifeboat) {
     candidates.push(lifeboat);
   } else if (
-    forge?.canCarryRealWork === true
+    text(input.forgeLaneReceipt?.workerId) !== FORGE_LIFEBOAT_WORKER_ID
+    && forge?.canCarryRealWork === true
     && forgeCandidate?.route === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE
     && forgeCandidate.authorityReceiptIds.includes(forge.m2ReceiptId)
     && forgeCandidate.authorityReceiptIds.includes(forge.m3RuntimeReceiptId)

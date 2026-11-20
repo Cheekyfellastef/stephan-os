@@ -1,30 +1,84 @@
 import { createHash } from 'node:crypto';
-import { appendFile, readFile, readdir, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import process from 'node:process';
+import { sovereignExactCommitLoaderV1 } from './sovereignExactCommitLoaderV1.mjs';
+import { resolveBattleBridgeGitExecution, createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
 import {
   STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA,
   STEPHANOS_EXECUTION_SURFACE,
 } from './stephanosExecutionCommandFabricV1.mjs';
+import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
+import { executeCorePublicationDirectoryActionV1 } from '../../scripts/sovereign-core-directory-action-v1.mjs';
+import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import { captureCoreRepairContinuationV1, sameCoreRepairContinuationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import { SPATIAL_PREPARE_ACTION } from './sovereignSpatialWorkspaceV1.mjs';
+import { executeSovereignDirectoryCreateV1, validateSovereignDirectoryTargetV1 } from './sovereignDirectoryCreateV1.mjs';
+import { validateSovereignFileMoveArgumentsV1 } from './sovereignFileMoveV1.mjs';
+import { validateSovereignFileCopyArgumentsV1, captureSovereignFileCopyResultV1,
+  validateSovereignFileHashArgumentsV1, captureSovereignFileHashResultV1,
+  SOVEREIGN_FILE_COPY_SCHEMA_V1, SOVEREIGN_FILE_HASH_SCHEMA_V1 } from './sovereignFileCopyV1.mjs';
+import { captureSovereignFeedbackArgumentsV1 } from './sovereignFeedbackIntakeV1.mjs';
+import { validateSovereignPdfWriteArgumentsV1 } from './sovereignPdfWriteV1.mjs';
+import {
+  validateSovereignProcessSessionArgumentsV1,
+  SOVEREIGN_PROCESS_SESSION_PROFILES_V1,
+  SOVEREIGN_PROCESS_SESSION_EXECUTABLE_V1,
+  SOVEREIGN_PROCESS_SESSION_SCHEMA_V1,
+} from './sovereignProcessSessionsV1.mjs';
+import {
+  captureSovereignMcpSessionConfigArgumentsV1, captureSovereignMcpSessionConfigSnapshotV1,
+  countSovereignSubmittedLinesV1, SOVEREIGN_MCP_SESSION_CONFIG_DEFAULTS_V1,
+  SOVEREIGN_MCP_SESSION_CONFIG_LIMITS_V1, SOVEREIGN_MCP_SESSION_CONFIG_SEMANTICS_V1,
+} from './sovereignMcpSessionConfigV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 
 export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   GET_CONFIG: 'GET_CONFIG',
+  SET_CONFIG_VALUE: 'SET_CONFIG_VALUE',
   READ_FILE: 'READ_FILE',
+  READ_MULTIPLE_FILES: 'READ_MULTIPLE_FILES',
+  GET_FILE_INFO: 'GET_FILE_INFO',
   WRITE_FILE: 'WRITE_FILE',
+  WRITE_PDF: 'WRITE_PDF',
+  SUBMIT_FEEDBACK: 'SUBMIT_FEEDBACK',
   EDIT_FILE: 'EDIT_FILE',
+  MOVE_FILE: 'MOVE_FILE',
+  COPY_FILE_CONTENT: 'COPY_FILE_CONTENT',
+  GET_FILE_HASH: 'GET_FILE_HASH',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
+  CREATE_DIRECTORY: 'CREATE_DIRECTORY',
+  SEARCH_PROJECT: 'SEARCH_PROJECT',
+  START_SEARCH: 'START_SEARCH',
+  GET_MORE_SEARCH_RESULTS: 'GET_MORE_SEARCH_RESULTS',
+  STOP_SEARCH: 'STOP_SEARCH',
+  LIST_SEARCHES: 'LIST_SEARCHES',
+  GET_USAGE_STATS: 'GET_USAGE_STATS',
+  GET_RECENT_TOOL_CALLS: 'GET_RECENT_TOOL_CALLS',
+  GET_TOOL_RESULT: 'GET_TOOL_RESULT',
+  LIST_REMOTE_TOOL_CALLS: 'LIST_REMOTE_TOOL_CALLS',
   LIST_PROCESSES: 'LIST_PROCESSES',
   RUN_NODE_TEST: 'RUN_NODE_TEST',
   START_PROCESS: 'START_PROCESS',
+  START_PROCESS_SESSION: 'START_PROCESS_SESSION',
+  CANCEL_PROCESS_SESSION: 'CANCEL_PROCESS_SESSION',
+  READ_PROCESS_OUTPUT: 'READ_PROCESS_OUTPUT',
+  LIST_SESSIONS: 'LIST_SESSIONS',
   MAINTENANCE_ACTION: 'MAINTENANCE_ACTION',
 });
 
 const MAX_RESULT_TEXT = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
-const MAX_FIXED_PROCESS_TIMEOUT_MS = 180_000;
+// Compound fixed, source-controlled repair actions may need a bounded orchestration
+// window above the legacy 180s ceiling; callers still cannot provide or widen it.
+const MAX_FIXED_PROCESS_TIMEOUT_MS = 270_000;
+const SEARCH_SKIPPED_DIRECTORIES = Object.freeze(new Set([
+  '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.cache',
+]));
+const SEARCH_SENSITIVE_BASENAME = /^(?:\.env(?:\..+)?|id_rsa|id_ed25519|credentials\.json|secrets?\.(?:json|ya?ml))$/i;
+const SEARCH_SENSITIVE_EXTENSION = /\.(?:key|pem|pfx|p12)$/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -73,6 +127,179 @@ function pathWithin(root, candidate) {
   return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !relativeIsAbsolute);
 }
 
+const PRIVATE_SESSION_ARGUMENTS = Object.freeze({
+  SUBMIT_FEEDBACK: ['category', 'operation', 'message'],
+  WRITE_PDF: ['path', 'pages'],
+  MOVE_FILE: ['source', 'destination', 'expectedSha256'],
+  COPY_FILE_CONTENT: ['source', 'destination', 'expectedSha256'],
+  GET_FILE_HASH: ['path'],
+  SET_CONFIG_VALUE: ['key', 'value', 'expectedRevision'],
+  START_SEARCH: ['path', 'query', 'mode', 'caseSensitive', 'limit'],
+  GET_MORE_SEARCH_RESULTS: ['searchId', 'offset', 'limit'],
+  STOP_SEARCH: ['searchId'],
+  LIST_SEARCHES: [],
+  GET_USAGE_STATS: [],
+  GET_RECENT_TOOL_CALLS: ['offset', 'limit'],
+  GET_TOOL_RESULT: ['callId'],
+  LIST_REMOTE_TOOL_CALLS: ['offset', 'limit'],
+  START_PROCESS_SESSION: ['profile'],
+  CANCEL_PROCESS_SESSION: ['sessionId'],
+  READ_PROCESS_OUTPUT: ['sessionId', 'offset', 'limit'],
+  LIST_SESSIONS: [],
+});
+
+// JSON schema is a discovery contract, not runtime admission. Capture only own
+// data properties before the command fabric can trim paths or read accessors.
+export function captureSovereignPrivateSessionArgumentsV1(operation, raw) {
+  if (operation === 'SUBMIT_FEEDBACK') return captureSovereignFeedbackArgumentsV1(raw);
+  if (operation === 'WRITE_PDF') {
+    const validated = validateSovereignPdfWriteArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (['START_PROCESS_SESSION', 'CANCEL_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation)) {
+    const validated = validateSovereignProcessSessionArgumentsV1(operation, raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'MOVE_FILE') {
+    const validated = validateSovereignFileMoveArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'COPY_FILE_CONTENT') {
+    const validated = validateSovereignFileCopyArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'GET_FILE_HASH') {
+    const validated = validateSovereignFileHashArgumentsV1(raw);
+    return validated.ok === true ? validated.args : null;
+  }
+  if (operation === 'SET_CONFIG_VALUE') return captureSovereignMcpSessionConfigArgumentsV1(raw);
+  const allowed = Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation) ? PRIVATE_SESSION_ARGUMENTS[operation] : null;
+  if (!allowed || !raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.getPrototypeOf(raw) !== Object.prototype) return null;
+  const captured = {};
+  for (const key of Reflect.ownKeys(raw)) {
+    if (typeof key !== 'string' || !allowed.includes(key)) return null;
+    const descriptor = Object.getOwnPropertyDescriptor(raw, key);
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return null;
+    captured[key] = descriptor.value;
+  }
+  if (operation === 'START_SEARCH') {
+    if (typeof captured.path !== 'string' || captured.path !== captured.path.trim()
+      || captured.path.length > 1024 || /[\x00-\x1f]/.test(captured.path)
+      || !normalizedAbsolutePath(captured.path)
+      || typeof captured.query !== 'string' || !captured.query.length
+      || captured.query.length > 200 || captured.query.includes('\0')
+      || (Object.hasOwn(captured, 'mode') && !['file', 'content'].includes(captured.mode))
+      || (Object.hasOwn(captured, 'caseSensitive') && typeof captured.caseSensitive !== 'boolean')) return null;
+  }
+  if (['GET_MORE_SEARCH_RESULTS', 'STOP_SEARCH'].includes(operation)
+    && (typeof captured.searchId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(captured.searchId))) return null;
+  if (operation === 'GET_TOOL_RESULT'
+    && (typeof captured.callId !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(captured.callId))) return null;
+  if (Object.hasOwn(captured, 'offset')
+    && (!Number.isSafeInteger(captured.offset) || captured.offset < 0
+      || captured.offset > (operation.includes('SEARCH') ? 1000 : 256))) return null;
+  const maxLimit = 50;
+  if (Object.hasOwn(captured, 'limit')
+    && (!Number.isSafeInteger(captured.limit) || captured.limit < 1 || captured.limit > maxLimit)) return null;
+  return Object.freeze(captured);
+}
+
+// Source-bound reviewer metadata is a bounded input to the existing fixed
+// calibration binary, NEVER independent signer identity or reviewer authority.
+// Reject inherited properties, accessors and unknown keys before observation.
+export function validateSovereignWindowsReviewIdentityV1(raw) {
+  const keys = [
+    'schemaVersion', 'repository', 'issueNumber', 'prNumber', 'branch',
+    'sourceHead', 'baseSha', 'implementerProvider', 'implementerSessionId',
+    'reviewerSessionId', 'implementerPrincipal', 'reviewerPrincipal',
+  ];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.getPrototypeOf(raw) !== Object.prototype
+    || Object.keys(raw).length !== keys.length
+    || keys.some(k => !Object.hasOwn(raw, k)
+      || !Object.hasOwn(Object.getOwnPropertyDescriptor(raw, k), 'value'))) {
+    return null;
+  }
+  const v = Object.fromEntries(keys.map(k => [k, raw[k]]));
+  const ref = /^[0-9a-f]{40}$/;
+  const id = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
+  const branch = /^[a-z0-9][a-z0-9._/-]{0,159}$/i;
+  if (v.schemaVersion !== 'stephanos.sovereign-review-exact-request.v1'
+    || v.repository !== 'Cheekyfellastef/stephan-os'
+    || !Number.isSafeInteger(v.issueNumber) || v.issueNumber < 1
+    || !Number.isSafeInteger(v.prNumber) || v.prNumber < 1
+    || !branch.test(v.branch) || v.branch.includes('..') || v.branch.includes('//')
+    || v.branch.endsWith('/') || v.branch.startsWith('refs/')
+    || !ref.test(v.sourceHead) || !ref.test(v.baseSha)
+    || v.sourceHead === v.baseSha
+    || ['implementerProvider', 'implementerSessionId', 'reviewerSessionId',
+      'implementerPrincipal', 'reviewerPrincipal'].some(k => !id.test(v[k]))
+    || v.implementerSessionId === v.reviewerSessionId
+    || v.implementerPrincipal === v.reviewerPrincipal) {
+    return null;
+  }
+  return frozen(v);
+}
+const REVIEWER_ENV_KEYS = Object.freeze([
+  'STEPHANOS_REVIEW_REPOSITORY', 'STEPHANOS_REVIEW_ISSUE',
+  'STEPHANOS_REVIEW_PR', 'STEPHANOS_REVIEW_EXACT_BRANCH',
+  'STEPHANOS_REVIEW_EXACT_HEAD', 'STEPHANOS_REVIEW_EXACT_BASE',
+  'STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER',
+  'STEPHANOS_REVIEW_IMPLEMENTER_SESSION', 'STEPHANOS_REVIEW_SESSION',
+  'STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL',
+  'STEPHANOS_REVIEW_REVIEWER_PRINCIPAL',
+]);
+export const WINDOWS_CALIBRATION_SOURCE_PATHS = Object.freeze([
+  'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
+  'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  'scripts/sovereign-review-coverage-v1-engine.mjs',
+  'shared/agents/sovereignExactCommitLoaderV1.mjs',
+  'shared/agents/sovereignAuthenticatedReviewDiffV1.mjs',
+  'scripts/sovereign-windows-review-calibration-v1.mjs',
+  'scripts/sovereign-high-risk-advisory-v1.mjs',
+  'shared/agents/sovereignWindowsCalibrationV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
+  'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs',
+  'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
+  'shared/agents/sovereignReviewCoverageV1.mjs',
+  'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
+  'shared/agents/battleBridgeWindowsHosts.mjs',
+  'shared/agents/sharedAgentWorkspaceStore.mjs',
+  'shared/agents/sharedWorkspaceRuntimeConfig.mjs',
+  'shared/agents/sharedAgentWorkspace.mjs',
+  'shared/agents/engineeringIncidentMethodMemoryV1.mjs',
+  'shared/agents/closedLoopLearningV1.mjs',
+]);
+function fixedReviewerEnvironment(identity, inherited) {
+  const sourceEnv = inherited || process.env;
+  const env = { ...createBattleBridgeMinimalChildEnvironment(sourceEnv) };
+  // The inference settings are data; never inherit Node preload/loader options.
+  for (const key of ['STEPHANOS_SHARED_AGENT_WORKSPACE', 'STEPHANOS_SOVEREIGN_REVIEW_MODEL',
+    'STEPHANOS_SOVEREIGN_REVIEW_MODEL_CLASS']) {
+    if (typeof sourceEnv[key] === 'string') env[key] = sourceEnv[key];
+  }
+  // Never fall back to the long-lived daemon's ambient review metadata.
+  for (const key of REVIEWER_ENV_KEYS) delete env[key];
+  const p = validateSovereignWindowsReviewIdentityV1(identity);
+  if (!p) return null;
+  return {
+    ...env,
+    STEPHANOS_REVIEW_REPOSITORY: p.repository,
+    STEPHANOS_REVIEW_ISSUE: String(p.issueNumber),
+    STEPHANOS_REVIEW_PR: String(p.prNumber),
+    STEPHANOS_REVIEW_EXACT_BRANCH: p.branch,
+    STEPHANOS_REVIEW_EXACT_HEAD: p.sourceHead,
+    STEPHANOS_REVIEW_EXACT_BASE: p.baseSha,
+    STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: p.implementerProvider,
+    STEPHANOS_REVIEW_IMPLEMENTER_SESSION: p.implementerSessionId,
+    STEPHANOS_REVIEW_SESSION: p.reviewerSessionId,
+    STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL: p.implementerPrincipal,
+    STEPHANOS_REVIEW_REVIEWER_PRINCIPAL: p.reviewerPrincipal,
+  };
+
+}
+
 function fixedRegistry(repoRoot) {
   const root = normalizedAbsolutePath(repoRoot);
   if (!root) return frozen({});
@@ -81,20 +308,68 @@ function fixedRegistry(repoRoot) {
   const psFile = (name) => resolve(root, 'scripts', 'windows', name);
   const nodeFile = (name) => resolve(root, 'scripts', name);
   return frozen({
+    // Core directory mutation is deliberately unenrolled. The candidate lacks
+    // qualified installed-parent/compiler and cross-process Windows custody.
     'battle-bridge-status': frozen({
       executable: node,
       args: frozen([nodeFile('battle-bridge-status.mjs')]),
       timeoutMs: 10_000,
     }),
+    'battle-bridge-observe': frozen({
+      executable: node,
+      args: frozen([nodeFile('battle-bridge-observation.mjs')]),
+      timeoutMs: 10_000,
+    }),
+    'diagnose-ignition': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-ignition-diagnosis.mjs')]),
+      timeoutMs: 20_000,
+    }),
+    'meter-status': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-meter-status.mjs')]),
+      timeoutMs: 10_000,
+    }),
+    'controller-lane-status': frozen({
+      executable: node,
+      // Snapshot only. No Shared Workspace file/lock mutation over remote MCP.
+      args: frozen([nodeFile('sovereign-controller-lane-status.mjs'), '--snapshot-only']),
+      timeoutMs: 20_000,
+    }),
+    'rescue-island-readonly-boundary': frozen({
+      executable: node,
+      args: frozen([nodeFile('rescue-island-boundary-probe.mjs')]),
+      timeoutMs: 10_000,
+    }),
+    'visibility-snapshot': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-visibility-snapshot.mjs')]),
+      timeoutMs: 30_000,
+    }),
+    'cpu-pressure-snapshot': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('read-battle-bridge-cpu-pressure.ps1')]),
+      timeoutMs: 25_000,
+    }),
+    'publish-controller-activity': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-controller-activity-publish.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'repair-ui-4173': frozen({
       executable: node,
-      args: frozen([nodeFile('battle-bridge-ui-4173-repair.mjs')]),
-      timeoutMs: 15_000,
+      args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),
+      timeoutMs: 180_000,
+    }),
+    [SPATIAL_PREPARE_ACTION]: frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-spatial-workspace.mjs')]),
+      timeoutMs: 240_000,
     }),
     'restart-stephanos-runtime': frozen({
-      executable: powershell,
-      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('restart-approved-stephanos-runtime.ps1')]),
-      timeoutMs: 20_000,
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-restart-stephanos-runtime.mjs')]),
+      timeoutMs: 120_000,
     }),
     'status-recovery-mesh': frozen({
       executable: powershell,
@@ -106,10 +381,101 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-battle-bridge-worker-watchdog.ps1')]),
       timeoutMs: 10_000,
     }),
+    'status-stephanos-core-daemon': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-stephanos-core-daemon.ps1')]),
+      timeoutMs: 10_000,
+    }),
+    'sovereign-windows-reviewer-calibration': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-windows-review-calibration-v1.mjs'), '--commander-once']),
+      timeoutMs: 180_000,
+    }),
     'qwen35-canary': frozen({
       executable: node,
       args: frozen([nodeFile('qwen35-canary.mjs')]),
       timeoutMs: 180_000,
+    }),
+    'vr-resource-governor': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'Reconcile']),
+      // Large resident Ollama models can take longer than 15s to relinquish RAM/VRAM.
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-status': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'Status']),
+      timeoutMs: 15_000,
+    }),
+    'gaming-resource-prepare': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'PrepareGaming']),
+      timeoutMs: 60_000,
+    }),
+    'starfield-vr-resource-preflight': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', psFile('run-vr-resource-governor.ps1'),
+        '-Action', 'PrepareGaming',
+        '-ProcessName', 'Starfield',
+        '-ProfileName', 'vr-maximum',
+      ]),
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-cancel-prepare': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', psFile('run-vr-resource-governor.ps1'),
+        '-Action', 'CancelPrepare',
+      ]),
+      timeoutMs: 20_000,
+    }),
+    'gaming-resource-auto': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'SetAuto']),
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-force-on': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'ForceOn']),
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-force-off': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'ForceOff']),
+      timeoutMs: 20_000,
+    }),
+    'gaming-resource-acceptance': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-gaming-resource-acceptance.ps1')]),
+      timeoutMs: 120_000,
+    }),
+    'vr-virtual-airlink-acceptance': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-virtual-airlink-acceptance.ps1')]),
+      timeoutMs: 45_000,
+    }),
+    'starfield-vr-performance-diagnosis': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('read-starfield-vr-performance-diagnosis.ps1')]),
+      timeoutMs: 20_000,
+    }),
+    'starfield-vr-telemetry-archive': frozen({
+      executable: node,
+      args: frozen([nodeFile('starfield-vr-telemetry-archive.mjs')]),
+      timeoutMs: 30_000,
+    }),
+    'report-starfield-vr-telemetry': frozen({
+      executable: node,
+      args: frozen([nodeFile('report-starfield-vr-telemetry.mjs')]),
+      timeoutMs: 30_000,
+    }),
+    'starfield-vr-telemetry-refresh': frozen({
+      executable: node,
+      args: frozen([nodeFile('report-starfield-vr-telemetry.mjs')]),
+      timeoutMs: 30_000,
     }),
     'ignite-stephanos': frozen({
       executable: node,
@@ -129,6 +495,11 @@ function fixedRegistry(repoRoot) {
     'goal-discovery-heartbeat': frozen({
       executable: node,
       args: frozen([nodeFile('battle-bridge-goal-discovery-heartbeat.mjs')]),
+      timeoutMs: 60_000,
+    }),
+    'fleet-goal-supervisor': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-fleet-goal-supervisor.mjs')]),
       timeoutMs: 60_000,
     }),
     'start-mission-orchestrator-worker': frozen({
@@ -161,6 +532,80 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-stephanos-ignite-command.ps1'), '-Relink']),
       timeoutMs: 60_000,
     }),
+    'repair-openclaw-stack': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-full-stack.ps1')]),
+      // Plugin relink + gateway restart + bounded readiness polling can legitimately
+      // exceed the old 120s ceiling. Keep this below the 210s remote transport
+      // deadline so the guarded receipt can still return deterministically.
+      timeoutMs: 195_000,
+    }),
+    'repair-openclaw-standalone': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-agent.ps1'), '-Target', 'Standalone']),
+      timeoutMs: 180_000,
+    }),
+    'repair-openclaw-local': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-agent.ps1'), '-Target', 'Local']),
+      timeoutMs: 180_000,
+    }),
+    'repair-goal-builder-flow': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
+      // The in-band builder repair never re-enters control-plane repair.
+      // Its longest fail-closed path can spend 160s in fixed children after
+      // the Ignition source-proof budget increase. Preserve bounded headroom
+      // while staying below the remote repair transport's 240s ceiling.
+      timeoutMs: 195_000,
+    }),
+    'repair-stephanos': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-stephanos-repair.mjs')]),
+      // The repair script has bounded child budgets of 45s + 145s + 10s.
+      // Keep a fixed orchestration margin; callers still cannot widen it.
+      timeoutMs: 220_000,
+    }),
+    'prove-vr-atlas-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
+      timeoutMs: 60_000,
+    }),
+    'observe-open-stephanos-tabs': frozen({
+      executable: node,
+      // Read existing native evidence only. Ambient local CDP opt-in cannot
+      // turn a remote observation into browser capture or filesystem mutation.
+      args: frozen([nodeFile('sovereign-commander-browser-observe.mjs'), '--native-receipt-only']),
+      timeoutMs: 10_000,
+    }),
+    'prove-stephanos-ai-commander': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-ai-chat-acceptance.mjs')]),
+      timeoutMs: 20_000,
+    }),
+    'prove-flywheel-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-flywheel-runtime-proof.mjs')]),
+      timeoutMs: 60_000,
+    }),
+    'reconcile-remote-commander-parity': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-capability-parity-reconcile.mjs')]),
+      timeoutMs: 30_000,
+    }),
+    'sync-vr-reference-sources': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', nodeFile('sync-vr-reference-sources.ps1'),
+      ]),
+      timeoutMs: 180_000,
+    }),
+    'preservation-converge-pr-branch': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-preservation-converge.mjs')]),
+      timeoutMs: 180_000,
+    }),
   });
 }
 
@@ -180,14 +625,67 @@ function validateEnvelope(envelope = {}) {
 
 export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
   const blockers = validateEnvelope(envelope);
+  const coreDescriptor = Object.getOwnPropertyDescriptor(options, 'coreContinuation');
+  const coreContinuation = coreDescriptor && Object.hasOwn(coreDescriptor, 'value')
+    ? captureCoreRepairContinuationV1(coreDescriptor.value) : null;
   const operation = text(envelope.operation).toUpperCase();
   const targetPaths = Array.isArray(envelope.targetPaths) ? envelope.targetPaths.map(text).filter(Boolean) : [];
   const payload = envelope.payload && typeof envelope.payload === 'object' ? envelope.payload : {};
   const registry = fixedRegistry(options.repoRoot);
+  let sessionConfiguration = null;
+  if (['GET_CONFIG', 'READ_FILE', 'READ_MULTIPLE_FILES', 'WRITE_FILE', 'EDIT_FILE'].includes(operation)
+    && Object.hasOwn(options, 'sessionConfig')) {
+    try { sessionConfiguration = captureSovereignMcpSessionConfigSnapshotV1(options.sessionConfig?.getSnapshot?.()); }
+    catch {}
+    if (!sessionConfiguration) blockers.push('SOVEREIGN_SESSION_CONFIG_UNAVAILABLE');
+  }
+  const configuration = sessionConfiguration ? { sessionConfiguration } : {};
+  const writeLineLimit = sessionConfiguration?.values.fileWriteLineLimit ?? null;
   let plan = null;
 
-  if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG) {
-    plan = frozen({ kind: 'config' });
+  if (Object.hasOwn(PRIVATE_SESSION_ARGUMENTS, operation)) {
+    const args = captureSovereignPrivateSessionArgumentsV1(operation, envelope.payload);
+    const search = ['START_SEARCH', 'GET_MORE_SEARCH_RESULTS', 'STOP_SEARCH', 'LIST_SEARCHES'].includes(operation);
+    const processSession = ['START_PROCESS_SESSION', 'CANCEL_PROCESS_SESSION', 'READ_PROCESS_OUTPUT', 'LIST_SESSIONS'].includes(operation);
+    let profileBinding = null;
+    if (!args) blockers.push('SOVEREIGN_PRIVATE_SESSION_ARGUMENTS_INVALID');
+    if (operation === 'START_SEARCH' || operation === 'WRITE_PDF' || operation === 'GET_FILE_HASH') {
+      if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 1
+        || envelope.targetPaths[0] !== args?.path) blockers.push(operation === 'WRITE_PDF'
+          ? 'SOVEREIGN_PDF_SCOPE_BINDING_INVALID' : operation === 'GET_FILE_HASH'
+            ? 'SOVEREIGN_HASH_SCOPE_BINDING_INVALID' : 'SOVEREIGN_SEARCH_SCOPE_BINDING_INVALID');
+    } else if (operation === 'MOVE_FILE' || operation === 'COPY_FILE_CONTENT') {
+      if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 2
+        || envelope.targetPaths[0] !== args?.source || envelope.targetPaths[1] !== args?.destination)
+        blockers.push(operation === 'COPY_FILE_CONTENT'
+          ? 'SOVEREIGN_COPY_SCOPE_BINDING_INVALID' : 'SOVEREIGN_MOVE_SCOPE_BINDING_INVALID');
+    } else if (!Array.isArray(envelope.targetPaths) || envelope.targetPaths.length !== 0) {
+      blockers.push('SOVEREIGN_PRIVATE_SESSION_SCOPE_INVALID');
+    }
+    if (operation === 'START_PROCESS_SESSION' && args) {
+      const fixed = registry[args.profile];
+      const profile = SOVEREIGN_PROCESS_SESSION_PROFILES_V1[args.profile];
+      const root = normalizedAbsolutePath(options.repoRoot);
+      const expectedArgs = profile && root ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', resolve(root, profile.scriptPath)] : [];
+      // A private streaming route cannot turn a registered maintenance action
+      // into an observation or borrow its execution/owner authority.
+      if (!root || !fixed || !profile || !isSovereignMaintenanceObservationV1(args.profile)
+        || fixed.executable !== SOVEREIGN_PROCESS_SESSION_EXECUTABLE_V1
+        || fixed.timeoutMs !== profile.timeoutMs || profile.timeoutMs !== 10_000
+        || JSON.stringify(fixed.args) !== JSON.stringify(expectedArgs)) {
+        blockers.push('SOVEREIGN_PROCESS_PROFILE_BINDING_INVALID');
+      } else profileBinding = frozen({ profile: args.profile, scriptPath: profile.scriptPath,
+        scriptSha256: profile.scriptSha256, timeoutMs: profile.timeoutMs });
+    }
+    if (args) plan = frozen({ kind: 'private-session',
+      family: operation === 'MOVE_FILE' ? 'move' : operation === 'SET_CONFIG_VALUE' ? 'config'
+        : ['COPY_FILE_CONTENT', 'GET_FILE_HASH'].includes(operation) ? 'copy'
+        : operation === 'SUBMIT_FEEDBACK' ? 'feedback' : operation === 'WRITE_PDF' ? 'pdf'
+        : processSession ? 'process' : search ? 'search' : 'history', operation, args,
+      ...(profileBinding ? { profileBinding } : {}) });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG) {
+    plan = frozen({ kind: 'config', ...configuration });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
     if (!path) blockers.push('sovereign-commander-read-requires-one-absolute-target');
@@ -195,20 +693,42 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       kind: 'read-file',
       path,
       offset: safeInteger(payload.offset, 0, 0, 100_000_000),
-      length: safeInteger(payload.length, 200, 1, 1000),
+      length: Math.min(safeInteger(payload.length, 200, 1, 1000), sessionConfiguration?.values.fileReadLineLimit ?? 1000),
+      ...(sessionConfiguration ? { requestedLength: safeInteger(payload.length, 200, 1, 1000), ...configuration } : {}),
     });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_MULTIPLE_FILES) {
+    const paths = targetPaths.map(normalizedAbsolutePath);
+    if (paths.length < 1 || paths.length > 8 || paths.some((path) => !path)) {
+      blockers.push('sovereign-commander-multiple-read-requires-1-to-8-absolute-targets');
+    } else {
+      plan = frozen({
+        kind: 'read-multiple-files',
+        paths: frozen(paths),
+        offset: safeInteger(payload.offset, 0, 0, 100_000_000),
+        length: Math.min(safeInteger(payload.length, 100, 1, 200), sessionConfiguration?.values.fileReadLineLimit ?? 200),
+        ...(sessionConfiguration ? { requestedLength: safeInteger(payload.length, 100, 1, 200), ...configuration } : {}),
+      });
+    }
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_FILE_INFO) {
+    const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
+    if (!path) blockers.push('sovereign-commander-file-info-requires-one-absolute-target');
+    else plan = frozen({ kind: 'get-file-info', path });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.WRITE_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
     const content = typeof payload.content === 'string' ? payload.content : null;
     const mode = text(payload.mode, 'rewrite').toLowerCase();
     if (!path) blockers.push('sovereign-commander-write-requires-one-absolute-target');
     if (content === null || Buffer.byteLength(content, 'utf8') > 1024 * 1024) blockers.push('sovereign-commander-write-content-invalid');
+    const submittedLines = content !== null && sessionConfiguration
+      ? countSovereignSubmittedLinesV1(content, writeLineLimit ?? Number.MAX_SAFE_INTEGER) : null;
+    if (writeLineLimit !== null && submittedLines > writeLineLimit) blockers.push('SOVEREIGN_SESSION_WRITE_LINE_LIMIT_EXCEEDED');
     if (!['rewrite', 'append'].includes(mode)) blockers.push('sovereign-commander-write-mode-invalid');
     if (path && content !== null && ['rewrite', 'append'].includes(mode)) plan = frozen({
       kind: 'write-file',
       path,
       content,
       mode,
+      ...(sessionConfiguration ? { submittedLines, ...configuration } : {}),
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.EDIT_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
@@ -216,11 +736,15 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const newString = typeof payload.newString === 'string' ? payload.newString : null;
     if (!path) blockers.push('sovereign-commander-edit-requires-one-absolute-target');
     if (!oldString || newString === null || Buffer.byteLength(newString, 'utf8') > 1024 * 1024) blockers.push('sovereign-commander-edit-payload-invalid');
+    const submittedLines = newString !== null && sessionConfiguration
+      ? countSovereignSubmittedLinesV1(newString, writeLineLimit ?? Number.MAX_SAFE_INTEGER) : null;
+    if (writeLineLimit !== null && submittedLines > writeLineLimit) blockers.push('SOVEREIGN_SESSION_WRITE_LINE_LIMIT_EXCEEDED');
     if (path && oldString && newString !== null) plan = frozen({
       kind: 'edit-file',
       path,
       oldString,
       newString,
+      ...(sessionConfiguration ? { submittedLines, ...configuration } : {}),
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST) {
     blockers.push('sovereign-commander-node-test-disabled-use-source-controlled-maintenance-action');
@@ -233,6 +757,30 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       depth: safeInteger(payload.depth, 2, 1, 5),
       maxEntries: safeInteger(payload.maxEntries, 500, 1, 2000),
     });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.CREATE_DIRECTORY) {
+    const supplied = Array.isArray(envelope.targetPaths) && envelope.targetPaths.length === 1
+      ? envelope.targetPaths[0] : null;
+    if (!validateSovereignDirectoryTargetV1(supplied)) {
+      blockers.push('sovereign-commander-create-requires-safe-local-absolute-target');
+    } else if (!payload || Array.isArray(payload) || Object.getPrototypeOf(payload) !== Object.prototype
+      || Reflect.ownKeys(payload).length !== 0) {
+      blockers.push('sovereign-commander-create-fixed-scope-required');
+    } else {
+      plan = frozen({ kind: 'create-directory', path: supplied, recursive: false });
+    }
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT) {
+    const root = normalizedAbsolutePath(options.repoRoot);
+    const query = typeof payload.query === 'string' ? payload.query.trim() : '';
+    if (!root) blockers.push('trusted-repository-root-required');
+    if (!query || query.length > 200) blockers.push('sovereign-commander-search-query-invalid');
+    if (root && query && query.length <= 200) plan = frozen({
+      kind: 'search-project',
+      root,
+      query,
+      caseSensitive: payload.caseSensitive === true,
+      maxResults: safeInteger(payload.maxResults, 50, 1, 100),
+      maxFileBytes: 1024 * 1024,
+    });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.LIST_PROCESSES) {
     plan = frozen({ kind: 'list-processes' });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.START_PROCESS
@@ -241,7 +789,91 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const fixed = registry[processId];
     if (!text(options.repoRoot)) blockers.push('trusted-repository-root-required');
     if (!fixed) blockers.push('sovereign-commander-process-not-registered');
-    else plan = frozen({ kind: 'fixed-process', processId, ...fixed });
+    else {
+      let args = [...fixed.args];
+      if (processId === SPATIAL_PREPARE_ACTION) {
+        if (operation !== SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION
+            || typeof payload.expectedMain !== 'string' || !/^[a-f0-9]{40}$/.test(payload.expectedMain)
+            || Object.keys(payload).some(key => !['actionId', 'expectedMain'].includes(key))) {
+          blockers.push('sovereign-spatial-prepare-fixed-scope-required');
+        } else args = [...args, '--expected-main', payload.expectedMain];
+      } else if (processId === 'starfield-vr-telemetry-archive') {
+        const offset = payload.offset === undefined ? 0 : payload.offset;
+        const limit = payload.limit === undefined ? 12 : payload.limit;
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000
+            || !Number.isSafeInteger(limit) || limit < 1 || limit > 12) {
+          blockers.push('sovereign-starfield-telemetry-archive-page-invalid');
+        } else {
+          args = [...args, '--offset', String(offset), '--limit', String(limit)];
+        }
+      } else if (processId === 'sovereign-windows-reviewer-calibration') {
+        // An absent per-review identity must not borrow daemon startup env.
+        if (!validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity)) {
+          blockers.push('sovereign-windows-review-identity-required');
+        }
+      } else if (processId === 'publish-controller-activity') {
+        const encoded = text(payload.controllerActivityPayloadBase64);
+        let decoded = null;
+        try {
+          const raw = Buffer.from(encoded, 'base64url').toString('utf8');
+          decoded = JSON.parse(raw);
+        } catch {}
+        const canonicalControllerIds = new Set(CANONICAL_CONTROLLER_FLEET.map(({ controllerId }) => controllerId));
+        if (!encoded || encoded.length > 48000 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+          blockers.push('sovereign-controller-activity-payload-invalid');
+        }
+        if (!decoded || decoded.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1') {
+          blockers.push('sovereign-controller-activity-schema-invalid');
+        }
+        if (!canonicalControllerIds.has(text(decoded?.controllerId))) {
+          blockers.push('sovereign-controller-activity-controller-invalid');
+        }
+        if (!/^[A-Za-z0-9._-]{1,80}$/.test(text(decoded?.runId))) {
+          blockers.push('sovereign-controller-activity-run-invalid');
+        }
+        if (blockers.length === 0) args = [...args, '--payload-base64', encoded];
+      } else if (processId === 'preservation-converge-pr-branch') {
+        const targetPrNumber = Number(payload.targetPrNumber);
+        const targetBranch = text(payload.targetBranch);
+        const targetHead = text(payload.targetHead).toLowerCase();
+        const expectedMain = text(payload.expectedMain).toLowerCase();
+        const branchSafe = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/.test(targetBranch)
+          && !targetBranch.includes('..')
+          && !targetBranch.includes('//')
+          && !targetBranch.endsWith('/')
+          && !targetBranch.startsWith('refs/')
+          && !['main', 'master'].includes(targetBranch.toLowerCase());
+        if (!Number.isSafeInteger(targetPrNumber) || targetPrNumber < 1 || targetPrNumber > 999999999) {
+          blockers.push('sovereign-preservation-convergence-pr-invalid');
+        }
+        if (!branchSafe) blockers.push('sovereign-preservation-convergence-branch-invalid');
+        if (!/^[0-9a-f]{40}$/.test(targetHead)) blockers.push('sovereign-preservation-convergence-head-invalid');
+        if (!/^[0-9a-f]{40}$/.test(expectedMain)) blockers.push('sovereign-preservation-convergence-main-invalid');
+        if (targetHead && expectedMain && targetHead === expectedMain) blockers.push('sovereign-preservation-convergence-head-equals-main');
+        if (blockers.length === 0) {
+          args = [
+            ...args,
+            '--pr', String(targetPrNumber),
+            '--branch', targetBranch,
+            '--expected-head', targetHead,
+            '--expected-main', expectedMain,
+          ];
+        }
+      }
+      if (processId === 'repair-core-publication-directories') {
+        if (operation !== SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION
+          || !/^[a-f0-9]{40}$/.test(payload.expectedMain ?? '')
+          || Object.keys(payload).some(key => !['actionId', 'expectedMain'].includes(key)))
+          blockers.push('sovereign-core-directory-fixed-scope-required');
+        if (blockers.length === 0) plan = frozen({ kind: 'core-publication-repair', processId, expectedMain: payload.expectedMain });
+      } else if (blockers.length === 0) plan = frozen({
+        kind: 'fixed-process', processId, ...fixed, args: frozen(args),
+        ...(processId === SPATIAL_PREPARE_ACTION ? { expectedMain: payload.expectedMain } : {}),
+        ...(processId === 'sovereign-windows-reviewer-calibration'
+          ? { reviewIdentity: validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity) }
+          : {}),
+      });
+    }
   } else {
     blockers.push('sovereign-commander-operation-not-registered');
   }
@@ -250,6 +882,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
     commandId: text(envelope.commandId),
     missionId: text(envelope.missionId),
+    ...(coreContinuation ? { relatedIssue: text(envelope.relatedIssue) } : {}),
     operation,
     plan,
     dispatchAllowed: blockers.length === 0,
@@ -265,6 +898,60 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       ? 'SOVEREIGN_COMMANDER_COMMAND_READY'
       : 'SOVEREIGN_COMMANDER_COMMAND_BLOCKED',
   });
+}
+
+function relativeProjectPath(root, candidate) {
+  const windows = isWindowsAbsolutePath(root);
+  return (windows ? win32.relative(root, candidate) : relative(root, candidate)).replaceAll('\\', '/');
+}
+
+function projectSearchFileAllowed(name) {
+  const basename = text(name);
+  return Boolean(basename)
+    && !SEARCH_SENSITIVE_BASENAME.test(basename)
+    && !SEARCH_SENSITIVE_EXTENSION.test(basename);
+}
+
+async function searchProjectTree(root, query, caseSensitive, maxResults, maxFileBytes) {
+  const results = [];
+  const needle = caseSensitive ? query : query.toLowerCase();
+
+  async function walk(current) {
+    if (results.length >= maxResults) return;
+    const entries = await readdir(current, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (results.length >= maxResults) break;
+      if (entry.isDirectory()) {
+        if (!SEARCH_SKIPPED_DIRECTORIES.has(entry.name)) await walk(resolve(current, entry.name));
+        continue;
+      }
+      if (!entry.isFile() || !projectSearchFileAllowed(entry.name)) continue;
+      const absolute = resolve(current, entry.name);
+      let info;
+      try { info = await stat(absolute); } catch { continue; }
+      if (!info.isFile() || info.size > maxFileBytes) continue;
+      let raw;
+      try { raw = await readFile(absolute, 'utf8'); } catch { continue; }
+      if (raw.includes('\u0000')) continue;
+      const lines = raw.split(/\r?\n/);
+      for (let lineIndex = 0; lineIndex < lines.length && results.length < maxResults; lineIndex += 1) {
+        const haystack = caseSensitive ? lines[lineIndex] : lines[lineIndex].toLowerCase();
+        const column = haystack.indexOf(needle);
+        if (column < 0) continue;
+        results.push(frozen({
+          path: absolute,
+          relativePath: relativeProjectPath(root, absolute),
+          line: lineIndex + 1,
+          column: column + 1,
+          preview: lines[lineIndex].slice(0, 240),
+        }));
+      }
+    }
+  }
+
+  await walk(root);
+  return results;
 }
 
 async function listDirectoryTree(root, depth, maxEntries) {
@@ -287,12 +974,73 @@ async function listDirectoryTree(root, depth, maxEntries) {
   return results;
 }
 
+function fixedProcessRouteEnvironment(options = {}) {
+  const routeProof = options?.routeProof;
+  if (!routeProof || routeProof.commandPathProven !== true) return null;
+  return {
+    ...process.env,
+    STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN: '1',
+    STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_TRANSPORT: text(routeProof.transport || 'mcp-session').slice(0, 80),
+    STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP: routeProof.authenticatedMcp === true ? '1' : '0',
+    STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY: routeProof.mcpSessionReady === true ? '1' : '0',
+  };
+}
+
+const SAFE_FIXED_PROCESS_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
+
+function fixedProcessStructuredBlocker(result) {
+  const raw = String(result?.stdout || '').trim();
+  if (!raw) return '';
+  const lines = [raw, ...raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse()];
+  for (const line of lines) {
+    const candidates = line.includes('=') ? [line, line.slice(line.indexOf('=') + 1)] : [line];
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        const blocker = text(parsed?.blocker);
+        if (SAFE_FIXED_PROCESS_BLOCKER.test(blocker)) return blocker;
+      } catch {}
+    }
+  }
+  return '';
+}
+
+// Both observation and owner-reserved asynchronous execution use this same
+// admission and launch preparation. Moving a fixed action between runners
+// must never lose its request identity, authenticated transport or loader.
+function prepareFixedProcessLaunch(plan, options = {}) {
+  const routeEnvironment = fixedProcessRouteEnvironment(options);
+  const reviewer = plan.processId === 'sovereign-windows-reviewer-calibration';
+  const candidateEnvironment = reviewer
+    ? fixedReviewerEnvironment(plan.reviewIdentity, routeEnvironment)
+    : routeEnvironment;
+  if (reviewer && (!candidateEnvironment || !routeEnvironment
+      || options?.routeProof?.authenticatedMcp !== true
+      || options?.routeProof?.mcpSessionReady !== true)) {
+    return frozen({ ok: false, status: null, stdout: '', stderr: '',
+      errorCode: 'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN' });
+  }
+  // This loader is supplied by the independently installed Commander parent,
+  // not by the candidate script. No candidate module evaluates before its
+  // complete import closure has been authenticated and captured in memory.
+  const args = reviewer ? ['--experimental-loader', sovereignExactCommitLoaderV1({
+    root: normalizedAbsolutePath(options.repoRoot), head: plan.reviewIdentity.sourceHead,
+    files: WINDOWS_CALIBRATION_SOURCE_PATHS,
+    git: resolveBattleBridgeGitExecution({ environment: candidateEnvironment }),
+  }), ...plan.args] : [...plan.args];
+  return frozen({ ok: true, args: frozen(args), environment: candidateEnvironment });
+}
+
 function runFixedProcess(plan, options = {}) {
+  const launch = prepareFixedProcessLaunch(plan, options);
+  if (!launch.ok) return launch;
   const runner = options.spawnSyncFn || spawnSync;
-  const result = runner(plan.executable, [...plan.args], {
+  const result = runner(plan.executable, launch.args, {
+    cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
+    ...(launch.environment ? { env: launch.environment } : {}),
     timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS), MAX_FIXED_PROCESS_TIMEOUT_MS),
     maxBuffer: MAX_RESULT_TEXT * 4,
   });
@@ -305,6 +1053,83 @@ function runFixedProcess(plan, options = {}) {
     stdout,
     stderr,
     errorCode: text(result?.error?.code || result?.error?.message).slice(0, 160),
+  });
+}
+
+// Only an actual pre-spawn reviewer failure may release the maintenance owner's
+// custody reservation. Public blocker strings or a fabricated result never suffice.
+const provenReviewerPreExecution = new WeakSet();
+export function isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result) {
+  const execution = result?.structuredContent;
+  return command?.plan?.kind === 'fixed-process'
+    && command.plan.processId === 'sovereign-windows-reviewer-calibration'
+    && result?.ok === false
+    && result?.blocker === 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE'
+    && result?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+    && execution && typeof execution === 'object'
+    && provenReviewerPreExecution.has(execution)
+    && execution.ok === false && execution.status === null
+    && !execution.signal && execution.stdout === '' && execution.stderr === ''
+    && execution.errorCode === 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE';
+}
+
+function runOwnedFixedProcess(plan, options = {}) {
+  // Source-only executor fixtures inject the synchronous primitive explicitly.
+  if (options.spawnSyncFn) return Promise.resolve(runFixedProcess(plan, options));
+  const launch = prepareFixedProcessLaunch(plan, options);
+  if (!launch.ok) return Promise.resolve(launch);
+  return new Promise(resolveResult => {
+    let child, timer, settled = false, spawned = false, stdout = '', stderr = '';
+    const finish = (status, signal = '', errorCode = '', provenPreSpawn = false) => {
+      if (settled) return;
+      settled = true;
+      if (timer) (options.clearTimeoutFn || clearTimeout)(timer);
+      // Unknown/signal/error completion is never a calibration receipt. Apply
+      // redaction at the shared terminal boundary, including close and timeout,
+      // while preserving known-exit structured HOLD reports and custody state.
+      if (plan.processId === 'sovereign-windows-reviewer-calibration'
+          && (!Number.isInteger(status) || signal || errorCode)) {
+        stdout = ''; stderr = '';
+      }
+      const execution = frozen({ ok: status === 0 && !signal && !errorCode, status,
+        signal, errorCode, stdout, stderr });
+      if (provenPreSpawn) provenReviewerPreExecution.add(execution);
+      resolveResult(execution);
+    };
+    const failSpawn = error => {
+      if (settled) return;
+      if (plan.processId === 'sovereign-windows-reviewer-calibration') {
+        // ChildProcess emits 'spawn' only after successful creation. An error
+        // after that event cannot exclude surviving Windows descendants.
+        // Redact calibration output in either case; never convert a post-spawn
+        // error into safe pre-execution evidence.
+        stdout = ''; stderr = '';
+        finish(null, '', spawned
+          ? 'SOVEREIGN_WINDOWS_REVIEW_EXECUTION_CUSTODY_UNPROVEN'
+          : 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE', !spawned);
+      } else {
+        finish(null, '', text(error?.code || 'FIXED_PROCESS_SPAWN_FAILED'));
+      }
+    };
+    try {
+      child = (options.spawnFn || spawn)(plan.executable, launch.args, {
+        cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
+        shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        ...(launch.environment ? { env: launch.environment } : {}),
+      });
+      child.stdout?.on('data', bytes => { stdout = (stdout + String(bytes)).slice(0, MAX_RESULT_TEXT); });
+      child.stderr?.on('data', bytes => { stderr = (stderr + String(bytes)).slice(0, MAX_RESULT_TEXT); });
+      child.once('spawn', () => { spawned = true; });
+      child.once('error', failSpawn);
+      child.once('close', (code, signal) => finish(Number.isInteger(code) ? code : null, text(signal)));
+      timer = (options.setTimeoutFn || setTimeout)(() => {
+        if (settled) return;
+        // Settle as unknown custody before a synchronous close can look green.
+        finish(null, '', 'ETIMEDOUT');
+        try { child.kill(); } catch {}
+      }, safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS));
+      timer?.unref?.();
+    } catch (error) { failSpawn(error); }
   });
 }
 
@@ -335,28 +1160,303 @@ function listProcesses(options = {}) {
   });
 }
 
+// These document/advisory inputs are needed only while executing the admitted
+// command. Receipts and retained tool history never repeat their text or paths.
+// The resulting proof binds the returned metadata, not a concealed input body.
 export async function executeSovereignCommanderCommandV1(envelope = {}, options = {}) {
+  const result = await executeSovereignCommanderRouteV1(envelope, options);
+  const command = result?.command;
+  if (!['SUBMIT_FEEDBACK', 'WRITE_PDF'].includes(command?.operation) || !command.plan) return result;
+  const { args: omitted, ...plan } = command.plan;
+  const receiptCommand = frozen({ ...command, plan: frozen({ ...plan, inputOmitted: true }) });
+  return frozen({ ...result, command: receiptCommand,
+    ...(typeof result.proofHash === 'string' ? { proofHash: hash({
+      commandId: receiptCommand.commandId, missionId: receiptCommand.missionId,
+      operation: receiptCommand.operation, plan: receiptCommand.plan,
+      contentText: result.contentText, structuredContent: result.structuredContent,
+    }) } : {}) });
+}
+
+async function executeSovereignCommanderRouteV1(envelope = {}, options = {}) {
   const command = buildSovereignCommanderCommandV1(envelope, options);
+  // Core correlation is transport metadata, never executable arguments. The
+  // original durable identity must survive both a new session and an owner
+  // response; malformed or mismatched metadata cannot fall back to legacy IDs.
+  const hasCoreContinuation = 'coreContinuation' in options;
+  const coreDescriptor = hasCoreContinuation ? Object.getOwnPropertyDescriptor(options, 'coreContinuation') : null;
+  const coreContinuation = coreDescriptor && Object.hasOwn(coreDescriptor, 'value')
+    ? captureCoreRepairContinuationV1(coreDescriptor.value) : null;
+  if (hasCoreContinuation && (!coreContinuation
+    || command.operation !== SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION
+    || command.plan?.kind !== 'fixed-process'
+    || command.plan.processId !== coreContinuation.actionId
+    || command.commandId !== coreContinuation.requestId
+    || command.missionId !== coreContinuation.missionId
+    || envelope.relatedIssue !== coreContinuation.relatedIssue
+    || !envelope.payload || Object.getPrototypeOf(envelope.payload) !== Object.prototype
+    || Reflect.ownKeys(envelope.payload).length !== 1
+    || Object.getOwnPropertyDescriptor(envelope.payload, 'actionId')?.value !== coreContinuation.actionId)) {
+    return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+      blocker: 'SOVEREIGN_CORE_REPAIR_CORRELATION_INVALID',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+  }
   if (!command.dispatchAllowed) {
     return frozen({
       ok: false,
       schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
       command,
       blocker: command.blockers[0] || 'sovereign-commander-command-blocked',
+      ...(envelope.payload?.actionId === 'repair-core-publication-directories'
+        ? { executionCustodyReleased: true } : {}), // rejected before any execution
       finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
     });
   }
 
+  if (command.plan.kind === 'private-session') {
+    const privateRoute = options.routeProof?.mcpSessionReady === true
+      && options.routeProof?.commandPathProven === true
+      && (options.routeProof?.transport === 'local-stdio-mcp'
+        || (options.routeProof?.transport === 'authenticated-http-jsonrpc'
+          && options.routeProof?.authenticatedMcp === true));
+    const service = command.plan.family === 'search' ? options.searchSessions
+      : command.plan.family === 'config' ? options.sessionConfig
+        : command.plan.family === 'move' ? options.fileMoves
+          : command.plan.family === 'copy' ? options.fileCopies
+          : command.plan.family === 'feedback' ? options.feedbackIntake
+            : command.plan.family === 'pdf' ? options.pdfWrites
+          : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
+    if (!privateRoute || !service || typeof service.execute !== 'function') return frozen({
+      ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+      blocker: 'SOVEREIGN_PRIVATE_SESSION_REQUIRED',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+    });
+  }
+
+  const run = () => executeAdmittedSovereignCommandV1(command, options);
+  if (command.plan.kind === 'fixed-process' && !isSovereignMaintenanceObservationV1(command.plan.processId)) {
+    if (typeof options.withMaintenanceOwner === 'function') {
+      return options.withMaintenanceOwner(command, run, { signal: options.signal,
+        ...(coreContinuation ? { coreContinuation } : {}) });
+    }
+    // Local Core/stdio callers never launch beside an independently scheduled
+    // guardian. The existing authenticated HTTP owner performs the operation.
+    try {
+      const callOwner = options.callMaintenanceOwner || (await import('./sovereignCommanderRemoteMailboxV1.mjs')).callSovereignMaintenanceOwnerV1;
+      const owned = await callOwner({ actionId: command.plan.processId,
+        arguments: envelope.payload, timeoutMs: command.plan.timeoutMs,
+        ...(coreContinuation ? { coreContinuation } : {}) });
+      const observedContinuation = coreContinuation
+        ? captureCoreRepairContinuationV1(owned?.coreContinuation) : null;
+      if (!owned || owned.command?.plan?.processId !== command.plan.processId
+        || (coreContinuation && (owned.command.commandId !== coreContinuation.requestId
+          || owned.command.missionId !== coreContinuation.missionId
+          || !observedContinuation
+          || !sameCoreRepairContinuationV1(observedContinuation, coreContinuation)))) {
+        return frozen({ ok: false, command, blocker: owned?.blocker || 'SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID',
+          finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+      }
+      const structuredContent = frozen({ ...owned.structuredContent,
+        ownerCommandId: owned.command.commandId, ownerProofHash: owned.proofHash || '' });
+      return frozen({ ...owned, command, structuredContent,
+        proofHash: hash({ commandId: command.commandId, missionId: command.missionId,
+          operation: command.operation, plan: command.plan, contentText: owned.contentText, structuredContent }) });
+    } catch { return frozen({ ok: false, command, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' }); }
+  }
+  return run();
+}
+
+function unknownProcessCancellation(sessionId) {
+  return frozen({ ok: false, schemaVersion: SOVEREIGN_PROCESS_SESSION_SCHEMA_V1,
+    operation: 'CANCEL_PROCESS_SESSION', sessionId, cancellationState: 'UNKNOWN', retryAllowed: false,
+    nativeCustodyQualified: false, descendantsExcluded: false, maintenanceCustodyReleased: false,
+    blocker: 'SOVEREIGN_PROCESS_CANCELLATION_UNKNOWN' });
+}
+
+// Cancellation acknowledges a narrowly owned request, never a completed
+// process from a boolean alone. Reject optimistic or contradictory receipts
+// before the canonical result and advisory history can give them authority.
+function validProcessCancellationReceipt(value, sessionId) {
+  try {
+    const receiptKeys = ['ok', 'schemaVersion', 'operation', 'blocker', 'executionScope',
+      'nativeCustodyQualified', 'descendantsExcluded', 'maintenanceCustodyReleased',
+      'sessionId', 'session', 'cancellationState', 'requestRecorded', 'cancellationRequested',
+      'signalAttempted', 'signalAttemptResult', 'signalErrorObserved', 'terminationCause',
+      'rootExitObserved', 'stdioClosed', 'retryAllowed', 'terminalReason'];
+    const snapshotKeys = ['sessionId', 'profile', 'state', 'launchState', 'createdAtUtc', 'startedAtUtc',
+      'endedAtUtc', 'expiresAtUtc', 'spawnObserved', 'rootExitObserved', 'stdioClosed', 'exitCode',
+      'signal', 'outcome', 'blocker', 'terminationRequested', 'terminationUnproven',
+      'cancellationRequested', 'signalAttempted', 'signalAttemptResult', 'signalErrorObserved',
+      'terminationCause', 'outputBytesSeen', 'outputBytesStored', 'outputTruncated', 'nextOffset',
+      'outputComplete', 'executionScope', 'nativeCustodyQualified', 'descendantsExcluded',
+      'maintenanceCustodyReleased'];
+    const plainData = (item, keys) => item && typeof item === 'object' && !Array.isArray(item)
+      && Object.getPrototypeOf(item) === Object.prototype
+      && Reflect.ownKeys(item).every(key => typeof key === 'string' && keys.includes(key)
+        && Object.hasOwn(Object.getOwnPropertyDescriptor(item, key), 'value'));
+    const boundaries = item => item.nativeCustodyQualified === false
+      && item.descendantsExcluded === false && item.maintenanceCustodyReleased === false
+      && item.executionScope === 'TWO_FIXED_READ_ONLY_DIRECT_CHILD_PROFILES';
+    const blocker = item => item === null || (typeof item === 'string'
+      && /^SOVEREIGN_PROCESS_[A-Z0-9_]{1,96}$/.test(item));
+    const timestamp = item => typeof item === 'string' && Number.isFinite(Date.parse(item))
+      && new Date(item).toISOString() === item;
+    if (!plainData(value, receiptKeys) || value.schemaVersion !== SOVEREIGN_PROCESS_SESSION_SCHEMA_V1
+      || value.operation !== 'CANCEL_PROCESS_SESSION' || value.retryAllowed !== false
+      || !boundaries(value) || typeof value.requestRecorded !== 'boolean'
+      || typeof value.cancellationRequested !== 'boolean' || typeof value.signalAttempted !== 'boolean'
+      || typeof value.signalErrorObserved !== 'boolean'
+      || (value.blocker !== undefined && !blocker(value.blocker))
+      || (value.ok === false && typeof value.blocker !== 'string')
+      || (value.requestRecorded && !value.cancellationRequested)) return false;
+    if (value.cancellationState === 'NOT_STARTED') return value.ok === false
+      && !value.requestRecorded && !value.cancellationRequested && !value.signalAttempted
+      && !value.signalErrorObserved && value.signalAttemptResult === 'NOT_ATTEMPTED'
+      && value.session === undefined && value.sessionId === undefined
+      && value.rootExitObserved === undefined && value.stdioClosed === undefined
+      && value.terminationCause === undefined && value.terminalReason === undefined;
+    const session = value.session;
+    if (!plainData(session, snapshotKeys) || snapshotKeys.some(key => !Object.hasOwn(session, key))
+      || value.sessionId !== sessionId || session.sessionId !== sessionId
+      || !boundaries(session) || !Object.hasOwn(SOVEREIGN_PROCESS_SESSION_PROFILES_V1, session.profile)
+      || typeof session.spawnObserved !== 'boolean'
+      || !['STARTING', 'RUNNING', 'ROOT_EXITED', 'UNKNOWN', 'FAILED_TO_START', 'CLOSED'].includes(session.state)
+      || !['PENDING', 'UNKNOWN', 'SUCCEEDED', 'FAILED'].includes(session.outcome)
+      || session.launchState !== (session.spawnObserved ? 'SPAWN_OBSERVED'
+        : session.state === 'FAILED_TO_START' ? 'NOT_STARTED' : 'UNKNOWN')
+      || !timestamp(session.createdAtUtc) || !timestamp(session.expiresAtUtc)
+      || (session.startedAtUtc !== null && !timestamp(session.startedAtUtc))
+      || (session.endedAtUtc !== null && !timestamp(session.endedAtUtc))
+      || (session.exitCode !== null && !Number.isSafeInteger(session.exitCode))
+      || (session.signal !== null && (typeof session.signal !== 'string' || !/^SIG[A-Z0-9]{1,24}$/.test(session.signal)))
+      || !blocker(session.blocker) || !blocker(session.terminationCause)
+      || ['terminationRequested', 'terminationUnproven', 'outputTruncated', 'outputComplete']
+        .some(key => typeof session[key] !== 'boolean')
+      || session.terminationRequested !== (session.terminationCause !== null)
+      || !Number.isSafeInteger(session.outputBytesSeen) || session.outputBytesSeen < 0
+      || !Number.isSafeInteger(session.outputBytesStored) || session.outputBytesStored < 0
+      || session.outputBytesStored > 16384 || session.outputBytesStored > session.outputBytesSeen
+      || !Number.isSafeInteger(session.nextOffset) || session.nextOffset < 0 || session.nextOffset > 256
+      || (session.stdioClosed && (session.endedAtUtc === null
+        || !['CLOSED', 'FAILED_TO_START'].includes(session.state)))
+      || (session.state === 'CLOSED' && !session.stdioClosed)
+      || (session.outputComplete && (!session.stdioClosed || !session.spawnObserved
+        || session.outputTruncated || session.terminationRequested))
+      || (session.state === 'UNKNOWN' && session.outcome !== 'UNKNOWN')
+      || (session.state === 'FAILED_TO_START' && (session.outcome !== 'FAILED'
+        || session.spawnObserved || session.rootExitObserved || session.signalAttempted))
+      || (['SUCCEEDED', 'FAILED'].includes(session.outcome) && session.state !== 'FAILED_TO_START'
+        && (session.state !== 'CLOSED' || !session.rootExitObserved || !session.spawnObserved
+          || session.terminationRequested || session.blocker !== null || session.signal !== null
+          || !Number.isInteger(session.exitCode)
+          || (session.outcome === 'SUCCEEDED' ? session.exitCode !== 0 : session.exitCode === 0)))
+      || !['NOT_ATTEMPTED', 'DEFERRED_UNTIL_SPAWN', 'HANDLE_UNAVAILABLE', 'KILL_RETURNED_TRUE',
+        'KILL_RETURNED_FALSE', 'KILL_THREW', 'KILL_RETURN_UNRECOGNIZED', 'ROOT_ALREADY_EXITED'].includes(value.signalAttemptResult)
+      || value.signalAttemptResult !== session.signalAttemptResult
+      || (value.terminationCause !== null && typeof value.terminationCause !== 'string')
+      || value.terminationCause !== session.terminationCause
+      || ['cancellationRequested', 'signalAttempted', 'signalErrorObserved', 'rootExitObserved', 'stdioClosed']
+        .some(key => typeof value[key] !== 'boolean' || value[key] !== session[key])) return false;
+    if (value.cancellationState === 'UNKNOWN') return value.ok === false && value.terminalReason === undefined;
+    if (value.ok !== true) return false;
+    if (value.cancellationState === 'ALREADY_TERMINAL') return !value.requestRecorded
+      && (value.terminalReason === 'ROOT_EXIT_AND_STDIO_CLOSED'
+        ? value.rootExitObserved && value.stdioClosed && !value.cancellationRequested
+        : value.terminalReason === 'PROVEN_NO_SPAWN' && session.launchState === 'NOT_STARTED'
+          && session.state === 'FAILED_TO_START' && !session.spawnObserved
+          && !value.rootExitObserved && !value.signalAttempted);
+    if (value.terminalReason !== undefined || !value.cancellationRequested) return false;
+    if (value.cancellationState === 'ROOT_EXIT_AND_STDIO_CLOSED')
+      return value.rootExitObserved && value.stdioClosed;
+    if (value.cancellationState !== 'REQUESTED' || value.stdioClosed || value.signalErrorObserved
+      || session.state !== 'UNKNOWN' || session.outcome !== 'UNKNOWN' || session.outputComplete
+      || session.terminationUnproven || !session.terminationRequested) return false;
+    if (value.signalAttemptResult === 'KILL_RETURNED_TRUE') return value.signalAttempted;
+    if (value.signalAttemptResult === 'DEFERRED_UNTIL_SPAWN')
+      return !value.signalAttempted && !value.rootExitObserved && !session.spawnObserved;
+    return value.signalAttemptResult === 'ROOT_ALREADY_EXITED' && value.rootExitObserved && !value.signalAttempted;
+  } catch { return false; }
+}
+
+function unknownFileCopyResult() {
+  return frozen({ ok: false, schemaVersion: SOVEREIGN_FILE_COPY_SCHEMA_V1,
+    mutationState: 'UNKNOWN', mutationAttempted: null, retryAllowed: false,
+    blocker: 'SOVEREIGN_COPY_EFFECT_UNKNOWN' });
+}
+
+function unobservedFileHashResult() {
+  return frozen({ ok: false, schemaVersion: SOVEREIGN_FILE_HASH_SCHEMA_V1,
+    observationState: 'NOT_OBSERVED', mutationAttempted: false, retryAllowed: false,
+    blocker: 'SOVEREIGN_HASH_OBSERVATION_UNPROVEN' });
+}
+
+async function executeAdmittedSovereignCommandV1(command, options) {
   try {
     let contentText = '';
     let structuredContent = null;
 
-    if (command.plan.kind === 'config') {
+    if (command.plan.kind === 'private-session') {
+      const service = command.plan.family === 'search' ? options.searchSessions
+        : command.plan.family === 'config' ? options.sessionConfig
+          : command.plan.family === 'move' ? options.fileMoves
+            : command.plan.family === 'copy' ? options.fileCopies
+            : command.plan.family === 'feedback' ? options.feedbackIntake
+              : command.plan.family === 'pdf' ? options.pdfWrites
+            : command.plan.family === 'process' ? options.processSessions : options.sessionHistory;
+      structuredContent = await service.execute(command.plan.family === 'history'
+        ? command.plan.operation.toLowerCase() : command.plan.operation, command.plan.args, options.routeProof);
+      const move = command.plan.family === 'move';
+      const copy = command.plan.operation === 'COPY_FILE_CONTENT';
+      const fileHash = command.plan.operation === 'GET_FILE_HASH';
+      const pdf = command.plan.family === 'pdf';
+      const feedback = command.plan.family === 'feedback';
+      const processStart = command.plan.operation === 'START_PROCESS_SESSION';
+      const processCancel = command.plan.operation === 'CANCEL_PROCESS_SESSION';
+      if (copy) structuredContent = captureSovereignFileCopyResultV1(structuredContent, command.plan.args)
+        || unknownFileCopyResult();
+      if (fileHash) structuredContent = captureSovereignFileHashResultV1(structuredContent, command.plan.args)
+        || unobservedFileHashResult();
+      if (processCancel && !validProcessCancellationReceipt(structuredContent, command.plan.args.sessionId))
+        structuredContent = unknownProcessCancellation(command.plan.args.sessionId);
+      if (!structuredContent || structuredContent.ok !== true
+        || (move && structuredContent.mutationState !== 'MOVED')
+        || (copy && structuredContent.mutationState !== 'COPIED')
+        || (fileHash && structuredContent.observationState !== 'HASHED')
+        || (pdf && structuredContent.mutationState !== 'CREATED')
+        || (feedback && structuredContent.feedbackState !== 'PERSISTED')
+        || (processStart && (structuredContent.launchState !== 'SPAWN_OBSERVED'
+          || structuredContent.session?.spawnObserved !== true))) {
+        const unknownMove = move && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownCopy = copy && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownPdf = pdf && structuredContent?.mutationState !== 'NOT_STARTED';
+        const unknownFeedback = feedback && structuredContent?.feedbackState !== 'NOT_STARTED';
+        const unknownProcessStart = processStart && structuredContent?.launchState !== 'NOT_STARTED';
+        const unknownProcessCancel = processCancel && structuredContent?.cancellationState !== 'NOT_STARTED';
+        if (unknownMove || unknownCopy || unknownPdf) structuredContent = frozen({ ...structuredContent,
+          ok: false, mutationState: 'UNKNOWN', retryAllowed: false });
+        if (unknownFeedback) structuredContent = frozen({ ...structuredContent,
+          ok: false, feedbackState: 'UNKNOWN', retryAllowed: false,
+          advisoryOnly: true, executionAuthority: false });
+        if (unknownProcessStart) structuredContent = frozen({ ...structuredContent,
+          ok: false, launchState: 'UNKNOWN', retryAllowed: false,
+          nativeCustodyQualified: false, descendantsExcluded: false });
+        contentText = JSON.stringify(structuredContent).slice(0, MAX_RESULT_TEXT);
+        return frozen({
+          ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command, contentText, structuredContent,
+          blocker: structuredContent?.blocker || 'SOVEREIGN_PRIVATE_SESSION_OPERATION_BLOCKED',
+          finalVerdict: unknownMove || unknownCopy || unknownPdf || unknownFeedback || unknownProcessStart || unknownProcessCancel
+            ? 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+        });
+      }
+      contentText = JSON.stringify(structuredContent).slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'config') {
       structuredContent = frozen({
         schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
         implementation: 'stephanos-local-node',
         wholePcCapable: true,
         canEditFiles: true,
+        canCreateDirectory: process.platform === 'win32',
+        canSearchProject: true,
         canRunFocusedNodeTests: false,
         sourceControlledMaintenanceOnly: true,
         vendorMeterRequired: false,
@@ -364,6 +1464,12 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         arbitraryUnboundedCommandAllowed: false,
         mergeAuthority: false,
         pcRestartAuthority: false,
+        ...(command.plan.sessionConfiguration ? { sessionConfiguration: frozen({
+          ...command.plan.sessionConfiguration,
+          defaults: SOVEREIGN_MCP_SESSION_CONFIG_DEFAULTS_V1,
+          configurationLimits: SOVEREIGN_MCP_SESSION_CONFIG_LIMITS_V1,
+          semantics: SOVEREIGN_MCP_SESSION_CONFIG_SEMANTICS_V1,
+        }) } : {}),
       });
       contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'read-file') {
@@ -376,7 +1482,49 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         offset: command.plan.offset,
         length: selected.length,
         totalLines: lines.length,
+        ...(command.plan.sessionConfiguration ? {
+          sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          requestedLength: command.plan.requestedLength, effectiveReadLineLimit: command.plan.length,
+        } : {}),
       });
+    } else if (command.plan.kind === 'read-multiple-files') {
+      const files = [];
+      let remainingCharacters = MAX_RESULT_TEXT;
+      for (const path of command.plan.paths) {
+        const raw = await readFile(path, 'utf8');
+        const lines = raw.split(/\r?\n/);
+        const selected = lines.slice(command.plan.offset, command.plan.offset + command.plan.length);
+        const fullContent = selected.join('\n');
+        const content = fullContent.slice(0, remainingCharacters);
+        remainingCharacters -= content.length;
+        files.push(frozen({
+          path,
+          offset: command.plan.offset,
+          length: selected.length,
+          totalLines: lines.length,
+          content,
+          truncated: content.length < fullContent.length,
+        }));
+      }
+      structuredContent = frozen({
+        files: frozen(files),
+        totalFiles: files.length,
+        contentBudgetExhausted: remainingCharacters === 0,
+        ...(command.plan.sessionConfiguration ? {
+          sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          requestedLength: command.plan.requestedLength, effectiveReadLineLimit: command.plan.length,
+        } : {}),
+      });
+      contentText = files.map((file) => `${file.path}\n${file.content}`).join('\n').slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'get-file-info') {
+      const info = await lstat(command.plan.path);
+      structuredContent = frozen({
+        path: command.plan.path,
+        type: info.isSymbolicLink() ? 'SYMLINK' : info.isFile() ? 'FILE' : info.isDirectory() ? 'DIRECTORY' : 'OTHER',
+        bytes: info.size,
+        modifiedAtUtc: info.mtime.toISOString(),
+      });
+      contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'write-file') {
       if (command.plan.mode === 'append') await appendFile(command.plan.path, command.plan.content, 'utf8');
       else await writeFile(command.plan.path, command.plan.content, 'utf8');
@@ -384,6 +1532,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         path: command.plan.path,
         bytesWritten: Buffer.byteLength(command.plan.content, 'utf8'),
         mode: command.plan.mode,
+        ...(command.plan.sessionConfiguration ? { sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          submittedLines: command.plan.submittedLines, fileWriteLineLimit: command.plan.sessionConfiguration.values.fileWriteLineLimit } : {}),
       });
       contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'edit-file') {
@@ -405,6 +1555,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         path: command.plan.path,
         replacements: 1,
         bytesWritten: Buffer.byteLength(updated, 'utf8'),
+        ...(command.plan.sessionConfiguration ? { sessionConfigRevision: command.plan.sessionConfiguration.revision,
+          submittedLines: command.plan.submittedLines, fileWriteLineLimit: command.plan.sessionConfiguration.values.fileWriteLineLimit } : {}),
       });
       contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'node-test') {
@@ -431,6 +1583,33 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         truncated: entries.length >= command.plan.maxEntries,
       });
       contentText = entries.map((entry) => `${entry.type}\t${entry.path}`).join('\n').slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'create-directory') {
+      structuredContent = executeSovereignDirectoryCreateV1(command.plan.path, options);
+      contentText = JSON.stringify(structuredContent);
+      if (!structuredContent.ok) return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
+        command, contentText, structuredContent, blocker: structuredContent.blocker,
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+    } else if (command.plan.kind === 'search-project') {
+      const results = await searchProjectTree(
+        command.plan.root,
+        command.plan.query,
+        command.plan.caseSensitive,
+        command.plan.maxResults,
+        command.plan.maxFileBytes,
+      );
+      structuredContent = frozen({
+        root: command.plan.root,
+        query: command.plan.query,
+        caseSensitive: command.plan.caseSensitive,
+        resultCount: results.length,
+        maxResults: command.plan.maxResults,
+        results: frozen(results),
+        truncated: results.length >= command.plan.maxResults,
+      });
+      contentText = results
+        .map((entry) => `${entry.relativePath}:${entry.line}:${entry.column}\t${entry.preview}`)
+        .join('\n')
+        .slice(0, MAX_RESULT_TEXT);
     } else if (command.plan.kind === 'list-processes') {
       const result = await listProcesses(options);
       contentText = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, MAX_RESULT_TEXT);
@@ -446,8 +1625,16 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
           finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
         });
       }
+    } else if (command.plan.kind === 'core-publication-repair') {
+      const result = await executeCorePublicationDirectoryActionV1(command, options);
+      contentText = JSON.stringify(result);
+      structuredContent = result;
+      if (!result.ok) return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
+        command, contentText, structuredContent, blocker: result.reason,
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
     } else if (command.plan.kind === 'fixed-process') {
-      const result = runFixedProcess(command.plan, options);
+      const result = isSovereignMaintenanceObservationV1(command.plan.processId)
+        ? runFixedProcess(command.plan, options) : await runOwnedFixedProcess(command.plan, options);
       contentText = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, MAX_RESULT_TEXT);
       structuredContent = result;
       if (!result.ok) {
@@ -457,7 +1644,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
           command,
           contentText,
           structuredContent,
-          blocker: result.errorCode || `fixed-process-exit-${String(result.status)}`,
+          blocker: result.errorCode || fixedProcessStructuredBlocker(result) || `fixed-process-exit-${String(result.status)}`,
           finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
         });
       }
@@ -482,9 +1669,74 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
       receiptRequired: true,
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
-      finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      finalVerdict: command.plan.kind === 'private-session'
+        ? 'SOVEREIGN_COMMANDER_SESSION_OPERATION_RETURNED' : 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    if (command.plan?.kind === 'private-session' && command.plan.operation === 'CANCEL_PROCESS_SESSION') {
+      const structuredContent = unknownProcessCancellation(command.plan.args.sessionId);
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'feedback') {
+      const structuredContent = frozen({ ok: false, feedbackState: 'UNKNOWN', retryAllowed: false,
+        advisoryOnly: true, executionAuthority: false, blocker: 'SOVEREIGN_FEEDBACK_EFFECT_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'pdf') {
+      const structuredContent = frozen({ ok: false, mutationState: 'UNKNOWN', retryAllowed: false,
+        blocker: 'SOVEREIGN_PDF_EFFECT_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.operation === 'START_PROCESS_SESSION') {
+      const structuredContent = frozen({ ok: false, launchState: 'UNKNOWN', retryAllowed: false,
+        nativeCustodyQualified: false, descendantsExcluded: false,
+        blocker: 'SOVEREIGN_PROCESS_LAUNCH_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'move') {
+      const structuredContent = frozen({ ok: false, mutationState: 'UNKNOWN', retryAllowed: false,
+        blocker: 'SOVEREIGN_MOVE_EFFECT_UNKNOWN' });
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session' && command.plan.family === 'copy') {
+      const readOnly = command.plan.operation === 'GET_FILE_HASH';
+      const structuredContent = readOnly ? unobservedFileHashResult() : unknownFileCopyResult();
+      return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        blocker: structuredContent.blocker, structuredContent, contentText: JSON.stringify(structuredContent),
+        finalVerdict: readOnly ? 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' : 'SOVEREIGN_COMMANDER_EXECUTION_EFFECT_UNKNOWN' });
+    }
+    if (command.plan?.kind === 'private-session') return frozen({
+      ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+      blocker: 'SOVEREIGN_PRIVATE_SESSION_OPERATION_FAILED',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    });
+    // Fixed high-risk reviewer failure may happen before child spawn or before
+    // a terminal calibration marker exists. Never expose the raw thrown value,
+    // executable paths, Git arguments, model output, or loader implementation.
+    // Retain only one closed-world denial for the existing authenticated MCP
+    // mailbox, preserving explicit status:null and no authority on exceptions.
+    if (command.plan?.kind === 'fixed-process'
+      && command.plan.processId === 'sovereign-windows-reviewer-calibration') {
+      const errorCode = 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE';
+      return frozen({
+        ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        contentText: '',
+        structuredContent: frozen({ ok: false, status: null,
+          stdout: '', stderr: '', errorCode }),
+        blocker: errorCode,
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      });
+    }
     return frozen({
       ok: false,
       schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,

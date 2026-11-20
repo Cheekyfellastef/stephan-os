@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $taskName = 'Stephanos Commander Watchdog'
-$requiredVersion = '0.2.51'
+$requiredVersion = '0.2.52'
 if (-not $env:USERPROFILE) { throw 'USERPROFILE is required to resolve the canonical Battle Bridge checkout.' }
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
@@ -26,13 +26,14 @@ $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" desktop-commander-watchdog"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
+$startupTrigger = New-ScheduledTaskTrigger -AtStartup
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
-$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType S4U -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
 if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Desktop Commander self-heal watchdog')) {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Restarts only the already-qualified local Desktop Commander Remote Device when absent. No network install, package mutation, arbitrary shell, unrelated process restart, or PC restart.' -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Restarts only the already-qualified local Desktop Commander Remote Device when absent. No network install, package mutation, arbitrary shell, unrelated process restart, or PC restart.' -Force | Out-Null
     if ($StartNow) { Start-ScheduledTask -TaskName $taskName }
 }
 
@@ -46,7 +47,12 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Deskto
     runnerPath = $runnerPath
     requiredVersion = $requiredVersion
     intervalMinutes = 1
+    atStartup = $true
     atLogon = $true
+    requiresInteractiveLogon = $false
+    logonType = 'S4U'
+    restartCount = 3
+    restartIntervalMinutes = 1
     hidden = $true
     runLevel = 'Limited'
     multipleInstances = 'IgnoreNew'

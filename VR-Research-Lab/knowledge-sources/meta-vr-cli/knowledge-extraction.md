@@ -95,3 +95,11 @@ This record does **not** prove:
 - physical headset acceptance.
 
 Those remain separate machine and operator evidence planes.
+
+## 2026-10-03 agentic-tools source pin
+
+The Apache-2.0 `meta-quest/agentic-tools` repository is now pinned at `3a8553d10a5a1bd1bf9beaaa950243fbbed3b9ea`.
+
+The public skill corpus documents a much broader Meta VR automation surface than the original read-only intake: device connection, app lifecycle, file/log operations, screenshots, UI driving, performance traces, documentation search and an MCP server. These are capability discoveries, not inherited authority.
+
+Stephanos consequence: this is a strong provider-adapter teaching source for Quest diagnostics and headset test automation. Any future implementation must still expose only fixed operations through the existing Battle Bridge / Spatial Bridge authority boundary.

@@ -10,6 +10,7 @@ import {
   answerVrResearchQuestion,
   createVrResearchQaWorkspaceAnswerRecord,
   createVrResearchQuestion,
+  createVrResearchQaGapObservation,
 } from './vrResearchParticipantQaV1.mjs';
 
 const updatedAt = '2026-08-14T10:50:00.000Z';
@@ -825,4 +826,14 @@ test('directly deserialized contradictory answer truth states fail before proof 
     assert.equal(verifierCalls, 0, expectedError);
     assert.equal(workspace.validation.valid, false, expectedError);
   }
+});
+
+test('equivalent missing VR evidence deduplicates across distinct question IDs',()=>{
+ const answer={answerVerdict:'GAP_KNOWLEDGE',cannotAnswerReason:'Missing independently verified source proof',evidenceRefs:[]};
+ const a=createVrResearchQaGapObservation({questionId:'request-a',questionClass:'SOURCE_STACK',subjectRef:'Starfield'},answer);
+ const b=createVrResearchQaGapObservation({questionId:'request-b',questionClass:'SOURCE_STACK',subjectRef:'Starfield'},answer);
+ assert.equal(a.gapId,b.gapId);
+ assert.deepEqual(a.existingGoalCandidates,b.existingGoalCandidates);
+ const c=createVrResearchQaGapObservation({questionId:'request-c',questionClass:'LICENCE_BOUNDARIES',subjectRef:'Starfield'},answer);
+ assert.notEqual(a.gapId,c.gapId);
 });

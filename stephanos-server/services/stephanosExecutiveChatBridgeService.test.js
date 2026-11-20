@@ -5,9 +5,12 @@ import {
   STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE,
   buildStephanosExecutiveChatBridge,
   classifyStephanosExecutiveChatIntent,
+  readLatestFlywheelActionJournalV1,
 } from './stephanosExecutiveChatBridgeService.js';
 import { validateSharedWorkspaceRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { buildStephanosOperatorKnowledgeTwinV1 } from '../../shared/agents/stephanosOperatorKnowledgeTwinV1.mjs';
+import { submitGoalThroughStephanosV1 } from './submitGoalTool.js';
+import { parseCommand, resolveRoute } from './commandRouter.js';
 
 const NOW = '2026-09-25T18:00:00.000Z';
 
@@ -52,6 +55,43 @@ function projection(overrides = {}) {
   };
 }
 
+function flywheelActionProjection(overrides = {}) {
+  return {
+    state: 'CURRENT',
+    reason: 'FLYWHEEL_ACTION_CURRENT',
+    receiptId: 'durable-flywheel-20260925175500000',
+    timestampUtc: '2026-09-25T17:55:00.000Z',
+    ageMs: 300000,
+    journal: {
+      schemaVersion: 'stephanos.flywheel-action-journal.v1',
+      learning: {
+        promotedLessonIds: ['lesson-uplift-1'],
+        createdCanonicalGoalIssueNumbers: [2999],
+        dedupedCanonicalGoalIssueNumbers: [],
+        canonicalGoalAdmissionBlockers: [],
+        diagnoses: [{
+          eventId: 'gap-1',
+          capabilityId: 'stephanos-ai-uplift',
+          attempted: true,
+          ok: true,
+          reason: 'FLYWHEEL_BRAIN_DIAGNOSIS_READY',
+          provider: 'ollama',
+          model: 'qwen3.5:27b',
+          fallbackUsed: false,
+        }],
+        attachments: [{
+          eventId: 'gap-1',
+          capabilityId: 'stephanos-ai-uplift',
+          disposition: 'CANONICAL_GOAL_CREATED_AND_ADMITTED',
+          ownerGoals: ['#2999'],
+          schedulerGoalId: 'goal-2999',
+        }],
+      },
+    },
+    ...overrides,
+  };
+}
+
 function acceptedIngress(input, issueNumber = 1556) {
   return {
     ok: true,
@@ -75,7 +115,7 @@ function defaultAlignmentTwin() {
   return operatorKnowledgeTwin('Follow my explicit bounded project action requests through canonical guarded machinery.');
 }
 
-function deps(programmeProjection = projection(), ingress = null) {
+function deps(programmeProjection = projection(), ingress = null, actionProjection = flywheelActionProjection()) {
   const writes = [];
   const wakeCalls = [];
   return {
@@ -85,6 +125,7 @@ function deps(programmeProjection = projection(), ingress = null) {
       testOnly: true,
       dependencies: {
         readProgrammeProjection: async () => programmeProjection,
+        readLatestFlywheelActionJournal: async () => actionProjection,
         writeRecord: async (root, segments, record) => {
           writes.push({ root, segments, record });
           return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: root + '/' + segments.join('/') };
@@ -120,7 +161,7 @@ test('unrelated conversation does not wake programme machinery', async () => {
   assert.equal(result.contextBlock, '');
 });
 
-test('flywheel question is read-only grounding and creates no handoff', async () => {
+test('flywheel question stays non-executing but writes a provenance-bound dialogue receipt', async () => {
   const harness = deps();
   const result = await buildStephanosExecutiveChatBridge({
     prompt: 'What does the flywheel think we should do next?',
@@ -132,7 +173,21 @@ test('flywheel question is read-only grounding and creates no handoff', async ()
   assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.GROUNDING_READY);
   assert.equal(result.plan.commandClass, 'ASK_FLYWHEEL');
   assert.equal(result.plan.flywheel.selectedGoal, '#1556');
-  assert.equal(harness.writes.length, 0);
+  assert.equal(result.plan.flywheel.answer.flywheelActionReceiptId, 'durable-flywheel-20260925175500000');
+  assert.deepEqual(result.plan.flywheel.answer.flywheelCreatedCanonicalGoals, [2999]);
+  assert.match(result.plan.flywheel.answer.collaborativeNextAction, /#2999/);
+  assert.equal(harness.wakeCalls.length, 0);
+  assert.equal(harness.writes.length, 1);
+  assert.deepEqual(harness.writes[0].segments, ['receipts', 'stephanos-flywheel-dialogue-chat-read-1556.json']);
+  const receipt = harness.writes[0].record;
+  const validation = validateSharedWorkspaceRecord(receipt, { nowMs: Date.parse(NOW) });
+  assert.equal(validation.valid, true, validation.errors.join(', '));
+  assert.equal(receipt.exchangeSchemaVersion, 'stephanos.flywheel-dialogue-receipt.v1');
+  assert.equal(receipt.receivedRecordId, 'durable-flywheel-20260925175500000');
+  assert.deepEqual(receipt.flywheelCreatedCanonicalGoals, [2999]);
+  assert.equal(receipt.authority.mergeAuthorityAdded, false);
+  assert.match(result.contextBlock, /Latest Flywheel action receipt/);
+  assert.match(result.contextBlock, /#2999/);
   assert.match(result.contextBlock, /read-only programme dialogue/i);
 });
 
@@ -237,6 +292,54 @@ test('explicit action without any Knowledge Twin alignment evidence fails closed
   assert.equal(result.blocker, 'OPERATOR_ALIGNMENT_EVIDENCE_REQUIRED');
   assert.equal(harness.writes.length, 0);
   assert.equal(harness.wakeCalls.length, 0);
+});
+
+test('sovereign up-stack requests address the guarded Commander without treating status questions as execution', () => {
+  const actions = [
+    'Take Sovereign Commander up the stack and improve its skills.',
+    'Keep taking Stephanos AI up the stack.',
+    'Can we elevate Sovereign Commander to the next level?',
+    'Please improve OpenClaw Local.',
+  ];
+  for (const prompt of actions) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.applies, true, prompt);
+    assert.equal(result.explicitActionRequested, true, prompt);
+    assert.equal(result.commandClass, 'REQUEST_SYSTEM_ACTION', prompt);
+    if (/sovereign commander/i.test(prompt)) assert.equal(result.targetSystem, 'sovereign-commander');
+  }
+  for (const prompt of [
+    'Can we get a status report on Sovereign Commander?',
+    'How is Sovereign Commander getting on?',
+  ]) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.applies, true, prompt);
+    assert.equal(result.explicitActionRequested, false, prompt);
+  }
+});
+
+test('Stephanos repair phrasing becomes an action without classifying read-only updates as work', () => {
+  const actions = [
+    'Can we get Stephanos AI up to the level of ChatGPT or above and use it to repair Stephanos?',
+    'Can we repair the goal builder now?',
+    'Can we get the workers building?',
+    'Can we get #2962 over the line?',
+    'Could we get the daemon to fix Stephanos?',
+  ];
+  for (const prompt of actions) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.explicitActionRequested, true, prompt);
+    assert.equal(result.commandClass, 'REQUEST_SYSTEM_ACTION', prompt);
+  }
+  const readOnly = [
+    'Can we get a status report on repairs?',
+    'Can we get a report on what was merged?',
+    'Why are the repairs blocked?',
+  ];
+  for (const prompt of readOnly) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.explicitActionRequested, false, prompt);
+  }
 });
 
 test('classifier keeps natural questions separate from explicit action requests', () => {
@@ -449,4 +552,130 @@ test('conflicting explicit operator guidance blocks Octopus before any delegatio
   assert.match(result.blocker, /^OPERATOR_ALIGNMENT_NOT_READY:CONFLICTING_OPERATOR_GUIDANCE$/);
   assert.equal(harness.writes.length, 0);
   assert.equal(harness.wakeCalls.length, 0);
+});
+
+
+test('latest Flywheel action reader chooses the newest valid action journal and labels freshness', async () => {
+  const records = {
+    'durable-flywheel-old.json': JSON.stringify({
+      schema: 'stephanos.durable-flywheel-cycle-receipt.vnext',
+      receiptId: 'durable-flywheel-old',
+      participantId: 'durable-flywheel-controller',
+      timestampUtc: '2026-09-25T17:20:00.000Z',
+      flywheelActionJournal: { schemaVersion: 'stephanos.flywheel-action-journal.v1', learning: {} },
+    }),
+    'durable-flywheel-new.json': JSON.stringify({
+      schema: 'stephanos.durable-flywheel-cycle-receipt.vnext',
+      receiptId: 'durable-flywheel-new',
+      participantId: 'durable-flywheel-controller',
+      timestampUtc: '2026-09-25T17:55:00.000Z',
+      flywheelActionJournal: { schemaVersion: 'stephanos.flywheel-action-journal.v1', learning: { createdCanonicalGoalIssueNumbers: [2999] } },
+    }),
+    'durable-flywheel-bad.json': '{bad-json',
+  };
+  const result = await readLatestFlywheelActionJournalV1({
+    workspaceRoot: '/outside-repo/shared-workspace',
+    repoRoot: '/repo',
+    nowUtc: NOW,
+    readdirFn: async () => Object.keys(records),
+    readFileFn: async (path) => records[path.split('/').at(-1)],
+  });
+
+  assert.equal(result.state, 'CURRENT');
+  assert.equal(result.receiptId, 'durable-flywheel-new');
+  assert.deepEqual(result.journal.learning.createdCanonicalGoalIssueNumbers, [2999]);
+});
+
+test('explicit submit goal #1556 publishes only the matching original scheduler ingress', async () => {
+  const harness=deps();
+  const result=await buildStephanosExecutiveChatBridge({
+    prompt:'Submit goal #1556',knowledgeTwin:defaultAlignmentTwin(),
+    requestId:'submit-1556',nowUtc:NOW,repoRoot:'/repo',
+  },harness.options);
+  assert.equal(result.state,STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED);
+  assert.equal(result.canonicalIngress.executiveIngressAcceptance.acceptedGoalIssue,1556);
+  assert.equal(harness.wakeCalls.length,1);
+});
+test('submitGoal refuses an alternate goal before handoff write or canonical call',async()=>{
+  const harness=deps();
+  const result=await buildStephanosExecutiveChatBridge({
+    prompt:'Please build goal #2999 through the existing canonical goal conveyor.',
+    requestedGoalIssue:2999,knowledgeTwin:defaultAlignmentTwin(),
+    requestId:'submit-2999',nowUtc:NOW,repoRoot:'/repo',
+  },harness.options);
+  assert.equal(result.state,STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
+  assert.equal(result.blocker,'REQUESTED_GOAL_NOT_AT_DEPENDENCY_FRONTIER');
+  assert.equal(harness.writes.length,0);
+  assert.equal(harness.wakeCalls.length,0);
+});
+
+test('submitGoal live tool is bounded to one exact issue and refuses accessor-shaped inputs',async()=>{
+  const bogus=Object.defineProperty({},'goalIssue',{enumerable:true,get(){throw Error('forged accessor');}});
+  const blocked=await submitGoalThroughStephanosV1(bogus,{knowledgeTwin:defaultAlignmentTwin()},{
+    testOnly:true,bridge:async()=>{throw Error('bridge must not be called');},
+  });
+  assert.equal(blocked.data.state,'HELD');
+  assert.equal(blocked.data.blocker,'GOAL_ISSUE_NUMBER_INVALID');
+  assert.equal(blocked.data.workerStartedProven,false);
+});
+test('submitGoal tool never invents worker STARTED from exact canonical acceptance',async()=>{
+  let called=0;
+  const result=await submitGoalThroughStephanosV1({goalIssue:'#1556'},{
+    knowledgeTwin:defaultAlignmentTwin(),requestId:'submit-live-contract',
+  },{
+    testOnly:true,
+    bridge:async input=>{
+      called++;
+      assert.equal(input.requestedGoalIssue,1556);
+      return {
+        state:STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED,
+        handoff:{record:{handoffId:'signed-original-handoff-1556'}},
+        publication:{ok:true},
+        canonicalIngress:{ok:true,executiveIngressAcceptance:{
+          accepted:true,acceptedGoalIssue:1556,selectedGoal:'#1556',
+        }},
+        acknowledgement:{ok:true},
+      };
+    },
+  });
+  assert.equal(called,1);
+  assert.equal(result.data.canonicalGoalIngressAccepted,true);
+  assert.equal(result.data.controlTowerBuildRequestSubmitted,false);
+  assert.equal(result.data.workerClaimProven,false);
+  assert.equal(result.data.workerStartedProven,false);
+  assert.equal(result.data.goalCompletedProven,false);
+  assert.equal(result.data.mergeAuthority,false);
+});
+test('submitGoal tool wrong-goal and unknown outcome never grant retry or a build',async()=>{
+  const context={knowledgeTwin:defaultAlignmentTwin(),requestId:'submit-held-contract'};
+  const mismatch=await submitGoalThroughStephanosV1({goalIssue:1556},context,{
+    testOnly:true,bridge:async()=>({
+      state:STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED,
+      handoff:{record:{handoffId:'other-handoff'}},
+      publication:{ok:true},
+      canonicalIngress:{ok:true,executiveIngressAcceptance:{
+        accepted:true,acceptedGoalIssue:2002,selectedGoal:'#2002',
+      }},
+      acknowledgement:{ok:true},
+    }),
+  });
+  assert.equal(mismatch.data.canonicalGoalIngressAccepted,false);
+  assert.equal(mismatch.data.executionOutcomeUncertain,true);
+  const uncertain=await submitGoalThroughStephanosV1({goalIssue:1556},context,{
+    testOnly:true,bridge:async()=>{throw Error('a possibly completed publication');},
+  });
+  assert.equal(uncertain.data.executionOutcomeUncertain,true);
+  assert.equal(uncertain.data.duplicateRequestAllowed,false);
+});
+test('submitGoal command syntax accepts exactly one canonical goal number',()=>{
+  for(const raw of ['/submitgoal #1556','/submitgoal 1556']){
+    const route=resolveRoute(parseCommand(raw),raw);
+    assert.equal(route.tool,'submitGoal');
+    assert.equal(route.needsAI,false);
+  }
+  for(const raw of ['/submitgoal','/submitgoal #1556 --force',
+    '/submitgoal #1556 #2002','/submitgoal #0001','/submitgoal nope']){
+    const route=resolveRoute(parseCommand(raw),raw);
+    assert.equal(route.action,'invalid_command');
+  }
 });

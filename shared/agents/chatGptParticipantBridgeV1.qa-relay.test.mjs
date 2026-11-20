@@ -13,9 +13,136 @@ import {
   CHATGPT_SHARED_WORKSPACE_OWNER,
   CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER,
   runChatGptSharedWorkspaceGitHubRelay,
+  validateChatGptSharedWorkspaceResponseBody,
 } from '../../scripts/chatgpt-shared-workspace-github-relay.mjs';
 
 const NOW = new Date('2026-08-19T08:00:00.000Z');
+
+async function strandedQa() {
+  const workspace = fakeWorkspace();
+  const question = canonicalQuestionRecord();
+  const request = qaRequest(question);
+  const counter = { count: 0 };
+  let publishAllowed = false;
+  let body = '';
+  const adapter = {
+    readRequest: () => ({ ok: true, body: envelope(request), authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER, observationSource: 'DIRECT' }),
+    writeResponse: (nextBody) => {
+      body = nextBody;
+      if (!publishAllowed) return { ok: false, reason: 'RESPONSE_COMMENT_WRITE_FAILED' };
+      return validateChatGptSharedWorkspaceResponseBody(nextBody).valid
+        ? { ok: true } : { ok: false, reason: 'unsafe-response-text' };
+    },
+  };
+  const options = relayOptions(workspace, adapter, counter);
+  const first = await runChatGptSharedWorkspaceGitHubRelay(options);
+  assert.equal(first.ok, false);
+  assert.equal(first.deliveryStatus, 'WORKSPACE_QA_PASS');
+  publishAllowed = true;
+  return { workspace, question, request, counter, adapter, options, first, body: () => body };
+}
+
+test('expired Q&A resumes only durable publication and preserves historical answer freshness', async () => {
+  const fixture = await strandedQa();
+  const original = new Map(fixture.workspace.records);
+  const writesBefore = fixture.workspace.writes.length;
+  const late = { ...fixture.options, now: new Date(NOW.getTime() + 2 * 60 * 60 * 1000) };
+  const result = await runChatGptSharedWorkspaceGitHubRelay(late);
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(result.publicationRecovered, true);
+  assert.equal(fixture.counter.count, 1);
+  assert.equal(fixture.workspace.writes.length, writesBefore + 1, 'only final completion is written');
+  for (const [key, record] of original) assert.deepEqual(fixture.workspace.records.get(key), record);
+  const payload = JSON.parse(fixture.body().match(/```json\s*([\s\S]*?)\s*```/)[1]);
+  assert.equal(payload.sanitizedAnswer.freshness, 'STALE');
+  assert.equal(payload.sanitizedAnswer.answeredAtUtc, NOW.toISOString());
+  assert.equal(payload.publicationRecovery.cognitionRepeated, false);
+  assert.equal(payload.source.sharedWorkspaceAuthoritative, true);
+  assert.equal(payload.authority.mergeAuthority, false);
+  const third = await runChatGptSharedWorkspaceGitHubRelay(late);
+  assert.equal(third.classification, 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED');
+});
+
+test('legacy expiry completion cannot hide the matching accepted durable Q&A result', async () => {
+  const fixture = await strandedQa();
+  const audit = fixture.workspace.records.get(`receipts/${fixture.first.receiptId}.json`);
+  fixture.workspace.records.set(`receipts/${fixture.first.completionReceiptId}.json`, {
+    ...audit,
+    receiptId: fixture.first.completionReceiptId,
+    receivedRecordId: fixture.first.receiptId,
+    disposition: 'RELAY_COMPLETE:BLOCKED_EXPIRED_REQUEST:REQUEST_REJECTED',
+  });
+  let freshReads = 0;
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...fixture.options,
+    now: new Date(NOW.getTime() + 20 * 60 * 1000),
+    adapter: { ...fixture.adapter,
+      readRequest: () => ({ ...fixture.adapter.readRequest(), observationSource: 'SHARED_CACHE' }),
+      readRequestFresh: () => { freshReads += 1; return fixture.adapter.readRequest(); },
+    },
+  });
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(result.publicationRecovered, true);
+  assert.equal(freshReads, 1);
+  assert.equal(fixture.counter.count, 1);
+  assert.equal(fixture.workspace.records.get(`receipts/${fixture.first.completionReceiptId}.json`).disposition,
+    'RELAY_COMPLETE:BRIDGE_VERIFIED_PASS:WORKSPACE_QA_PASS');
+});
+
+test('expired publication recovery rejects changed questions, mismatched answers and missing private handoffs without writes', async () => {
+  for (const mutation of ['question', 'answer', 'handoff', 'future-answer']) {
+    const fixture = await strandedQa();
+    if (mutation === 'question') fixture.request.boundedPayload.questionRecord = { ...fixture.question, summary: 'Different question' };
+    else if (mutation === 'handoff') {
+      for (const key of fixture.workspace.records.keys()) if (key.startsWith('outbox/conversation-canvas-handoff-')) fixture.workspace.records.delete(key);
+    } else {
+      const key = [...fixture.workspace.records.keys()].find((key) => key.startsWith('outbox/qa-answer-'));
+      const answer = fixture.workspace.records.get(key);
+      fixture.workspace.records.set(key, { ...answer,
+        ...(mutation === 'answer' ? { subjectId: 'different-question' } : { timestampUtc: new Date(NOW.getTime() + 1000).toISOString() }),
+      });
+    }
+    const writeCount = fixture.workspace.writes.length;
+    const eventCount = fixture.workspace.events.length;
+    const previousBody = fixture.body();
+    const result = await runChatGptSharedWorkspaceGitHubRelay({ ...fixture.options, now: new Date(NOW.getTime() + 20 * 60 * 1000) });
+    assert.equal(result.ok, false, mutation);
+    assert.equal(result.classification, 'CHATGPT_SHARED_WORKSPACE_QA_PUBLICATION_RECOVERY_BLOCKED', mutation);
+    assert.equal(fixture.workspace.writes.length, writeCount, mutation);
+    assert.equal(fixture.workspace.events.length, eventCount, mutation);
+    assert.equal(fixture.body(), previousBody, mutation);
+    assert.equal(fixture.counter.count, 1, mutation);
+  }
+});
+
+test('expired unpublished Q&A without an accepted receipt does not gain cognition authority', async () => {
+  const workspace = fakeWorkspace();
+  const counter = { count: 0 };
+  const request = qaRequest(canonicalQuestionRecord());
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...relayOptions(workspace, {
+      readRequest: () => ({ ok: true, body: envelope(request), authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER }),
+      writeResponse: () => ({ ok: true }),
+    }, counter),
+    now: new Date(NOW.getTime() + 20 * 60 * 1000),
+  });
+  assert.equal(result.verificationStatus, 'BLOCKED_EXPIRED_REQUEST');
+  assert.equal(counter.count, 0);
+  assert.equal(workspace.writes.some((entry) => ['inbox', 'outbox'].includes(entry.segments[0])), false);
+});
+
+test('accepted old Q&A does not authorize an unauthenticated expiry retry', async () => {
+  const fixture = await strandedQa();
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...fixture.options, now: new Date(NOW.getTime() + 20 * 60 * 1000),
+    adapter: { ...fixture.adapter,
+      readRequest: () => ({ ...fixture.adapter.readRequest(), authorLogin: 'another-user' }),
+    },
+  });
+  assert.equal(result.verificationStatus, 'BLOCKED_AUTHENTICATION_FAILED');
+  assert.equal(result.publicationRecovered, false);
+  assert.equal(fixture.counter.count, 1);
+});
 
 function envelope(request) {
   return `${CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER}\n## Request\n\`\`\`json\n${JSON.stringify({
@@ -161,7 +288,61 @@ test('canonical Q&A delivery persists question then correlated answer before ter
   assert.equal(workspace.events[0].record.eventKind, 'response');
   assert.match(responseBody, /"correlatedAnswerRecord"/);
   assert.match(responseBody, /"recordSubtype": "conversation-answer"/);
-  assert.equal(responseBody.includes(groundedResponse().output_text), false);
+  assert.match(responseBody, /"sanitizedAnswer"/);
+  assert.equal(responseBody.includes(groundedResponse().output_text), true);
+  assert.match(responseBody, /"rawAnswerIncluded": false/);
+  assert.match(responseBody, /"authorityWidening": false/);
+});
+
+test('resumed Q&A redacts canonical secret-shaped answer text before public response publication', async () => {
+  const workspace = fakeWorkspace();
+  const questionRecord = canonicalQuestionRecord();
+  const request = qaRequest(questionRecord);
+  const answerCounter = { count: 0 };
+  let responseAttempts = 0;
+  let responseBody = '';
+  const adapter = {
+    readRequest: () => ({ ok: true, body: envelope(request), authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER }),
+    writeResponse: (body) => {
+      responseAttempts += 1;
+      responseBody = body;
+      return responseAttempts === 1
+        ? { ok: false, reason: 'RESPONSE_COMMENT_WRITE_FAILED' }
+        : { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' };
+    },
+  };
+  const options = {
+    ...relayOptions(workspace, adapter, answerCounter),
+    persistConversationCanvasFn: async () => ({
+      ok: true,
+      classification: 'TEST_CANVAS_PERSISTED',
+      persisted: true,
+      resumed: false,
+      handoffId: 'test-canvas-handoff',
+      publicProjection: {
+        bodyIncluded: false,
+        rawAnswerIncluded: false,
+      },
+    }),
+  };
+
+  const first = await runChatGptSharedWorkspaceGitHubRelay(options);
+  assert.equal(first.ok, false);
+  const answerKey = [...workspace.records.keys()].find((key) => key.startsWith('outbox/qa-answer-'));
+  assert.ok(answerKey);
+  const persistedAnswer = workspace.records.get(answerKey);
+  const answerBody = JSON.parse(persistedAnswer.body);
+  answerBody.payload.answerText = 'password=do-not-publish';
+  workspace.records.set(answerKey, { ...persistedAnswer, body: JSON.stringify(answerBody) });
+
+  const second = await runChatGptSharedWorkspaceGitHubRelay(options);
+  assert.equal(second.ok, true);
+  assert.equal(second.deliveryStatus, 'WORKSPACE_QA_PASS');
+  assert.equal(answerCounter.count, 1, 'resumed answer must not re-query Stephanos');
+  assert.equal(responseBody.includes('password=do-not-publish'), false);
+  assert.equal(responseBody.includes('"answerText": "[REDACTED]"'), true);
+  assert.match(responseBody, /"redacted": true/);
+  assert.match(responseBody, /"rawAnswerIncluded": false/);
 });
 
 test('request and conversation lineage mismatch terminalizes safely before question persistence or Stephanos cognition', async () => {

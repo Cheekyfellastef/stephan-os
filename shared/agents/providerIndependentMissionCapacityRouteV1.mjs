@@ -5,13 +5,13 @@ import {
 
 export const PROVIDER_INDEPENDENT_MISSION_CAPACITY_ROUTE_V1_SCHEMA = 'stephanos.provider-independent-mission-capacity-route.v1';
 
-const NON_OPENAI_SOURCE_ROUTES = new Set([
-  MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
-  MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
-  MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
-  MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
-  MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
-]);
+const SOVEREIGN_SOURCE_ADAPTERS = Object.freeze({
+  [MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE]: 'foundry-forge',
+  [MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE]: 'stephanos-native',
+  [MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER]: 'sovereign-commander',
+  [MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE]: 'openclaw-standalone',
+  [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL]: 'openclaw-local',
+});
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -35,12 +35,28 @@ function routePlanner(input, options = {}) {
   return routeMissionControllerCapacity;
 }
 
-function nonOpenAiAttempt(input, planner) {
-  return planner({
+// Shared by the single-mission worker and elastic capacity enumeration. This
+// only excludes metered transports; the canonical router still owns receipt,
+// task-class, source-head, freshness and existing-dispatch qualification.
+export function providerIndependentSourceCapacityInputV1(input = {}) {
+  // A non-OpenAI route is not necessarily sovereign: Desktop Commander is
+  // another metered external transport. Preserve it only as optional normal
+  // capacity when it is actually available, never as blackout independence.
+  const blockedAdapters = [...new Set([...list(input.blockedAdapters), 'desktop-commander'])];
+  return freeze({
     ...input,
     codexStatus: null,
     githubLaneReceipt: null,
+    desktopCommanderLaneReceipt: null,
+    blockedAdapters: freeze(blockedAdapters),
   });
+}
+
+export function isProviderIndependentSourceCapacityCandidateV1(candidate = {}) {
+  const route = text(candidate?.route).toUpperCase();
+  const adapter = text(candidate?.adapter).toLowerCase();
+  return Object.hasOwn(SOVEREIGN_SOURCE_ADAPTERS, route)
+    && SOVEREIGN_SOURCE_ADAPTERS[route] === adapter;
 }
 
 function decorate(result, additions = {}) {
@@ -82,9 +98,9 @@ export function routeProviderIndependentMissionCapacityV1(input = {}, options = 
     });
   }
 
-  const independent = nonOpenAiAttempt(input, planner);
+  const independent = planner(providerIndependentSourceCapacityInputV1(input));
   const independentReady = independent?.dispatchAllowed === true
-    && NON_OPENAI_SOURCE_ROUTES.has(text(independent.route).toUpperCase());
+    && isProviderIndependentSourceCapacityCandidateV1(independent);
 
   if (independentReady) {
     return decorate({

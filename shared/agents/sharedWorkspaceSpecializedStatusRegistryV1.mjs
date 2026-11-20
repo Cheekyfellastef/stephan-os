@@ -15,6 +15,15 @@ function record({ fileName, schemaIds, sourcePaths, role }) {
 export const SHARED_WORKSPACE_SPECIALIZED_STATUS_PATTERNS = Object.freeze([
   Object.freeze({
     directory: 'status',
+    fileNamePattern: '^frontend-boot-attempt-[0-9a-f]{64}\\.json$',
+    schemaIds: Object.freeze(['stephanos.frontend-autostart.v1']),
+    sourcePaths: Object.freeze(['scripts/sovereign-frontend-autostart.mjs']),
+    role: 'frontend-immutable-boot-attempt-reservation',
+    dashboardAuthority: false,
+    authority: 'specialized-consumer-only',
+  }),
+  Object.freeze({
+    directory: 'status',
     fileNamePattern: '^mission-orchestrator-worker-launch-identity-[0-9a-f]{64}\\.json$',
     schemaIds: Object.freeze(['stephanos.mission-worker-launch-identity.v1']),
     sourcePaths: Object.freeze([
@@ -125,6 +134,25 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'worker-watchdog-launch-projection',
   }),
   record({
+    fileName: 'brain-state-current.json',
+    schemaIds: ['stephanos.shared-workspace.brain-state.v1'],
+    sourcePaths: [
+      'shared/agents/sharedWorkspaceBrainStateV1.mjs',
+      'stephanos-server/services/llm/router/routeLLMRequest.js',
+      'shared/agents/shared-workspace-dashboard-feed.mjs',
+    ],
+    role: 'advisory-brain-state-projection',
+  }),
+  record({
+    fileName: 'controller-lane-status-current.json',
+    schemaIds: ['stephanos.sovereign-controller-lane-status.v1'],
+    sourcePaths: [
+      'scripts/sovereign-controller-lane-status.mjs',
+      'scripts/sovereign-commander-visibility-snapshot.mjs',
+    ],
+    role: 'sovereign-controller-lane-status-projection',
+  }),
+  record({
     fileName: 'github-goal-estate-shared-snapshot.json',
     schemaIds: ['stephanos.github-goal-estate-shared-snapshot.v1'],
     sourcePaths: ['stephanos-server/services/programmeAuthorityService.js'],
@@ -153,6 +181,16 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'ignition-browser-window-proof',
   }),
   record({
+    fileName: 'logical-goal-controller-fabric-current.json',
+    schemaIds: ['stephanos.logical-goal-controller-fabric.v1'],
+    sourcePaths: [
+      'shared/agents/logicalGoalControllerFabricV1.mjs',
+      'shared/agents/monitorAdmissionRuntimeV2.mjs',
+      'stephanos-server/services/programmeAuthorityService.js',
+    ],
+    role: 'logical-goal-controller-fabric-projection',
+  }),
+  record({
     fileName: 'mission-orchestrator-worker-heartbeat.json',
     schemaIds: ['stephanos.mission-orchestrator-worker-heartbeat.v1'],
     sourcePaths: ['scripts/mission-orchestrator-worker-heartbeat.mjs'],
@@ -165,10 +203,34 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'monitor-admission-specialized-registry',
   }),
   record({
+    fileName: 'openclaw-provider-pool-current.json',
+    schemaIds: ['stephanos.openclaw-elastic-provider-pool.v1'],
+    sourcePaths: [
+      'stephanos-server/services/openClawProviderPoolAdmissionService.js',
+      'stephanos-server/services/elasticOpenClawProviderPoolService.js',
+    ],
+    role: 'openclaw-elastic-provider-pool-projection',
+  }),
+  record({
+    fileName: 'sovereign-commander-maintenance-custody.json',
+    schemaIds: ['stephanos.sovereign-maintenance-custody.v1'],
+    sourcePaths: ['scripts/sovereign-maintenance-custody-store-v1.mjs'],
+    role: 'sovereign-maintenance-custody-state',
+  }),
+  record({
     fileName: 'stephanos-backend-runtime.json',
     schemaIds: ['stephanos.backend-runtime.v1'],
     sourcePaths: ['scripts/windows/start-stephanos-backend.ps1'],
     role: 'backend-runtime-identity-projection',
+  }),
+  record({
+    fileName: 'stephanos-build-truth-current.json',
+    schemaIds: ['stephanos.sovereign-build-truth.v1'],
+    sourcePaths: [
+      'scripts/sovereign-controller-lane-status.mjs',
+      'shared/agents/shared-workspace-dashboard-feed.mjs',
+    ],
+    role: 'sovereign-goal-build-truth-projection',
   }),
 ]);
 

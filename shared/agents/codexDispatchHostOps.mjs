@@ -19,6 +19,8 @@ import {
   preserveBattleBridgeDirtyData,
 } from './battleBridgeDirtyDataPreservationV1.mjs';
 import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
+import { preflightCanonicalMailboxRotationSync } from '../../scripts/canonical-mailbox-rotation-sync-preflight-v1.mjs';
+import { withMailboxOutboxGuardLock } from '../../scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export const DEFAULT_CODEX_DISPATCH_REPO_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 export const DEFAULT_BATTLE_BRIDGE_ENDPOINTS = Object.freeze([
@@ -40,6 +42,7 @@ export const CODEX_DISPATCH_TEST_ARGS = Object.freeze([
   'scripts/remote-codex-task-visibility-observer.test.mjs',
   'scripts/remote-codex-github-mirror-publisher.test.mjs',
   'scripts/battle-bridge-worker-watchdog-runner.test.mjs',
+  'scripts/stephanos-codex-dispatch-host-operation-v1.test.mjs',
 ]);
 
 const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/i;
@@ -848,9 +851,28 @@ function classifyCompletedSyncBlocker({ afterHead, approvedTargetHead, statusAft
   return '';
 }
 
-export function syncCodexDispatchBridge({
+export function syncCodexDispatchBridge(options = {}) {
+  if (resolve(options.repoRoot || DEFAULT_CODEX_DISPATCH_REPO_ROOT) !== resolve(DEFAULT_CODEX_DISPATCH_REPO_ROOT)) return syncCodexDispatchBridgeCore(options);
+  if (options.operatorApproval !== 'operator-approved' || process.platform !== 'win32'
+    || (options.spawnSyncFn && options.spawnSyncFn !== spawnSync)) return syncCodexDispatchBridgeCore(options);
+  try {
+    const admission = preflightCanonicalMailboxRotationSync({ repoRoot: options.repoRoot || DEFAULT_CODEX_DISPATCH_REPO_ROOT,
+      expectedHead: options.expectedHead || '' });
+    if (!admission.ok) return { ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: admission.blocker };
+    if (!admission.required) return syncCodexDispatchBridgeCore(options);
+    return withMailboxOutboxGuardLock(lock => {
+      const fresh = preflightCanonicalMailboxRotationSync({ repoRoot: options.repoRoot || DEFAULT_CODEX_DISPATCH_REPO_ROOT,
+        expectedHead: admission.sourceHead, guardToken: lock.token });
+      if (!fresh.ok || !fresh.required) return { ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: fresh.blocker || 'MAILBOX_ROTATION_SYNC_TRANSITION_CHANGED' };
+      return syncCodexDispatchBridgeCore({ ...options, expectedHead: fresh.sourceHead });
+    });
+  } catch { return { ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: 'MAILBOX_ROTATION_SYNC_PREFLIGHT_UNPROVEN' }; }
+}
+
+function syncCodexDispatchBridgeCore({
   repoRoot = DEFAULT_CODEX_DISPATCH_REPO_ROOT,
   expectedBranch = 'main',
+  expectedHead = '',
   operatorApproval = '',
   spawnSyncFn = spawnSync,
   nodeCommand = process.execPath,
@@ -925,6 +947,9 @@ export function syncCodexDispatchBridge({
   const remoteRef = `origin/${expectedBranch}`;
   const remoteHead = git(spawnSyncFn, repoRoot, ['rev-parse', remoteRef]);
   const approvedTargetHead = remoteHead.stdout;
+  if (expectedHead && (!EXACT_GIT_HEAD.test(expectedHead) || approvedTargetHead !== expectedHead)) {
+    return Object.freeze({ ok: false, status: 'BLOCKED', verdict: 'FAIL', blocker: 'SOURCE_SYNC_EXPECTED_HEAD_MISMATCH', beforeHead: beforeHead.stdout, remoteHead: remoteHead.stdout });
+  }
   const divergence = git(spawnSyncFn, repoRoot, ['rev-list', '--left-right', '--count', `HEAD...${approvedTargetHead}`]);
   if (!remoteHead.ok || !divergence.ok) {
     return Object.freeze({ ok: false, status: 'FAILED', verdict: 'FAIL', blocker: 'REMOTE_STATE_READ_FAILED', remoteHead, divergence });

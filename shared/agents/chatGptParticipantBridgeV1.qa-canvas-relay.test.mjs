@@ -216,5 +216,7 @@ test('relay retries private Canvas persistence from durable Q&A without repeatin
   assert.match(responseBody, /"conversationCanvasHandoff"/);
   assert.match(responseBody, /"bodyIncluded": false/);
   assert.match(responseBody, /"rawAnswerIncluded": false/);
-  assert.equal(responseBody.includes(groundedResponse().output_text), false);
+  assert.match(responseBody, /"sanitizedAnswer"/);
+  assert.equal(responseBody.includes(groundedResponse().output_text), true);
+  assert.match(responseBody, /"authorityWidening": false/);
 });
