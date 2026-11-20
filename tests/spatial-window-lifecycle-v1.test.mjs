@@ -42,6 +42,38 @@ function clientHarness(fetchRef){
     documentRef:{createElement:()=>({decode:async()=>{}})},setTimer:fn=>{timers.set(++id,fn);return id;},clearTimer:key=>timers.delete(key)});
   return {client,saved,async tick(){const [key,fn]=timers.entries().next().value??[];if(!fn)return;timers.delete(key);return fn();}};
 }
+test('replayed native picture serials and older generations cannot re-enable holographic app input',async()=>{
+  const frames=[
+    {generation:4,serial:8},{generation:4,serial:7},{generation:4,serial:8},
+    {generation:4,serial:9},{generation:3,serial:99},{generation:5,serial:10},
+  ];
+  let served=0,inputs=0;
+  const h=clientHarness(async url=>{
+    const path=new URL(url).pathname;
+    if(path==='/session')return response({token});
+    if(path==='/windows')return response({windows:[{id:1,title:'Constrained fixture'}]});
+    if(path==='/bind')return response({status:'connected'});
+    if(path==='/frame')return response({status:'frame',jpeg:'fixture',...frames[served++]});
+    if(path==='/input'){inputs++;return response({status:'input-posted'});}
+    return response({status:'stopped'});
+  });
+  assert.equal(await h.client.discover(),true);
+  assert.equal(await h.client.connect(1),true);
+  await h.tick();assert.equal(h.client.getState().status,'live');
+  const first=h.client.getFrame();assert.ok(first);
+  await h.tick();assert.equal(h.client.getState().status,'waiting','regressed serial closes the input gate');
+  assert.equal(h.client.getFrame(),null);
+  assert.equal(h.client.input({kind:'scroll',x:.5,y:.5,delta:120}),false);
+  await h.tick();assert.equal(h.client.getState().status,'waiting','same stale serial cannot reopen the gate');
+  await h.tick();assert.equal(h.client.getState().status,'live','new serial restores the real view');
+  assert.notEqual(h.client.getFrame(),first);
+  await h.tick();assert.equal(h.client.getState().status,'waiting','older generation cannot be replayed');
+  assert.equal(h.client.input({kind:'scroll',x:.5,y:.5,delta:120}),false);
+  await h.tick();assert.equal(h.client.getState().status,'live','later generation must be allowed');
+  assert.equal(inputs,0,'no synthetic scroll or key may reach native helper during replay');
+  assert.equal(served,frames.length);
+  await h.client.stop();
+});
 test('two overlapping discoveries cannot both obtain sessions after a slow stop',async()=>{
   const stop=deferred(),calls=[];
   const h=clientHarness(async(url)=>{const path=new URL(url).pathname;calls.push(path);if(path==='/stop')return stop.promise;return response(path==='/session'?{token}:{windows:[{id:1,title:'Test'}]});});
