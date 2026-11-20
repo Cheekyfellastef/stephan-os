@@ -146,13 +146,14 @@ export function createHolodeckAudioControls({
       // Once an ID was ambiguous, a later refresh must not silently re-adopt it.
       if(ambiguousInput)hotplugInputNeedsSelection=true;
       if(ambiguousOutput)hotplugOutputNeedsSelection=true;
+      if(ambiguousInput||ambiguousOutput)deviceRecoveryCause='ambiguous';
       if(inputId!==state.inputId)releaseMicrophone();
       if(outputId!==state.outputId)releaseSpeaker();
       const missingInput=Boolean(wantedInput&&!inputId),missingOutput=Boolean(wantedOutput&&!outputId);
       const reason=ambiguousInput||ambiguousOutput
         ?'Ambiguous audio device identity. Resolve duplicates, then explicitly re-select the intended device; no local test or ChatGPT Voice started.'
         :hotplugInputNeedsSelection||hotplugOutputNeedsSelection
-        ?(deviceRecoveryCause==='hotplug'?'Audio devices changed.':'Audio device discovery previously failed.')+
+        ?(deviceRecoveryCause==='hotplug'?'Audio devices changed.':deviceRecoveryCause==='ambiguous'?'Ambiguous audio device identity was observed.':'Audio device discovery previously failed.')+
           ' Re-select the intended microphone and speaker; neither local test nor ChatGPT Voice has started.'
         :missingInput||missingOutput
           ?'Previous '+(missingInput&&missingOutput?'microphone and speaker':missingInput?'microphone':'speaker')+
