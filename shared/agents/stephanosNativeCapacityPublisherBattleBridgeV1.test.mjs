@@ -150,15 +150,15 @@ test('failed native publisher installer never echoes PowerShell stderr into the 
   const confidential = 'private-path-operator-token-MUST_NOT_LEAK';
   let installerCalls = 0;
   const spawnSyncFn = (_executable, args) => {
-    if (args.includes('branch')) return { status: 0, stdout: 'main\\n', stderr: '' };
-    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\\n', stderr: '' };
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
     if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
     installerCalls += 1;
     assert.ok(args.some(value => String(value).endsWith('install-stephanos-native-capacity-publisher.ps1')));
     return { status: 1, stdout: '', stderr: 'Access denied at ' + confidential };
   };
   const result = await executeStephanosNativeCapacityPublisherInstallOnBattleBridge(command(), {
-    env: { USERPROFILE: 'C:\\\\Users\\\\Operator' }, spawnSyncFn,
+    env: { USERPROFILE: 'C:\\Users\\Operator' }, spawnSyncFn,
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_FAILED');
