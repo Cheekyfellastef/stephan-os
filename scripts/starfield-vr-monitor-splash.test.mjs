@@ -262,6 +262,21 @@ test('same-run null game frames retain the original witnessed identity', () => {
     receiver.indexOf('$monitorState.GameProcess = $event.process'));
 });
 
+test('explicit monitor cancellation or close disarms foreground retries and rejects late waiting rearm', () => {
+  const sender = functionSource('Send-MonitorCommand');
+  const retry = functionSource('Invoke-MonitorWaitingGameFocus');
+  const receiver = functionSource('Receive-MonitorEvent');
+  const terminal = sender.slice(sender.indexOf("if ($Command -in @('cancel', 'close')) {"));
+  const flush = terminal.indexOf('try {');
+  const stop = terminal.indexOf('$focusRetryTimer.Stop()');
+  assert.ok(stop >= 0 && stop < flush, 'terminal command must stop focus before flushing monitor input');
+  assert.match(terminal, /\$monitorState\.CloseSent = \$true[\s\S]*?\$focusRetryTimer\.Stop\(\)/);
+  assert.match(retry, /\$monitorState\.CloseRequested -or \$monitorState\.CloseSent/);
+  const waiting = receiver.slice(receiver.indexOf("elseif ($event.mode -ceq 'waiting')"));
+  assert.match(waiting, /-not \$monitorState\.CloseRequested -and[\s\S]*?-not \$monitorState\.CloseSent/);
+  assert.doesNotMatch(terminal.slice(0, flush), /FocusBoundGame|Start-Process|\.Kill\(/);
+});
+
 test('a broken monitor transport terminates all foreground retry work before closing child input', () => {
   const fault = functionSource('Stop-MonitorTransport');
   const retry = functionSource('Invoke-MonitorWaitingGameFocus');
