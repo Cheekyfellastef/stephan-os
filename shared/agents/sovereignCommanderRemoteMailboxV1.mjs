@@ -1389,8 +1389,9 @@ export function safeCpuPressureSnapshotProjection(value = {}, processId = '') {
     || parsed.secretMaterialIncluded !== false
     || parsed.unknownMeansGreen !== false
     || parsed.finalVerdict !== 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED') return null;
-  const sampleSeconds = Number(parsed.sampleSeconds);
-  const processorCount = Number(parsed.processorCount);
+  // Do not coerce missing, string or boolean native process evidence into numbers.
+  const sampleSeconds = parsed.sampleSeconds;
+  const processorCount = parsed.processorCount;
   const capturedAt = text(parsed.capturedAtUtc);
   if (!Number.isFinite(Date.parse(capturedAt))
     || !Number.isFinite(sampleSeconds) || sampleSeconds < 4 || sampleSeconds > 20
@@ -1398,18 +1399,18 @@ export function safeCpuPressureSnapshotProjection(value = {}, processId = '') {
     || !Array.isArray(parsed.rows) || parsed.rows.length > 20) return null;
   const safeRows = [];
   for (const row of parsed.rows) {
-    const pid = Number(row?.pid);
-    const parentPid = Number(row?.parentPid);
+    const pid = row?.pid;
+    const parentPid = row?.parentPid;
     const processName = text(row?.processName);
     const startedAtUtc = text(row?.startedAtUtc);
     const script = text(row?.script);
-    const cpuPercent = row?.cpuPercent === null ? null : Number(row?.cpuPercent);
+    const cpuPercent = row?.cpuPercent;
     if (!Number.isSafeInteger(pid) || pid < 1 || pid > 2_147_483_647
       || !Number.isSafeInteger(parentPid) || parentPid < 0 || parentPid > 2_147_483_647
       || !CPU_SNAPSHOT_PROCESS_NAMES.has(processName.toLowerCase())
       || (startedAtUtc && !Number.isFinite(Date.parse(startedAtUtc)))
       || (script && !CPU_SNAPSHOT_SCRIPT_NAMES.has(script.toLowerCase()))
-      || (cpuPercent !== null && (!Number.isFinite(cpuPercent) || cpuPercent < 0 || cpuPercent > 100))
+      || (cpuPercent !== null && (typeof cpuPercent !== 'number' || !Number.isFinite(cpuPercent) || cpuPercent < 0 || cpuPercent > 100))
       || typeof row?.sampleMatched !== 'boolean') return null;
     safeRows.push(Object.freeze({
       pid,
@@ -1469,11 +1470,10 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     const ms = Date.parse(candidate);
     return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
   };
-  const bounded = (input, max = 1_000_000) => {
-    if (input === null || input === undefined || input === '') return null;
-    const number = Number(input);
-    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
-  };
+  const bounded = (input, max = 1_000_000) => (
+    typeof input === 'number' && Number.isSafeInteger(input)
+      && input >= 0 && input <= max ? input : null
+  );
   const safeState = (input, max = 160) => {
     const candidate = text(input).toUpperCase().slice(0, max);
     return /^[A-Z0-9._:-]{0,160}$/.test(candidate) ? candidate : '';

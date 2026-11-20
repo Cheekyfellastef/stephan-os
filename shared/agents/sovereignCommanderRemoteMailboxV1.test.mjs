@@ -30,6 +30,7 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
+  safeCpuPressureSnapshotProjection,
   diagnoseRescueIslandNativeReceiptInvalidV1,
   sovereignCommanderRemoteNetworkTimeoutMs,
   sovereignCommanderRemotePlanStepTimeoutMs,
@@ -4198,6 +4199,35 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
   assert.equal(result.visibilitySnapshot.health.core, 'GREEN');
   const serialized = JSON.stringify(result);
   assert.doesNotMatch(serialized, /MUST_NOT_ESCAPE|privatePath|privateReceiptPath|privateRemote|rawCommandLine|C:\\\\secret|PRIVATE RAW OUTPUT|PRIVATE STDERR/);
+  // A malformed native counter must remain unknown, never become observed zero.
+  for (const [field, invalid] of [
+    ['changedEntryCount', false],
+    ['changedEntryCount', null],
+    ['trackedChangeCount', '0'],
+    ['untrackedCount', ''],
+    ['untrackedCount', true],
+  ]) {
+    const injectedSnapshot = { ...snapshot, repository: { ...snapshot.repository, [field]: invalid } };
+    const injectedMaintenance = {
+      ...maintenance,
+      structuredContent: {
+        ...maintenance.structuredContent,
+        stdout: 'SOVEREIGN_COMMANDER_VISIBILITY_SNAPSHOT_RESULT=' + JSON.stringify(injectedSnapshot),
+      },
+    };
+    const injectedFetch = mcpFetch({ maintenance: injectedMaintenance });
+    const checked = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'visibility-snapshot' }),
+      {
+        spawnSyncFn: spawnForHead(),
+        readFileFn: readToken,
+        fetchFn: injectedFetch.fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Operator' },
+      },
+    );
+    assert.equal(checked.ok, true, field);
+    assert.equal(checked.visibilitySnapshot.repository[field], null, field);
+  }
 });
 
 
@@ -5433,4 +5463,54 @@ test('material outcome counters cannot bypass same-run controller proof with zer
       proofRefs: ['proof/same-run'] });
     assert.equal(allowed.ok, true, `${field} blocked with declared material action and proof ref`);
   }
+});
+
+
+test('CPU pressure native process fields reject coerced zeros, missing PID and numeric strings', () => {
+  const baseline = {
+    schemaVersion: 'stephanos.battle-bridge-cpu-pressure.v1',
+    capturedAtUtc: '2026-11-20T05:00:00.000Z',
+    sampleSeconds: 5, processorCount: 8,
+    rows: [{
+      pid: 1901, parentPid: 0, processName: 'node',
+      startedAtUtc: '2026-11-20T04:59:00.000Z',
+      script: 'stephanos-core-daemon.mjs',
+      cpuPercent: 32, sampleMatched: true,
+    }],
+    readOnly: true,
+    sourceMutationAllowed: false,
+    processTerminationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawCommandLinesReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED',
+  };
+  const project = (packet) => safeCpuPressureSnapshotProjection({
+    structuredContent: { stdout: JSON.stringify(packet) },
+  }, 'cpu-pressure-snapshot');
+  const valid = project(baseline);
+  assert.equal(valid.rows[0].parentPid, 0);
+  assert.equal(valid.rows[0].cpuPercent, 32);
+  assert.equal(project({ ...baseline, sampleSeconds: '5' }), null);
+  assert.equal(project({ ...baseline, processorCount: '8' }), null);
+  for (const [field, invalid] of [
+    ['pid', '1901'], ['pid', null], ['parentPid', null],
+    ['parentPid', false], ['parentPid', '0'],
+    ['cpuPercent', false], ['cpuPercent', ''],
+    ['cpuPercent', '0'],
+  ]) {
+    const packet = { ...baseline, rows: [{ ...baseline.rows[0], [field]: invalid }] };
+    assert.equal(project(packet), null, field + '=' + JSON.stringify(invalid));
+  }
+  const noSample = project({
+    ...baseline, rows: [{ ...baseline.rows[0], cpuPercent: null, sampleMatched: false }],
+  });
+  assert.equal(noSample.rows[0].cpuPercent, null);
+  assert.equal(noSample.rows[0].sampleMatched, false);
+  assert.equal(safeCpuPressureSnapshotProjection({
+    structuredContent: { stdout: JSON.stringify(baseline) },
+  }, 'other-operation'), null);
 });
