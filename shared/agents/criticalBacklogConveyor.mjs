@@ -1,11 +1,15 @@
+import { projectExternalMergeExecutionObligationV1 } from './externalMergeObservationV1.mjs';
+
 export const CRITICAL_BACKLOG_CONVEYOR_SCHEMA = 'stephanos.critical-backlog-conveyor.v1';
-export const CRITICAL_BACKLOG_CONVEYOR_VERSION = '1.0.2';
+export const CRITICAL_BACKLOG_CONVEYOR_VERSION = '1.2.0';
 
 export const CRITICAL_BACKLOG_DECISION = Object.freeze({
   CREATE_NEXT_MISSION: 'CREATE_NEXT_MISSION',
   WAIT_ACTIVE_MISSION: 'WAIT_ACTIVE_MISSION',
   WAIT_EXTERNAL_ACTIVE_MISSION: 'WAIT_EXTERNAL_ACTIVE_MISSION',
   PARKED_APPROVALS_ONLY: 'PARKED_APPROVALS_ONLY',
+  PARKED_BLOCKERS_ONLY: 'PARKED_BLOCKERS_ONLY',
+  PARKED_ACCEPTANCE_ONLY: 'PARKED_ACCEPTANCE_ONLY',
   BLOCKED_BY_TERMINAL_MISSION: 'BLOCKED_BY_TERMINAL_MISSION',
   BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS: 'BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS',
   BLOCKED_BY_INVALID_BACKLOG: 'BLOCKED_BY_INVALID_BACKLOG',
@@ -21,8 +25,61 @@ const SAFE_SOURCE_SEGMENT = /^\.?[a-z0-9][a-z0-9._-]*$/i;
 const FORBIDDEN_PATH = /(^|\/)(apps\/stephanos\/dist|runtime|runtime-data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
 const ELASTIC_GOAL_MISSION_ID = /^critical-[1-9]\d*-elastic-goal(?:$|[-_.])/;
 const TERMINAL_PHASES = new Set(['COMPLETE', 'CANCELLED']);
-const PARKED_PHASES = new Set(['AWAITING_OPERATOR_APPROVAL', 'MERGE_PULL_REQUEST']);
-const HOLD_PHASES = new Set(['BLOCKED']);
+const APPROVAL_PARKED_PHASES = new Set(['AWAITING_OPERATOR_APPROVAL', 'MERGE_PULL_REQUEST']);
+const BLOCKER_PARKING_STATUSES = new Set(['PARKED_BLOCKED', 'REENTRY_READY']);
+
+function executionData(value, key) {
+  try {
+    const descriptor = value && typeof value === 'object' && Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+  } catch { return undefined; }
+}
+
+function executionIdentity(mission) {
+  const missionId = executionData(mission, 'missionId');
+  const revision = executionData(mission, 'revision');
+  const phase = executionData(mission, 'currentPhase');
+  const dispatch = executionData(mission, 'dispatch');
+  const adapter = executionData(dispatch, 'adapter');
+  const status = executionData(dispatch, 'status');
+  const parking = executionData(executionData(mission, 'continuity'), 'parkingStatus');
+  if (typeof missionId !== 'string' || !/^critical-[1-9]\d*-elastic-goal$/.test(missionId)
+      || !Number.isSafeInteger(revision) || revision < 1
+      || typeof phase !== 'string' || typeof adapter !== 'string' || !adapter
+      || typeof status !== 'string' || typeof parking !== 'string') return '';
+  return JSON.stringify([missionId, revision, phase, adapter, status, parking]);
+}
+
+// Admission may select an occupied fallback solely to retain observation/custody.
+// This projection describes an execution obligation; it grants no execution or
+// completion authority. Unknown evidence conservatively retains the obligation.
+export function projectElasticMissionExecutionObligation(admission, observedMission) {
+  const selected = executionData(admission, 'selectedMission');
+  const identity = executionIdentity(selected);
+  const runnable = executionData(admission, 'runnableMissions');
+  const active = executionData(admission, 'activeMissions');
+  const inventory = executionData(admission, 'elasticMissions');
+  const result = state => Object.freeze({ state, materialProgressRequired: state !== 'OCCUPIED',
+    missionId: executionData(selected, 'missionId') || '' });
+  if (!identity || executionData(admission, 'ok') !== true
+      || executionData(admission, 'schemaVersion') !== 'stephanos.elastic-goal-mission-admission.v1'
+      || !Array.isArray(runnable) || !Array.isArray(active) || !Array.isArray(inventory)
+      || (observedMission !== undefined && executionIdentity(observedMission) !== identity)) return result('UNKNOWN');
+  const exactlySelected = rows => rows.filter(row => executionData(row, 'missionId') === executionData(selected, 'missionId'));
+  const activeSelected = exactlySelected(active);
+  const inventorySelected = exactlySelected(inventory);
+  if (activeSelected.length !== 1 || inventorySelected.length !== 1
+      || executionIdentity(activeSelected[0]) !== identity
+      || executionIdentity(inventorySelected[0]) !== identity) return result('UNKNOWN');
+  if (runnable.some(row => executionIdentity(row) === identity)) return result('RUNNABLE');
+  const sourcePhase = ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION']
+    .includes(executionData(selected, 'currentPhase'));
+  if (runnable.length === 0 && sourcePhase
+      && executionData(admission, 'classification') === 'ELASTIC_GOAL_MISSIONS_OCCUPIED'
+      && executionData(executionData(selected, 'dispatch'), 'status') === 'running'
+      && executionData(executionData(selected, 'continuity'), 'parkingStatus') === 'ACTIVE') return result('OCCUPIED');
+  return result('UNKNOWN');
+}
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -31,6 +88,14 @@ function text(value, fallback = '') {
 function list(value) { return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : []; }
 function unique(value) { return [...new Set(list(value))]; }
 function isElasticGoalMission(record = {}) { return ELASTIC_GOAL_MISSION_ID.test(text(record.missionId).toLowerCase()); }
+function continuityParkingStatus(record = {}) { return text(record?.continuity?.parkingStatus, 'ACTIVE').toUpperCase(); }
+function blockerCapacityParked(record = {}) {
+  return missionPhase(record) === 'BLOCKED' && BLOCKER_PARKING_STATUSES.has(continuityParkingStatus(record));
+}
+function capacityParked(record = {}) {
+  return APPROVAL_PARKED_PHASES.has(missionPhase(record)) || blockerCapacityParked(record)
+    || projectExternalMergeExecutionObligationV1(record).acceptanceOnly;
+}
 function isSafeSourceScope(value) {
   const normalized = text(value).replace(/\\/g, '/');
   if (!normalized || normalized.startsWith('/') || /^[a-z]:\//i.test(normalized)) return false;
@@ -214,6 +279,9 @@ function projectionBase(validation, additions = {}) {
     mergeAuthority: false,
     exactHeadApprovalRequired: true,
     approvalReadyConsumesConstructionCapacity: false,
+    blockedMissionConsumesConstructionCapacity: false,
+    blockedMissionParkingRequiresReleaseProof: true,
+    blockedMissionParkingReleasesConstructionCapacity: true,
     ...additions,
   });
 }
@@ -222,7 +290,7 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
   const validation = validateCriticalBacklog(backlog);
   if (!validation.valid) return projectionBase(validation, {
     decision: CRITICAL_BACKLOG_DECISION.BLOCKED_BY_INVALID_BACKLOG,
-    selectedItem: null, activeMission: null, completedItemIds: Object.freeze([]), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), remainingItemIds: Object.freeze([]),
+    selectedItem: null, activeMission: null, completedItemIds: Object.freeze([]), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), parkedApprovalMissionIds: Object.freeze([]), parkedBlockedMissionIds: Object.freeze([]), parkedAcceptanceMissionIds: Object.freeze([]), parkedAcceptanceCount: 0, remainingItemIds: Object.freeze([]),
     exactNextAction: 'Repair the source-controlled critical backlog definition.',
     finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_BLOCKED',
   });
@@ -231,21 +299,37 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
   const records = Array.isArray(missionRecords) ? missionRecords : [];
   const recordsById = new Map(records.map((record) => [text(record?.missionId).toLowerCase(), record]));
   const elasticMissionIds = records.filter(isElasticGoalMission).map((record) => text(record.missionId)).sort();
-  const parkedMissionIds = records
-    .filter((record) => !isElasticGoalMission(record) && PARKED_PHASES.has(missionPhase(record)))
+  const parkedApprovalMissionIds = records
+    .filter((record) => !isElasticGoalMission(record) && APPROVAL_PARKED_PHASES.has(missionPhase(record)))
     .map((record) => text(record.missionId))
     .sort();
+  const parkedBlockedMissionIds = records
+    .filter((record) => !isElasticGoalMission(record) && blockerCapacityParked(record))
+    .map((record) => text(record.missionId))
+    .sort();
+  const parkedAcceptanceMissionIds = records
+    .filter((record) => !isElasticGoalMission(record)
+      && projectExternalMergeExecutionObligationV1(record).acceptanceOnly)
+    .map((record) => text(record.missionId)).sort();
+  const parkedMissionIds = [...new Set([
+    ...parkedApprovalMissionIds, ...parkedBlockedMissionIds, ...parkedAcceptanceMissionIds,
+  ])].sort();
   const active = records.filter((record) => !isElasticGoalMission(record)
     && !TERMINAL_PHASES.has(missionPhase(record))
-    && !PARKED_PHASES.has(missionPhase(record)));
+    && !capacityParked(record));
   const completedItemIds = ordered.filter((entry) => missionPhase(recordsById.get(entry.mission.missionId)) === 'COMPLETE').map((entry) => entry.itemId);
-  const parkedItemIds = ordered.filter((entry) => PARKED_PHASES.has(missionPhase(recordsById.get(entry.mission.missionId)))).map((entry) => entry.itemId);
+  const parkedItemIds = ordered.filter((entry) => capacityParked(recordsById.get(entry.mission.missionId))).map((entry) => entry.itemId);
   const remainingItemIds = ordered.filter((entry) => !completedItemIds.includes(entry.itemId) && !parkedItemIds.includes(entry.itemId)).map((entry) => entry.itemId);
   const common = {
     completedItemIds: Object.freeze(completedItemIds),
     parkedItemIds: Object.freeze(parkedItemIds),
     parkedMissionIds: Object.freeze(parkedMissionIds),
-    parkedApprovalCount: parkedMissionIds.length,
+    parkedApprovalMissionIds: Object.freeze(parkedApprovalMissionIds),
+    parkedBlockedMissionIds: Object.freeze(parkedBlockedMissionIds),
+    parkedAcceptanceMissionIds: Object.freeze(parkedAcceptanceMissionIds),
+    parkedApprovalCount: parkedApprovalMissionIds.length,
+    parkedBlockedCount: parkedBlockedMissionIds.length,
+    parkedAcceptanceCount: parkedAcceptanceMissionIds.length,
     remainingItemIds: Object.freeze(remainingItemIds),
     elasticMissionIds: Object.freeze(elasticMissionIds),
   };
@@ -262,15 +346,15 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
   if (active.length === 1) {
     const activeMission = active[0];
     const selectedItem = entryForMission(ordered, text(activeMission.missionId).toLowerCase());
-    const held = HOLD_PHASES.has(missionPhase(activeMission));
+    const blockedPendingParking = missionPhase(activeMission) === 'BLOCKED';
     return projectionBase(validation, {
       ...common,
       decision: selectedItem ? CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION : CRITICAL_BACKLOG_DECISION.WAIT_EXTERNAL_ACTIVE_MISSION,
       selectedItem, activeMission,
-      exactNextAction: held
-        ? `Resolve ${missionPhase(activeMission)} for ${text(activeMission.missionId)} before starting another legacy backlog mission.`
-        : `Continue ${text(activeMission.missionId)} until it reaches a terminal or parked approval state.`,
-      finalVerdict: held ? 'CRITICAL_BACKLOG_CONVEYOR_HELD' : 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
+      exactNextAction: blockedPendingParking
+        ? `Acquire bounded lease/claim-release proof and park ${text(activeMission.missionId)} for repair before refilling this legacy construction slot.`
+        : `Continue ${text(activeMission.missionId)} until it reaches a terminal or capacity-parked state; parked repair work consumes no legacy construction slot.`,
+      finalVerdict: blockedPendingParking ? 'CRITICAL_BACKLOG_CONVEYOR_HELD' : 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE',
     });
   }
 
@@ -280,10 +364,10 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
       ...common,
       decision: CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION,
       selectedItem: entry, activeMission: null,
-      exactNextAction: `Create bounded mission ${entry.mission.missionId}; parked approval packets consume zero construction capacity.`,
+      exactNextAction: `Create bounded mission ${entry.mission.missionId}; approval-waiting and proof-parked repair missions consume zero construction capacity.`,
       finalVerdict: 'CRITICAL_BACKLOG_MISSION_READY',
     });
-    if (missionPhase(record) === 'COMPLETE' || PARKED_PHASES.has(missionPhase(record))) continue;
+    if (missionPhase(record) === 'COMPLETE' || capacityParked(record)) continue;
     return projectionBase(validation, {
       ...common,
       decision: CRITICAL_BACKLOG_DECISION.BLOCKED_BY_TERMINAL_MISSION,
@@ -293,20 +377,29 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
     });
   }
 
-  if (parkedMissionIds.length > 0) return projectionBase(validation, {
-    ...common,
-    decision: CRITICAL_BACKLOG_DECISION.PARKED_APPROVALS_ONLY,
-    selectedItem: null,
-    activeMission: null,
-    remainingItemIds: Object.freeze([]),
-    exactNextAction: 'Preserve the parked approval packets and keep scheduler/elastic capacity refilled; no construction slot is consumed by approval waiting.',
-    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
-  });
+  if (parkedMissionIds.length > 0) {
+    const blockersRemain = parkedBlockedMissionIds.length > 0;
+    return projectionBase(validation, {
+      ...common,
+      decision: blockersRemain ? CRITICAL_BACKLOG_DECISION.PARKED_BLOCKERS_ONLY
+        : parkedAcceptanceMissionIds.length ? CRITICAL_BACKLOG_DECISION.PARKED_ACCEPTANCE_ONLY
+          : CRITICAL_BACKLOG_DECISION.PARKED_APPROVALS_ONLY,
+      selectedItem: null,
+      activeMission: null,
+      remainingItemIds: Object.freeze([]),
+      exactNextAction: blockersRemain
+        ? 'Keep each proof-parked blocked mission repair-owned and periodically re-evaluate its blocker; re-admit the same mission identity only after repair proof clears the blocker and scheduler capacity is free.'
+        : parkedAcceptanceMissionIds.length
+          ? 'Retain the existing goal-acceptance reconciliation and unfinished proof; refill only independently admitted construction work without releasing any source lease or claim.'
+          : 'Preserve the parked approval packets and keep scheduler/elastic capacity refilled; no construction slot is consumed by approval waiting.',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+    });
+  }
 
   return projectionBase(validation, {
     decision: CRITICAL_BACKLOG_DECISION.BACKLOG_COMPLETE,
     selectedItem: null, activeMission: null,
-    completedItemIds: Object.freeze(completedItemIds), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), remainingItemIds: Object.freeze([]),
+    completedItemIds: Object.freeze(completedItemIds), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), parkedApprovalMissionIds: Object.freeze([]), parkedBlockedMissionIds: Object.freeze([]), parkedAcceptanceMissionIds: Object.freeze([]), parkedAcceptanceCount: 0, remainingItemIds: Object.freeze([]),
     elasticMissionIds: Object.freeze(elasticMissionIds),
     exactNextAction: 'No legacy critical backlog mission remains.',
     finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE',

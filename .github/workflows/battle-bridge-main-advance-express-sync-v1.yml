@@ -1,39 +1,92 @@
+# Goal #2315: existing, non-executing GitHub-main observation carrier.
 name: Battle Bridge Main Advance Express Sync V1
-run-name: Signal Battle Bridge main advance for PR ${{ github.event.pull_request.number }}
+run-name: Observe verified Battle Bridge main advance
 
 on:
   pull_request:
-    types: [closed]
+    paths:
+      - '.github/workflows/battle-bridge-main-advance-express-sync-v1.yml'
+      - 'scripts/publish-battle-bridge-main-advance-signal.mjs'
+      - 'shared/agents/battleBridgeMainAdvanceSignalV1.test.mjs'
+      - 'shared/agents/battleBridgeMainAdvanceArtifactV1.mjs'
+      - 'shared/agents/battleBridgeMainAdvanceArtifactV1.test.mjs'
+  push:
+    branches: [main]
+  # GITHUB_TOKEN merges do not emit another push workflow. Completion of the
+  # existing protected merge run supplies a default-branch-associated carrier.
+  workflow_run:
+    workflows: [Protected Operator Merge Queue Boundary]
+    types: [completed]
 
 permissions: {}
 
 concurrency:
-  group: battle-bridge-main-advance-${{ github.event.pull_request.number }}-${{ github.event.pull_request.merge_commit_sha || github.run_id }}
+  group: battle-bridge-main-advance-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
-  publish-main-advance:
-    name: publish-main-advance
-    if: ${{ github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main' }}
+  contract-test:
+    name: main-advance-artifact-contract
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-      issues: write
     steps:
-      - name: Check out exact merged main head
+      - name: Checkout unprivileged exact PR source
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Run merged-source and artifact trust regressions
+        run: >-
+          node --test
+          shared/agents/battleBridgeMainAdvanceSignalV1.test.mjs
+          shared/agents/battleBridgeMainAdvanceArtifactV1.test.mjs
+      - name: Parse protected-main observer
+        run: |
+          node --check shared/agents/battleBridgeMainAdvanceArtifactV1.mjs
+          node --check scripts/publish-battle-bridge-main-advance-signal.mjs
+          git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+  publish-main-advance:
+    name: publish-main-advance
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out exact trusted main event head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 1
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Publish bounded canonical-main signal
+      - name: Record verified main advance without any issue comment
+        id: observation
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          STEPHANOS_MAIN_ADVANCE_PR: ${{ github.event.pull_request.number }}
-          STEPHANOS_MAIN_ADVANCE_HEAD: ${{ github.event.pull_request.merge_commit_sha }}
-          STEPHANOS_MAIN_ADVANCE_MERGED_AT: ${{ github.event.pull_request.merged_at }}
         run: node scripts/publish-battle-bridge-main-advance-signal.mjs
+      - name: Upload bounded nonauthoritative main advance observation
+        if: steps.observation.outputs.observation_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-main-advance-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/stephanos-main-advance-observation.json
+          retention-days: 30
+          if-no-files-found: error

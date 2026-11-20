@@ -26,6 +26,15 @@ test('projects the normal PowerShell script-prefixed allowlisted blocker form', 
   );
 });
 
+test('projects canonical mailbox authority failure from the fixed Recovery Mesh ingress', () => {
+  assert.equal(
+    classifyRecoveryMeshWakeAdapterFailure({
+      stderr: 'request-battle-bridge-recovery.ps1 : RECOVERY_CANONICAL_MAILBOX_AUTHORITY_INVALID',
+    }),
+    'RECOVERY_CANONICAL_MAILBOX_AUTHORITY_INVALID',
+  );
+});
+
 test('projects an allowlisted PowerShell FullyQualifiedErrorId token', () => {
   assert.equal(
     classifyRecoveryMeshWakeAdapterFailure({
@@ -35,7 +44,7 @@ test('projects an allowlisted PowerShell FullyQualifiedErrorId token', () => {
   );
 });
 
-test('does not treat a blocker quoted only in a PowerShell source excerpt as emitted evidence', () => {
+test('source excerpts stay non-authoritative while a safe runtime class may be projected', () => {
   assert.equal(
     classifyRecoveryMeshWakeAdapterFailure({
       stderr: [
@@ -47,7 +56,7 @@ test('does not treat a blocker quoted only in a PowerShell source excerpt as emi
         '    + FullyQualifiedErrorId : UnauthorizedAccess,Microsoft.PowerShell.Commands.TestPathCommand',
       ].join('\n'),
     }),
-    GENERIC,
+    'RECOVERY_MESH_WAKE_PERMISSION_DENIED',
   );
 });
 

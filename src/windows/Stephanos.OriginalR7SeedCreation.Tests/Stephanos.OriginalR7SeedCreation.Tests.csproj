@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/*.cs" Exclude="../Stephanos.OriginalR7CustodyWitness/Program.cs" Link="Witness/%(Filename)%(Extension)" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]" />
+    <ProjectReference Include="../Stephanos.OriginalR7DaclReadback/Stephanos.OriginalR7DaclReadback.csproj" />
+  </ItemGroup>
+</Project>

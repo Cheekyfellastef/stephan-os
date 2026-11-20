@@ -140,17 +140,19 @@ function New-CryptographicInvocationId {
 function Wait-MissionWorkerSelfCleanupObservation {
     param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
 
-    # Observation only: never extend the restart/mutation deadline. This slice
-    # is capped within the existing ten-second child-exit reserve, even if the
-    # caller reaches it late. The launcher owns cancellation and self-cleanup.
-    $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds(4)
-    $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds(4)
+    # Observation only: never extend the restart/mutation deadline. The nominal
+    # window remains the full cleanup budget, but a new task/CIM iteration may
+    # start only while bounded operation slack remains before that deadline.
+    $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds($missionWorkerCleanupTimeoutSeconds)
+    $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds($missionWorkerCleanupTimeoutSeconds)
     if ($observationDeadlineUtc -gt $reserveDeadlineUtc) {
         $observationDeadlineUtc = $reserveDeadlineUtc
     }
-    while ([datetime]::UtcNow -lt $observationDeadlineUtc) {
+    $observationOperationReserveSeconds = 2
+    while ([datetime]::UtcNow.AddSeconds($observationOperationReserveSeconds) -lt $observationDeadlineUtc) {
         try {
             $task = Get-ScheduledTask -TaskName 'Stephanos Mission Orchestrator Worker' -TaskPath '\' -ErrorAction Stop
+            if ([datetime]::UtcNow.AddSeconds(1) -ge $observationDeadlineUtc) { return $false }
             if ($task -and [string]$task.State -in @('Ready', 'Disabled')) {
                 $workers = @()
                 $nodeProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -OperationTimeoutSec 1 -ErrorAction Stop)
@@ -298,7 +300,7 @@ function Read-CanonicalWorkerSourceProof {
         Stop-WithBlocker 'CANONICAL_TRACKED_SOURCE_DIRTY'
     }
 
-    $publicMainHead = Read-PublicMainHead -GitExecutable $GitExecutable
+    $publicMainHead = Read-PublicMainHead -GitExecutable $canonicalGit
     if ($publicMainHead -ne $ExpectedSourceHead) {
         if ($Phase -eq 'POST_START') { Stop-WithBlocker 'CANONICAL_PUBLIC_MAIN_CHANGED_DURING_WORKER_START' }
         Stop-WithBlocker 'EXPECTED_HEAD_NOT_PUBLIC_MAIN'
@@ -599,15 +601,15 @@ function Get-VerifiedWorkerProcessFromHeartbeat {
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
-        $liveProcessStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
-        if ($liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks) { return $null }
         $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
         try {
             if ($processCapability.HasExited -or $processCapability.Id -ne $processId) {
                 throw 'PROCESS_CAPABILITY_IDENTITY_MISMATCH'
             }
             $null = $processCapability.Handle
-            $capabilityProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+            $liveProcessStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+            if ($liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks) { return $null }
+            $capabilityProcessStartedAtUtc = $liveProcessStartedAtUtc
             if ($capabilityProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks) {
                 throw 'PROCESS_CAPABILITY_IDENTITY_MISMATCH'
             }
@@ -767,8 +769,14 @@ function Get-VerifiedFreshWorkerInstance {
             -or $timestamp -lt $boundHeartbeatTimestampUtc) { return $null }
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
-        $processStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
-        if ($processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks) { return $null }
+        $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
+        try {
+            if ($processCapability.HasExited -or $processCapability.Id -ne $processId) { return $null }
+            $null = $processCapability.Handle
+            $processStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+            if ($processStartedAtUtc.Ticks -ne $receiptProcessStartedAtUtc.Ticks) { return $null }
+        }
+        finally { $processCapability.Dispose() }
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
         return [PSCustomObject]@{
             ProcessId = $processId
@@ -810,8 +818,14 @@ function Get-VerifiedInvocationProcessFromLaunchReceipt {
         if ($processId -le 0 -or $processStartedAtUtc -le $StartedAfterUtc) { return $null }
         $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -OperationTimeoutSec 1 -ErrorAction SilentlyContinue
         if (-not $process) { return $null }
-        $observedStartedAtUtc = ([datetime]$process.CreationDate).ToUniversalTime()
-        if ($observedStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks) { return $null }
+        $processCapability = [System.Diagnostics.Process]::GetProcessById($processId)
+        try {
+            if ($processCapability.HasExited -or $processCapability.Id -ne $processId) { return $null }
+            $null = $processCapability.Handle
+            $observedStartedAtUtc = $processCapability.StartTime.ToUniversalTime()
+            if ($observedStartedAtUtc.Ticks -ne $processStartedAtUtc.Ticks) { return $null }
+        }
+        finally { $processCapability.Dispose() }
         if (-not (Test-ExactCanonicalWorkerProcess -Process $process -ExpectedRepoRoot $ExpectedRepoRoot)) { return $null }
         return [PSCustomObject]@{
             ProcessId = $processId

@@ -126,3 +126,64 @@ h1 {
   gap: 12px;
 
 }
+
+/* Landing layout uses a responsive tile order, shared with session UI memory. */
+.launcher-arrange-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0 4px;
+  color: #c2d0df;
+  font-size: 14px;
+}
+.launcher-arrange-toolbar button,
+.launcher-tile-move-controls button {
+  min-height: 44px;
+  min-width: 44px;
+  border: 1px solid #4b6077;
+  border-radius: 8px;
+  background: #182433;
+  color: #e5eef4;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.launcher-arrange-toolbar button { padding: 8px 14px; }
+.launcher-arrange-toolbar button:hover,
+.launcher-tile-move-controls button:hover:not(:disabled) { background: #2a3c50; }
+.launcher-arrange-toolbar button:disabled,
+.launcher-tile-move-controls button:disabled { opacity: .45; cursor: default; }
+.launcher-order-status { flex: 1 1 260px; line-height: 1.5; }
+.launcher-order-status[data-save-state="saved"] { color: #9de0c7; }
+.launcher-order-status[data-save-state="unsaved"] { color: #f1c183; }
+#project-registry .app-tile:focus-visible,
+.launcher-arrange-toolbar button:focus-visible,
+.launcher-tile-move-controls button:focus-visible {
+  outline: 3px solid #9de0c7;
+  outline-offset: 4px;
+}
+#project-registry[data-arranging="true"] .app-tile { cursor: default; }
+#project-registry[data-arranging="true"] .app-tile:hover { transform: none; }
+.launcher-tile-move-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #536071;
+}
+.launcher-tile-move-controls button { padding: 7px 12px; font-size: 20px; }
+.launcher-tile-move-controls .launcher-tile-drag-handle { cursor: grab; letter-spacing: 2px; }
+.launcher-tile-move-controls .launcher-tile-drag-handle:active { cursor: grabbing; }
+#project-registry .launcher-tile-dragging { opacity: .55; }
+#project-registry .launcher-tile-drop-target { outline: 3px dashed #9de0c7; outline-offset: 3px; }
+@media (max-width: 600px) {
+  .launcher-arrange-toolbar { gap: 8px; }
+  .launcher-order-status { flex-basis: 100%; }
+  .launcher-tile-move-controls { gap: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #project-registry .app-tile { transition: none; }
+}

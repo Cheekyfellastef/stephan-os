@@ -244,3 +244,15 @@ The Continuous VR Discovery goal should periodically compare upstream `master` a
 Halo 4 is now the next announced title. Its arrival should be treated as a particularly valuable test of whether the shared runtime continues reducing marginal conversion cost as engine and gameplay differences increase.
 
 Useful next source-level analysis should be performed by a bounded worker on an isolated clone pinned to the recorded commit. The worker should produce a file map, dependency graph, technique map, per-title residue comparison and evidence lineage without executing the mod.
+
+## 2026-10-03 continuation sweep
+
+The original accepted Alpha 0.3.1 snapshot remains the trusted headset-proven pointer. The wider public source family is now tracked separately:
+
+- `dafurman/halo-mcc-vr` @ `202f026d6b5789972bc0916dda5388b4a8bf38ea` — MIT, accessible source lineage;
+- `moistman42069/MCCVR-Halo-Build` @ `b243af2256a1a3b424cbccd940f8e8a674cef608` — MIT experimental continuation;
+- `RyanCraighead/Halo-MCC-VR-xr` @ `e235131f5a5fcd120e3c401b3e66fd018fdc2a96` — MIT experimental fork.
+
+The continuation estate adds useful research on wider title coverage, installer/updater rollback, manual reload and holsters, room-scale behaviour, per-title stereo defects, transport-specific double-image fixes, cutscene theatre and explicit accepted-vs-experimental build identity.
+
+These forks are not allowed to overwrite the accepted Alpha 0.3.1 evidence pointer merely because they are newer. The Flywheel should mine their deltas and rejected candidates while retaining headset proof as the promotion gate.

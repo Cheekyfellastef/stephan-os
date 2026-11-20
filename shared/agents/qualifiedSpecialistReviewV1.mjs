@@ -3,6 +3,11 @@ import {
   createProviderNeutralReviewReceipt,
   validateProviderNeutralReviewReceipt,
 } from './providerNeutralReviewV1.mjs';
+import {
+  SOVEREIGN_SPECIALIST_ARTIFACT_SCHEMA_V1,
+  validateSovereignQualifiedSpecialistArtifactV1,
+  sovereignQualifiedSpecialistCommentCandidatesV1,
+} from './sovereignQualifiedSpecialistReviewV1.mjs';
 
 export const QUALIFIED_SPECIALIST_REVIEW_MARKER = '<!-- stephanos-qualified-specialist-review -->';
 export const QUALIFIED_SPECIALIST_REVIEWER_LOGIN = 'chatgpt-codex-connector';
@@ -152,6 +157,16 @@ function commentBody(comment = {}) {
   return text(comment?.body);
 }
 
+// Preserve the full raw authenticated GitHub comment in digest-bound receipts.
+// Only normalize this one canonical, fixed Codex bot preamble for matching.
+// Reviewer App identity, immutable timestamps, exact HEAD and scoped operator
+// request are still independently mandatory before any specialist admission.
+function canonicalCodexReviewText(body = '') {
+  const original = text(body);
+  const receiptPreamble = /^<!-- codex-review-receipt:v1 -->(?:\r?\n){2}(?=Codex Review:)/;
+  return original.replace(receiptPreamble, '');
+}
+
 function commentActor(comment = {}) {
   return comment?.user && typeof comment.user === 'object'
     ? comment.user
@@ -215,7 +230,7 @@ export function qualifiedSpecialistCommentHeadRef(comment = {}) {
 }
 
 function responseMatches(comment = {}, options = {}) {
-  const body = commentBody(comment);
+  const body = canonicalCodexReviewText(commentBody(comment));
   const createdAtMs = commentCreatedAtMs(comment);
   const updatedAtMs = commentUpdatedAtMs(comment);
   const reviewedCommitRef = qualifiedSpecialistCommentHeadRef(comment);
@@ -350,6 +365,11 @@ function buildQualifiedSpecialistReviewArtifact(requestComment, responseComment,
 }
 
 export function validateQualifiedSpecialistReviewArtifact(artifact = {}, options = {}) {
+  // Revalidate the same signed native proof whenever the existing immutable
+  // independent-review artifact is consumed. No alternate merge consumer.
+  if (artifact?.schemaVersion === SOVEREIGN_SPECIALIST_ARTIFACT_SCHEMA_V1) {
+    return validateSovereignQualifiedSpecialistArtifactV1(artifact, options);
+  }
   const repository = text(options.repository);
   const prNumber = positiveInteger(options.prNumber);
   const branch = text(options.branch);
@@ -451,7 +471,7 @@ function providerNeutralArtifactCandidates(comments = [], options = {}) {
       commentComesAfter(comment, request)
       && (!nextInvocation || commentComesBefore(comment, nextInvocation))
       && isTrustedProviderResponse(comment)
-      && /^Codex Review:/i.test(commentBody(comment))
+      && /^Codex Review:/i.test(canonicalCodexReviewText(commentBody(comment)))
     ));
     if (providerResults.length !== 1 || !responseMatches(providerResults[0], options)) continue;
     const artifact = buildQualifiedSpecialistReviewArtifact(request, providerResults[0], options);
@@ -606,7 +626,14 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
     });
   }
 
-  const legacyCandidates = (Array.isArray(input.reviews) ? input.reviews : [])
+  // Provider-specific Codex review evidence is optional capacity, never an
+  // implicit critical-path fallback.  Callers must positively admit that
+  // route for this exact adjudication.  In particular, automation-authored
+  // GitHub comments cannot make the route eligible merely by mentioning
+  // @codex or by arriving from an account with repository authority.
+  const codexRouteAdmitted = input.codexRequired === true;
+
+  const legacyCandidates = (codexRouteAdmitted && Array.isArray(input.reviews) ? input.reviews : [])
     .map((review) => validateSpecialistReviewCandidate(review, {
       repository: input.repository,
       prNumber: input.prNumber,
@@ -617,7 +644,7 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
     }))
     .filter((candidate) => candidate.valid);
   const artifactCandidates = providerNeutralArtifactCandidates(
-    Array.isArray(input.comments) ? input.comments : [],
+    codexRouteAdmitted && Array.isArray(input.comments) ? input.comments : [],
     {
       repository: input.repository,
       prNumber: input.prNumber,
@@ -627,7 +654,13 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
       paths,
     },
   );
-  const candidates = [...legacyCandidates, ...artifactCandidates];
+  const sovereign = sovereignQualifiedSpecialistCommentCandidatesV1(
+    Array.isArray(input.comments) ? input.comments : [],
+    { repository: input.repository, prNumber: input.prNumber, branch: input.branch,
+      sourceHead: input.sourceHead, baseSha: input.baseSha, paths,
+      sovereignSourceBinding: input.sovereignSourceBinding },
+  );
+  const candidates = [...legacyCandidates, ...artifactCandidates, ...sovereign.candidates];
 
   if (candidates.length !== 1) {
     return Object.freeze({
@@ -639,8 +672,11 @@ export function adjudicateQualifiedSpecialistReview(input = {}) {
       reviewId: 0,
       blockers: Object.freeze([
         candidates.length === 0
-          ? 'qualified-specialist-review-missing'
+          ? (codexRouteAdmitted
+            ? 'qualified-specialist-review-missing'
+            : 'qualified-specialist-review-provider-route-not-admitted')
           : 'qualified-specialist-review-ambiguous',
+        ...(candidates.length === 0 && sovereign.observed ? sovereign.blockers : []),
       ]),
     });
   }

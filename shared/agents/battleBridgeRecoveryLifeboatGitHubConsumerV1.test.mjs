@@ -8,10 +8,15 @@ const installerUrl = new URL('../../scripts/windows/install-battle-bridge-recove
 
 async function source(url) { return readFile(url, 'utf8'); }
 
-test('installed consumer has no caller arguments and fixes the public GitHub recovery endpoint', async () => {
+test('installed consumer has no caller arguments and reads only the bounded tail of the fixed GitHub recovery issue', async () => {
   const text = await source(consumerUrl);
   assert.match(text, /\[CmdletBinding\(\)\]\s*\nparam\(\)/);
-  assert.match(text, /https:\/\/api\.github\.com\/repos\/Cheekyfellastef\/stephan-os\/issues\/1814\/comments\?per_page=100&page=1/);
+  assert.match(text, /\$issueApiUrl = 'https:\/\/api\.github\.com\/repos\/Cheekyfellastef\/stephan-os\/issues\/1814'/);
+  assert.match(text, /\$commentsApiBase = 'https:\/\/api\.github\.com\/repos\/Cheekyfellastef\/stephan-os\/issues\/1814\/comments\?per_page=100&page='/);
+  assert.match(text, /\$latestPage = \[Math\]::Max\(1, \[int\]\[Math\]::Ceiling\(\$commentCount \/ 100\.0\)\)/);
+  assert.match(text, /\$pages = @\(\[Math\]::Max\(1, \$latestPage - 1\), \$latestPage\) \| Select-Object -Unique/);
+  assert.match(text, /if \(\$comments\.Count -gt 200\)/);
+  assert.doesNotMatch(text, /comments\?per_page=100&page=1['"]/);
   assert.match(text, /application\/vnd\.github\+json/);
   assert.match(text, /GITHUB_RECOVERY_RESPONSE_NOT_JSON/);
   assert.match(text, /GITHUB_RECOVERY_JSON_INVALID/);
@@ -22,12 +27,13 @@ test('installed consumer has no caller arguments and fixes the public GitHub rec
   assert.doesNotMatch(text, /Restart-Computer/i);
 });
 
-test('consumer admits only the three currently qualified fixed R1 recovery actions', async () => {
+test('consumer admits only the fixed probe, wake and last-resort remote-access actions', async () => {
   const text = await source(consumerUrl);
   const allowed = text.match(/\$allowedActions = @\(([^\n]+)\)/)?.[1] ?? '';
   assert.match(allowed, /'PROBE_BATTLE_BRIDGE'/);
   assert.match(allowed, /'WAKE_CANONICAL_MAILBOX'/);
   assert.match(allowed, /'WAKE_CANONICAL_RECOVERY_MESH'/);
+  assert.match(allowed, /'RECOVER_REMOTE_ACCESS_STACK'/);
   assert.doesNotMatch(allowed, /RESTART_CANONICAL_BACKEND/);
   assert.doesNotMatch(allowed, /FULL_BATTLE_BRIDGE_RECOVERY/);
   assert.match(text, /-File \$actionPath -Action \$request\.action/);
@@ -72,6 +78,10 @@ test('bank manifest binds the GitHub consumer and candidate self-test cannot pol
   assert.match(runner, /claim=\$claimConsumerHash/);
   assert.match(runner, /\[switch\]\$SelfTestOnly/);
   assert.match(runner, /if \(-not \$SelfTestOnly -and \$ok\)/);
+  assert.match(runner, /-Action RECOVER_REMOTE_ACCESS_STACK/);
+  assert.match(runner, /remoteAccessAutoHealVerdict/);
+  assert.match(runner, /remoteChatTransportReauthenticationClaimed = \$false/);
+  assert.match(runner, /physicalPowerRecoveryClaimed = \$false/);
   assert.match(installer, /sourceClaimConsumer/);
   assert.match(installer, /claim=\$claimHash/);
   assert.match(installer, /-File \$candidateRunner -SelfTestOnly/);

@@ -31,6 +31,7 @@ const CONTROLLED_NON_TERMINAL_DISPOSITIONS = new Set([
   PR_DISPOSITIONS.ACTIVE_CANONICAL,
   PR_DISPOSITIONS.WAITING_ACCEPTANCE,
   PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL,
+  PR_DISPOSITIONS.OPERATOR_CONTAINED,
 ]);
 
 function fullSha(value) {
@@ -52,7 +53,12 @@ export function buildPrEstateLedger(input = {}) {
   const { byId: explicitFamiliesById, byPr: explicitFamilyByPr } = buildFamilyMaps(input.families || []);
   const implicitFamilyByPr = deriveImplicitFamilies(normalizedPrs, explicitFamilyByPr);
   const allFamiliesById = new Map(explicitFamiliesById);
-  for (const family of implicitFamilyByPr.values()) allFamiliesById.set(family.id, family);
+  for (const family of new Set(implicitFamilyByPr.values())) {
+    if (allFamiliesById.has(family.id)) {
+      throw new Error(`duplicate PR estate family id: ${family.id}`);
+    }
+    allFamiliesById.set(family.id, family);
+  }
 
   const entries = normalizedPrs.map((pr) => {
     const family = Number.isInteger(pr.number)
@@ -127,6 +133,7 @@ export function buildPrEstateLedger(input = {}) {
     [PR_DISPOSITIONS.WAITING_ACCEPTANCE]: 3,
     [PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL]: 4,
     [PR_DISPOSITIONS.ACTIVE_CANONICAL]: 5,
+    [PR_DISPOSITIONS.OPERATOR_CONTAINED]: 6,
   };
   const recoveryQueue = entries
     .filter((entry) => !TERMINAL_DISPOSITIONS.has(entry.disposition))

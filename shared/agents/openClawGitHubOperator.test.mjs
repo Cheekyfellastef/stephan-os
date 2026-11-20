@@ -19,6 +19,7 @@ function successfulRequiredChecks() {
     name: `required-${index}`,
     workflow,
     state: 'SUCCESS',
+    ...(workflow === 'Build Stephanos UI' ? { event: 'pull_request' } : {}),
   }));
 }
 
@@ -40,6 +41,27 @@ test('blocks direct main mutation and non-openclaw branches', () => {
     assert.equal(packet.finalVerdict, 'BLOCKED');
     assert.deepEqual(packet.command, []);
   }
+});
+
+test('repository-wide scope permits safe source files but still blocks forbidden paths', () => {
+  const safe = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['**'],
+    changedFiles: ['shared/agents/example.mjs', 'shared/runtime/runtimeAdjudicator.mjs', 'apps/music-tile/data/trackLibrary.js'],
+    commitMessage: 'Safe repository-wide change',
+  });
+  assert.equal(safe.finalVerdict, 'READY_TO_EXECUTE');
+
+  const forbidden = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['**'],
+    changedFiles: ['runtime/state.json'],
+    commitMessage: 'Unsafe repository-wide change',
+  });
+  assert.equal(forbidden.finalVerdict, 'BLOCKED');
+  assert.match(forbidden.blockers.join(' '), /forbidden paths/i);
 });
 
 test('commit stages only exact approved files', () => {
@@ -145,7 +167,34 @@ test('merge requires exact PR head approval and only emits squash merge', () => 
 
 test('Windows executor preserves canonical workflow identity through final merge preflight', () => {
   const source = readFileSync(new URL('../../scripts/openclaw-github-operator.mjs', import.meta.url), 'utf8');
-  assert.match(source, /'--json', 'name,state,workflow'/);
-  assert.match(source, /checks: checkPayload,/);
+  assert.match(source, /'--json', 'name,state,workflow,event'/);
+  assert.match(source, /parseOpenClawGitHubMergeObservation/);
+  assert.match(source, /checks: mergeObservation\.checkPayload,/);
+  assert.doesNotMatch(source, /checks\.status !== 0/);
   assert.doesNotMatch(source, /checkPayload\.map\(/);
+});
+
+
+test('commit treats scheduler scope identities as case-insensitive while preserving exact file boundaries', () => {
+  const accepted = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['shared/agents/battlebridgesupervisor.mjs'],
+    changedFiles: ['shared/agents/battleBridgeSupervisor.mjs'],
+    actualChangedFiles: ['shared/agents/battleBridgeSupervisor.mjs'],
+    commitMessage: 'Accept exact Git casing',
+  });
+  assert.equal(accepted.finalVerdict, 'READY_TO_EXECUTE');
+  assert.deepEqual(accepted.command[0].args.slice(3), ['--', 'shared/agents/battleBridgeSupervisor.mjs']);
+
+  const blocked = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['shared/agents/battlebridgesupervisor.mjs'],
+    changedFiles: ['shared/agents/battleBridgeSupervisor.test.mjs'],
+    actualChangedFiles: ['shared/agents/battleBridgeSupervisor.test.mjs'],
+    commitMessage: 'Do not widen scope',
+  });
+  assert.equal(blocked.finalVerdict, 'BLOCKED');
+  assert.match(blocked.blockers.join(' '), /exceed the approved scope/i);
 });

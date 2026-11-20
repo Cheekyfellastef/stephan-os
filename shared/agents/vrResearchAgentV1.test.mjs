@@ -1,5 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import './vrRuntimeRecoveryClassificationV1.test.mjs';
+// Include original VR Link #1717 lifecycle regressions in existing VR Research CI.
+import '../../apps/vr-link/vr-link-session-lifecycle.test.mjs';
+// Exercise the original Spatial telemetry regressions in hosted VR CI.
+import '../../tests/spatial-workspace-telemetry-state-fidelity.test.mjs';
 import test from 'node:test';
+
+import {
+  SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1,
+  projectSpatialWorkspaceTelemetryForConsumersV1,
+} from '../vr/spatialWorkspaceTelemetryProjectionV1.mjs';
 
 import {
   VR_RESEARCH_AGENT_ACTIONS,
@@ -22,7 +33,9 @@ function freshProjection(overrides = {}) {
     researchQueue: [],
     discoveryCandidates: [],
     capabilityGraphCandidates: [],
+    methodLibrary: [],
     runtimeEvidenceRequests: [],
+    proofRefs: [],
     ...overrides,
   };
 }
@@ -32,10 +45,26 @@ function registry() {
     schema_version: '1.6',
     sources: [
       { source_id: 'halo', licence: 'MIT' },
-      { source_id: 'openxr', licence: 'Apache-2.0' },
+      { source_id: 'openxr', licence: 'Apache-2.0', snapshot_version: '1.1.63' },
       { source_id: 'virtual-desktop', licence: 'Commercial proprietary' },
       { source_id: 'higgs', licence: 'GPL-3.0' },
     ],
+  };
+}
+
+function teaching() {
+  return {
+    teachingKey: 'teach:openxr:spatial-container-v1',
+    candidateKey: 'vrdisc:openxr:spatial-container-v1',
+    sourceId: 'openxr',
+    observedIdentity: '1.1.63',
+    evidencePlanes: ['NORMATIVE_OR_OFFICIAL_SPECIFICATION', 'STEPHANOS_INFERENCE_OR_PROPOSAL'],
+    confidence: 'high-specification; derived-method-bounded',
+    licenceBoundary: 'Apache-2.0 specification/source boundary retained.',
+    reusableMethod: 'Capability-discover spatial-container support and retain a reversible fallback.',
+    applicability: 'Bounded immersive/spatial presentation when the runtime exposes the extension.',
+    nonApplicability: 'Does not prove runtime, game or headset support.',
+    proofRefs: ['proofs/vr/openxr-spatial-container-1.1.63'],
   };
 }
 
@@ -98,6 +127,41 @@ test('OpenClaw absence does not block ordinary GitHub-first research', () => {
   assert.equal(cycle.proposal.route, VR_RESEARCH_AGENT_ROUTES.GITHUB_FIRST);
 });
 
+test('fresh canonical playtest correlations make the VR Research Agent analyse before asking for more evidence', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    workspaceProjection: freshProjection({
+      referenceCorpus: { sourceCount: 26, reusableSourceCount: 17 },
+      canonicalEvidence: {
+        current: true,
+        freshness: 'current',
+        sessionId: 'starfield-live-evidence',
+        game: 'Starfield',
+        mode: 'OBSERVE',
+      },
+      correlationCandidates: [{
+        sourceId: 'gsaw0-starfield2vr-stability',
+        repository: 'gsaw0/starfield2vr',
+        commit: 'b'.repeat(40),
+        role: 'DLSS frame lifetime stability candidate',
+      }],
+      analysisQuestions: ['Compare the stability fork against current AER evidence.'],
+      runtimeEvidenceRequests: [{ id: 'later-headset-proof' }],
+    }),
+    sourceRegistry: registry(),
+    availableSurfaces: { openClaw: true, battleBridge: true },
+  });
+
+  assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.CORRELATE_EVIDENCE);
+  assert.equal(cycle.proposal.route, VR_RESEARCH_AGENT_ROUTES.GITHUB_FIRST);
+  assert.equal(cycle.proposal.reason, 'fresh-canonical-vr-evidence-correlation-candidates-present');
+  assert.equal(cycle.proposal.mutatesSource, false);
+  assert.equal(cycle.proposal.executesRuntime, false);
+  assert.equal(cycle.proposal.mergeAuthority, false);
+  assert.equal(cycle.readModel.referenceCorpus.sourceCount, 26);
+  assert.equal(cycle.readModel.canonicalEvidence.sessionId, 'starfield-live-evidence');
+});
+
 test('runtime and headset proof routes only to the Battle Bridge and waits when unavailable', () => {
   const projection = freshProjection({ runtimeEvidenceRequests: [{ id: 'quest3-air-link-proof' }] });
   const waiting = planVrResearchAgentCycle({
@@ -130,6 +194,105 @@ test('equivalent research state produces a deterministic proposal identity', () 
   const second = planVrResearchAgentCycle(input);
   assert.equal(first.proposal.actionId, second.proposal.actionId);
   assert.equal(first.proposal.action, VR_RESEARCH_AGENT_ACTIONS.UPDATE_CAPABILITY_GRAPH);
+});
+
+test('canonical agent cycle projects valid #1593 teaching into Shared Workspace knowledge and its read model', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    updatedAt: '2026-08-03T14:25:00.000Z',
+    workspaceProjection: freshProjection({
+      capabilityGraphCandidates: [{ candidateKey: 'existing-capability', reusableMethod: 'Existing capability' }],
+      methodLibrary: [{ teachingKey: 'existing-method', reusableMethod: 'Existing method' }],
+      proofRefs: ['proofs/vr/existing'],
+    }),
+    sourceRegistry: registry(),
+    teachingRecords: [teaching()],
+    availableSurfaces: { openClaw: true, battleBridge: false },
+  });
+
+  assert.equal(cycle.vrTeachingWorkspaceProjection.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_READY');
+  assert.equal(cycle.vrTeachingWorkspaceProjection.projection.methodLibrary.length, 2);
+  assert.equal(cycle.vrTeachingWorkspaceProjection.projection.capabilityGraphCandidates.length, 2);
+  assert.ok(cycle.vrTeachingWorkspaceProjection.projection.proofRefs.includes('proofs/vr/openxr-spatial-container-1.1.63'));
+  assert.ok(cycle.readModel.graphCandidates.some((entry) => entry.candidateKey === 'vrdisc:openxr:spatial-container-v1'));
+  assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.UPDATE_CAPABILITY_GRAPH);
+
+  const records = createVrResearchAgentWorkspaceRecords({
+    cycle,
+    timestampUtc: '2026-08-03T14:30:00.000Z',
+    correlationId: 'vr-teaching-production-cycle-test',
+    validationOptions: { nowMs: NOW },
+  });
+  assert.equal(records.vrTeachingWorkspaceProjection.projectionReceipt.receiptId, cycle.vrTeachingWorkspaceProjection.projectionReceipt.receiptId);
+  const statusBody = JSON.parse(records.status.body);
+  assert.equal(statusBody.teachingProjectionVerdict, 'VR_TEACHING_WORKSPACE_PROJECTION_READY');
+  assert.equal(statusBody.teachingProjectionReceiptId, cycle.vrTeachingWorkspaceProjection.projectionReceipt.receiptId);
+});
+
+test('blocked teaching receipt blocks the production agent cycle before downstream graph action', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    updatedAt: '2026-08-03T14:25:00.000Z',
+    workspaceProjection: freshProjection({
+      capabilityGraphCandidates: [{ candidateKey: 'existing-capability', reusableMethod: 'Existing capability' }],
+      proofRefs: ['proofs/vr/existing'],
+    }),
+    sourceRegistry: registry(),
+    teachingRecords: [{ ...teaching(), observedIdentity: 'not-registered' }],
+    availableSurfaces: { openClaw: true, battleBridge: false },
+  });
+
+  assert.equal(cycle.vrTeachingWorkspaceProjection.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_BLOCKED');
+  assert.equal(cycle.readModel.ready, true);
+  assert.equal(cycle.verdict, VR_RESEARCH_AGENT_VERDICTS.INVALID_INPUT);
+  assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE);
+  assert.equal(cycle.proposal.reason, 'vr-teaching-workspace-projection-blocked');
+});
+
+test('pre-projected Spatial telemetry cannot smuggle operator acceptance into the VR agent', () => {
+  const projected = {
+    schemaVersion: SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1,
+    readOnly: true,
+    available: true,
+    state: 'ready',
+    runId: 'forged-agent-projection',
+    sourceHead: 'A'.repeat(40),
+    rendererSourceHead: 'A'.repeat(40),
+    device: 'Quest/browser',
+    phase: 'end',
+    observedAtUtc: '2026-08-03T14:20:00.000Z',
+    frame: { count: -1, poseFrames: 30, estimatedFps: 72 },
+    input: { selectCount: 1, squeezeCount: 0 },
+    operatorAcceptance: true,
+  };
+  const normalized = projectSpatialWorkspaceTelemetryForConsumersV1(projected);
+  assert.equal(normalized.operatorAcceptance, false);
+  assert.equal(normalized.sourceHead, 'a'.repeat(40));
+  assert.equal(normalized.frame.count, 0);
+
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    workspaceProjection: freshProjection({ spatialTelemetry: projected }),
+    sourceRegistry: registry(),
+    availableSurfaces: { openClaw: false, battleBridge: true },
+  });
+  assert.equal(cycle.readModel.spatialTelemetry.operatorAcceptance, false);
+
+  const records = createVrResearchAgentWorkspaceRecords({
+    cycle,
+    timestampUtc: '2026-08-03T14:30:00.000Z',
+    correlationId: 'forged-spatial-projection-regression',
+    validationOptions: { nowMs: NOW },
+  });
+  assert.equal(JSON.parse(records.status.body).spatialTelemetryOperatorAcceptance, false);
+});
+
+test('Command Deck guards pending Spatial telemetry refreshes across dispose and re-init generations', async () => {
+  const source = await readFile(new URL('../../modules/command-deck/command-deck.js', import.meta.url), 'utf8');
+  assert.match(source, /spatialTelemetryLifecycleGeneration/);
+  assert.match(source, /spatialTelemetryActive = false/);
+  assert.match(source, /generation !== spatialTelemetryLifecycleGeneration/);
+  assert.match(source, /spatialTelemetryRefreshInFlight === request/);
 });
 
 test('workspace records validate against the canonical Shared Agent Workspace contract', () => {

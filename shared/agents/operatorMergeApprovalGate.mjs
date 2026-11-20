@@ -62,6 +62,7 @@ const APPROVAL_BOUNDARY_PATHS = Object.freeze([
 
 const UNSUPPORTED_HIGH_RISK_PATH_PATTERNS = Object.freeze([
   /(^|\/)scripts\/windows\//i,
+  /(^|\/)src\/windows\//i,
   /(^|\/)openclaw/i,
   /credential|secret|token|billing|payment/i,
   /(^|\/)deployment/i,
@@ -277,7 +278,7 @@ const PROTECTED_WORKFLOW_FINAL_POLICIES = Object.freeze({
     permissionSignatures: Object.freeze([
       'actions:read,checks:read,contents:read,pull-requests:read',
       'actions:read,checks:read,contents:read,pull-requests:read',
-      'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
+      'actions:read,checks:read,contents:read,deployments:read,issues:read,pull-requests:read',
       'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
       'actions:read,checks:read,contents:write,deployments:read,issues:write,pull-requests:write',
     ]),

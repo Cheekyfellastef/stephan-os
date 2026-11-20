@@ -87,7 +87,7 @@ function receiptEvidence(route, capability, artifact, nowMs) {
   return Object.freeze({ state: valid ? receipt.state : 'invalid', receipt, operations });
 }
 
-function routeCompatible(route, artifact, evidence) {
+function routeCompatible(route, artifact, evidence, existingBranch = false) {
   if (evidence.state !== 'ready') return false;
   const operations = evidence.operations;
   if (route === SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT) {
@@ -95,7 +95,11 @@ function routeCompatible(route, artifact, evidence) {
   }
   if (route === SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP) {
     const coreReady = ['CREATE_BLOBS', 'CREATE_TREE', 'CREATE_COMMIT'].every((item) => operations.has(item));
-    return coreReady && (operations.has('UPDATE_BRANCH_REF') || operations.has('CREATE_BRANCH_REF'));
+    // CREATE_BRANCH_REF cannot advance an existing canonical owner branch.
+    // An escrow recovery needs genuine fast-forward ref-update capability.
+    return coreReady && (existingBranch
+      ? operations.has('UPDATE_BRANCH_REF')
+      : (operations.has('UPDATE_BRANCH_REF') || operations.has('CREATE_BRANCH_REF')));
   }
   if (route === SOURCE_PUBLICATION_ROUTE.FORGE_SIDECAR) {
     return ['M2_READY', 'M3_RUNNER_READY', 'PUBLISH_SOURCE_BRANCH'].every((item) => operations.has(item));
@@ -145,7 +149,8 @@ export function buildSourcePublicationContinuityV1(input = {}) {
   const capabilities = input.capabilities || {};
   const failedRoutes = new Set(list(input.failedRoutes).map(text));
   const evidence = Object.fromEntries(ROUTE_PRIORITY.map((route) => [route, receiptEvidence(route, capabilities[route], artifact, nowMs)]));
-  const selectedRoute = ROUTE_PRIORITY.find((route) => !failedRoutes.has(route) && routeCompatible(route, artifact, evidence[route]));
+  const selectedRoute = ROUTE_PRIORITY.find((route) => !failedRoutes.has(route)
+    && routeCompatible(route, artifact, evidence[route], input.existingBranch === true));
   if (selectedRoute) {
     return Object.freeze({ ...base, selectedRoute, routeReady: true, capabilityReceipt: evidence[selectedRoute].receipt, evaluatedRoutes: ROUTE_PRIORITY, failedRoutes: Object.freeze([...failedRoutes]), blocker: '', exactNextAction: `Publish the preserved exact artifact through ${selectedRoute}; fast-forward the existing canonical branch only and retain all review and merge protections.`, finalVerdict: 'SOURCE_PUBLICATION_ROUTE_READY' });
   }
