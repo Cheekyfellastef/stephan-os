@@ -755,7 +755,7 @@ test('specialist entry refuses a hostile or revoked root Proxy before child disp
 });
 
 test('specialist entry refuses accessor-backed or inherited root review evidence without executing it', () => {
-  for (const field of ['analysis', 'repository', 'sources', 'sourceHead', 'prNumber']) {
+  for (const field of ['analysis', 'repository', 'sources', 'sourceHead', 'prNumber', 'baseSha', 'lineageEvidence']) {
     let getterCalls = 0;
     const candidate = input();
     Object.defineProperty(candidate, field, {
@@ -881,4 +881,36 @@ test('specialist preflight rejects source or array-index accessors before child 
   }
   assert.notEqual(analyzeWindowsAuthoritySpecialistReview(input()).finalVerdict, verdict,
     'ordinary literal evidence must continue through its unchanged specialist route');
+});
+
+test('specialist preflight rejects executable analysis P0 identity getters before child dispatch', () => {
+  const verdict = 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE';
+  for (const field of ['findings', 'counts', 'verdict', 'clean']) {
+    let getterCalls = 0;
+    const claim = input();
+    Object.defineProperty(claim.analysis, field, {
+      enumerable: true,
+      configurable: true,
+      get() { getterCalls++; throw new Error('executable analysis ' + field); },
+    });
+    const result = analyzeWindowsAuthoritySpecialistReview(claim);
+    assert.equal(getterCalls, 0, field + ': child must not evaluate analysis accessor');
+    assert.equal(result.eligible, false, field);
+    assert.equal(result.clean, false, field);
+    assert.deepEqual(result.proofRefs, [], field);
+    assert.equal(result.finalVerdict, verdict, field);
+    for (const authority of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(result[authority], false, field + ': ' + authority);
+    }
+  }
+  let extensionCalls = 0;
+  const extension = input();
+  Object.defineProperty(extension.analysis, 'unusedExtensionField', {
+    enumerable: true,
+    get() { extensionCalls++; throw new Error('unread extension getter'); },
+  });
+  const outcome = analyzeWindowsAuthoritySpecialistReview(extension);
+  assert.equal(extensionCalls, 0, 'unread extension getter remains inert');
+  assert.notEqual(outcome.finalVerdict, verdict, 'benign extension does not force an unrelated rejection');
 });

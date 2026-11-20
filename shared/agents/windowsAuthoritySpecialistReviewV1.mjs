@@ -164,13 +164,15 @@ function unsafeNestedReviewEvidence(value, seen = new Set(), depth = 0, sourceEv
   if (keys.length > 512) return true;
   for (const key of keys) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    // Array index accessors can run during child iteration; source-envelope
-    // accessors can run before each child's strict byte-contract check.
+    // Array index accessors can run during child iteration, and P0
+    // analysis identity accessors can run in older sibling specialists.
+    // Source-envelope accessors can run before strict byte checks.
     // Harmless analysis extension accessors remain inert and compatible.
     if (!descriptor) return true;
     if (!Object.hasOwn(descriptor, 'value')) {
       if (sourceEvidence || (Array.isArray(value) && typeof key === 'string'
-        && /^(0|[1-9][0-9]*)$/.test(key))) return true;
+        && /^(0|[1-9][0-9]*)$/.test(key))
+        || (typeof key === 'string' && ['findings', 'counts', 'verdict', 'clean'].includes(key))) return true;
       continue;
     }
     if (unsafeNestedReviewEvidence(descriptor.value, seen, depth + 1, sourceEvidence)) return true;
@@ -409,7 +411,7 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   // must not invalidate otherwise literal, independently pinned P0 evidence.
   // Keep the Proxy guard first so no Proxy trap can run.
   const rootPrototype = input && typeof input === 'object' ? Object.getPrototypeOf(input) : undefined;
-  const rootIdentityFields = ['repository', 'prNumber', 'branch', 'sourceHead', 'analysis', 'sources'];
+  const rootIdentityFields = ['repository', 'prNumber', 'branch', 'sourceHead', 'baseSha', 'analysis', 'sources', 'lineageEvidence'];
   const literalRoot = input && typeof input === 'object' && !Array.isArray(input)
     && (rootPrototype === Object.prototype || rootPrototype === null)
     && rootIdentityFields.every((key) => {
