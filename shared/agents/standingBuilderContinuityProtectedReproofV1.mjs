@@ -2,6 +2,9 @@ import {
   STANDING_BUILDER_CONTINUITY_VERDICTS,
   evaluateStandingBuilderContinuityFallbackV1,
 } from './standingBuilderContinuityAuthorityV1.mjs';
+import {
+  planIndependentReviewTerminalFindingsPublicationV1,
+} from './independentReviewTerminalFindingsPublicationV1.mjs';
 
 const SHA40 = /^[a-f0-9]{40}$/i;
 const SHA256 = /^[a-f0-9]{64}$/i;
@@ -49,20 +52,34 @@ function exactPaths(value) {
   return Object.freeze([...paths].sort());
 }
 
+function boundIndependentReviewFindings(input, identity) {
+  const evidence = input.independentReviewEvidence;
+  if (!boundTupleEvidence(evidence, { ...identity, kind: 'INDEPENDENT_REVIEW' })) return null;
+  try {
+    // Reuse the canonical, read-only findings-artifact validator. Its publication
+    // decision grants no authority here; both retry states retain review findings.
+    // Run/attempt and expected digest come from the caller's authenticated custody
+    // evidence. The existing protected workflow must independently re-prove them.
+    const validation = planIndependentReviewTerminalFindingsPublicationV1({
+      artifact: input.independentReviewArtifact,
+      repository: identity.repository,
+      prNumber: identity.prNumber,
+      branch: identity.branch,
+      sourceHead: identity.sourceHead,
+      baseSha: identity.baseSha,
+      workflowRunId: evidence.workflowRunId,
+      workflowRunAttempt: evidence.workflowRunAttempt,
+    });
+    if (!['RETRY_BUDGET_REMAINS', 'PUBLISH_TERMINAL_FINDINGS'].includes(validation.decision)
+      || validation.payloadSha256 !== identity.payloadSha256) return null;
+    return input.independentReviewArtifact.analysis.findings;
+  } catch {
+    return null;
+  }
+}
+
 export function buildStandingBuilderContinuityProtectedReproofV1(input = {}) {
   const blockers = [];
-  const eligibility = evaluateStandingBuilderContinuityFallbackV1(input.eligibilityInput || {});
-
-  if (!eligibility.eligible
-    || eligibility.finalVerdict !== STANDING_BUILDER_CONTINUITY_VERDICTS.ELIGIBLE
-    || eligibility.specialistReviewSatisfied !== false
-    || eligibility.protectedExecutionAuthority !== false
-    || eligibility.mergeAuthority !== false
-    || eligibility.runtimeMutationAuthority !== false
-    || eligibility.requiresProtectedWorkflowReproof !== true) {
-    blockers.push('standing-reproof-eligibility-not-exact');
-  }
-
   const repository = text(input.repository);
   const prNumber = Number(input.prNumber);
   const branch = text(input.branch);
@@ -73,6 +90,26 @@ export function buildStandingBuilderContinuityProtectedReproofV1(input = {}) {
   const changedPaths = exactPaths(input.changedPaths);
   const changedEstateSha256 = exactDigest(input.changedEstateSha256);
   const independentReviewPayloadSha256 = exactDigest(input.independentReviewPayloadSha256);
+  const reviewFindings = boundIndependentReviewFindings(input, {
+    repository, prNumber, branch, sourceHead, baseSha,
+    payloadSha256: independentReviewPayloadSha256,
+  });
+  const eligibility = evaluateStandingBuilderContinuityFallbackV1({
+    ...(input.eligibilityInput || {}),
+    // The validated artifact is the sole findings source. A caller's stale
+    // classification cannot be paired with a different current payload digest.
+    independentFindings: reviewFindings || [],
+  });
+
+  if (!eligibility.eligible
+    || eligibility.finalVerdict !== STANDING_BUILDER_CONTINUITY_VERDICTS.ELIGIBLE
+    || eligibility.specialistReviewSatisfied !== false
+    || eligibility.protectedExecutionAuthority !== false
+    || eligibility.mergeAuthority !== false
+    || eligibility.runtimeMutationAuthority !== false
+    || eligibility.requiresProtectedWorkflowReproof !== true) {
+    blockers.push('standing-reproof-eligibility-not-exact');
+  }
 
   if (repository !== CANONICAL_REPOSITORY) blockers.push('standing-reproof-repository-invalid');
   if (!Number.isSafeInteger(prNumber) || prNumber <= 0) blockers.push('standing-reproof-pr-invalid');
@@ -102,12 +139,7 @@ export function buildStandingBuilderContinuityProtectedReproofV1(input = {}) {
   }
   if (input.exactHostedChecksGreen !== true) blockers.push('standing-reproof-hosted-checks-not-green');
   if (input.deterministicHighRiskTestsGreen !== true) blockers.push('standing-reproof-high-risk-tests-not-green');
-  const reviewEvidenceBound = boundTupleEvidence(input.independentReviewEvidence, {
-    repository, prNumber, branch, sourceHead, baseSha,
-    payloadSha256: independentReviewPayloadSha256,
-    kind: 'INDEPENDENT_REVIEW',
-  });
-  if (!reviewEvidenceBound) blockers.push('standing-reproof-independent-review-not-bound');
+  if (!reviewFindings) blockers.push('standing-reproof-independent-review-not-bound');
   const providerEvidenceBound = boundTupleEvidence(input.providerCapacityEvidence, {
     repository, prNumber, branch, sourceHead, baseSha,
     payloadSha256: '',

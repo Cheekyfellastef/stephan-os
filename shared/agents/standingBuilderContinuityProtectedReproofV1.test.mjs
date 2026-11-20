@@ -12,11 +12,17 @@ import {
   STANDING_BUILDER_CONTINUITY_PROTECTED_WORKFLOW,
   buildStandingBuilderContinuityProtectedReproofV1,
 } from './standingBuilderContinuityProtectedReproofV1.mjs';
+import {
+  buildIndependentReviewArtifact,
+  buildIndependentReviewFindingsArtifact,
+} from './operatorMergeReviewArtifactV1.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'e161f88f09de4614d3befb857884b68a060aaad2';
 const TREE = '44b6cc88987bc295d06a9fc9496c09c83520d78c';
 const MAIN = 'e5f59be5ee213fb61a536d58aa5fc989b2c68abc';
+const REVIEW_RUN_ID = 101;
+const REVIEW_RUN_ATTEMPT = 1;
 const PATHS = Object.freeze([
   '.github/workflows/battle-bridge-worker-watchdog-proof.yml',
   'scripts/mission-worker-process-start-api-consistency.test.mjs',
@@ -84,7 +90,44 @@ function eligibilityInput(overrides = {}) {
   };
 }
 
+function reviewArtifact(findings = eligibilityInput().independentFindings, overrides = {}) {
+  return buildIndependentReviewFindingsArtifact({
+    repository: REPOSITORY,
+    prNumber: 2222,
+    branch: 'fix/mission-worker-watchdog-restart-v1',
+    sourceHead: HEAD,
+    baseSha: MAIN,
+    workflowRunId: REVIEW_RUN_ID,
+    workflowRunAttempt: REVIEW_RUN_ATTEMPT,
+    createdAtUtc: '2026-09-14T07:05:00Z',
+    analysis: {
+      schemaVersion: 'stephanos.independent-security-analysis.v1',
+      finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
+      verdict: 'findings',
+      findings,
+      counts: Object.fromEntries(['P0', 'P1', 'P2'].map((severity) => [
+        severity, findings.filter((finding) => finding.severity === severity).length,
+      ])),
+      proofRefs: ['proofs/independent-review/unsupported-windows-surface'],
+    },
+    ...overrides,
+  });
+}
+
+function boundArtifactInput(artifact, overrides = {}) {
+  return validInput({
+    independentReviewArtifact: artifact,
+    independentReviewPayloadSha256: artifact.payloadSha256,
+    independentReviewEvidence: {
+      ...validInput().independentReviewEvidence,
+      payloadSha256: artifact.payloadSha256,
+    },
+    ...overrides,
+  });
+}
+
 function validInput(overrides = {}) {
+  const artifact = reviewArtifact();
   return {
     eligibilityInput: eligibilityInput(),
     repository: REPOSITORY,
@@ -96,7 +139,8 @@ function validInput(overrides = {}) {
     currentMain: MAIN,
     changedPaths: [...PATHS],
     changedEstateSha256: 'a'.repeat(64),
-    independentReviewPayloadSha256: 'b'.repeat(64),
+    independentReviewPayloadSha256: artifact.payloadSha256,
+    independentReviewArtifact: artifact,
     pullRequestOpen: true,
     pullRequestDraft: false,
     pullRequestMerged: false,
@@ -107,7 +151,8 @@ function validInput(overrides = {}) {
     independentReviewEvidence: {
       kind: 'INDEPENDENT_REVIEW', repository: REPOSITORY, prNumber: 2222,
       branch: 'fix/mission-worker-watchdog-restart-v1', sourceHead: HEAD, baseSha: MAIN,
-      payloadSha256: 'b'.repeat(64), receiptSha256: 'c'.repeat(64),
+      workflowRunId: REVIEW_RUN_ID, workflowRunAttempt: REVIEW_RUN_ATTEMPT,
+      payloadSha256: artifact.payloadSha256, receiptSha256: 'c'.repeat(64),
     },
     providerCapacityEvidence: {
       kind: 'PROVIDER_CAPACITY_UNAVAILABLE', repository: REPOSITORY, prNumber: 2222,
@@ -188,12 +233,11 @@ test('changed estate drift blocks protected reproof', () => {
   assert.ok(result.blockers.includes('standing-reproof-changed-estate-drift'));
 });
 
-test('substantive P1 cannot be reclassified as provider friction', () => {
-  const result = buildStandingBuilderContinuityProtectedReproofV1(validInput({
-    eligibilityInput: eligibilityInput({
-      independentFindings: [{ severity: 'P1', code: 'real-defect', path: 'shared/agents/example.mjs' }],
-    }),
-  }));
+test('a current artifact P1 cannot be replaced by stale caller provider-friction findings', () => {
+  const artifact = reviewArtifact([
+    { severity: 'P1', code: 'real-defect', path: 'shared/agents/example.mjs' },
+  ]);
+  const result = buildStandingBuilderContinuityProtectedReproofV1(boundArtifactInput(artifact));
   assert.equal(result.ready, false);
   assert.ok(result.blockers.includes('standing-reproof-eligibility-not-exact'));
 });
@@ -247,4 +291,105 @@ test('provider capacity evidence must be bound to the exact tuple and capability
   }));
   assert.equal(result.ready, false);
   assert.ok(result.blockers.includes('standing-reproof-provider-unavailability-not-proven'));
+});
+
+test('review digest and tuple assertions cannot replace canonical artifact bytes', () => {
+  const result = buildStandingBuilderContinuityProtectedReproofV1(validInput({
+    independentReviewArtifact: undefined,
+  }));
+  assert.equal(result.ready, false);
+  assert.ok(result.blockers.includes('standing-reproof-independent-review-not-bound'));
+});
+
+test('eligibility derives full findings from a validated first-attempt artifact', () => {
+  const result = buildStandingBuilderContinuityProtectedReproofV1(validInput({
+    eligibilityInput: eligibilityInput({ independentFindings: undefined }),
+  }));
+  assert.equal(result.ready, true);
+  assert.equal(result.specialistReviewSatisfied, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('current bootstrap artifact plus stale unsupported-Windows findings cannot enter fallback', () => {
+  const findings = [{
+    severity: 'P0',
+    code: 'approval-boundary-v2-self-change-requires-qualified-review',
+    summary: 'Separate qualified bootstrap review remains required.',
+    path: 'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
+  }];
+  const artifact = buildIndependentReviewArtifact({
+    repository: REPOSITORY,
+    prNumber: 2222,
+    branch: 'fix/mission-worker-watchdog-restart-v1',
+    sourceHead: HEAD,
+    baseSha: MAIN,
+    workflowRunId: REVIEW_RUN_ID,
+    workflowRunAttempt: REVIEW_RUN_ATTEMPT,
+    createdAtUtc: '2026-09-14T07:05:00Z',
+    analysis: {
+      schemaVersion: 'stephanos.independent-security-analysis.v1',
+      finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_FINDINGS',
+      verdict: 'findings',
+      findings,
+      counts: { P0: 1, P1: 0, P2: 0 },
+      proofRefs: ['proofs/approval-boundary-v2/self-change'],
+    },
+  });
+  const result = buildStandingBuilderContinuityProtectedReproofV1(boundArtifactInput(artifact));
+  assert.equal(result.ready, false);
+  assert.ok(result.blockers.includes('standing-reproof-independent-review-not-bound'));
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('a substantive finding beyond the publication preview remains a hard blocker', () => {
+  const findings = Array.from({ length: 20 }, (_, index) => ({
+    severity: 'P0', code: 'unsupported-high-risk-surface', path: `scripts/windows/probe-${index}.ps1`,
+  }));
+  findings.push({ severity: 'P1', code: 'real-defect', path: 'shared/agents/example.mjs' });
+  const artifact = reviewArtifact(findings, { workflowRunAttempt: 2 });
+  const result = buildStandingBuilderContinuityProtectedReproofV1(boundArtifactInput(artifact, {
+    independentReviewEvidence: {
+      ...validInput().independentReviewEvidence,
+      workflowRunAttempt: 2,
+      payloadSha256: artifact.payloadSha256,
+    },
+  }));
+  assert.equal(result.ready, false);
+  assert.ok(result.blockers.includes('standing-reproof-eligibility-not-exact'));
+});
+
+test('canonical artifact must match authenticated repository PR branch head base run and attempt', () => {
+  for (const overrides of [
+    { repository: 'other/stephan-os' },
+    { prNumber: 2223 },
+    { branch: 'fix/unrelated' },
+    { sourceHead: '8'.repeat(40) },
+    { baseSha: '9'.repeat(40) },
+    { workflowRunId: REVIEW_RUN_ID + 1 },
+    { workflowRunAttempt: REVIEW_RUN_ATTEMPT + 1 },
+  ]) {
+    const artifact = reviewArtifact(undefined, overrides);
+    const result = buildStandingBuilderContinuityProtectedReproofV1(boundArtifactInput(artifact));
+    assert.equal(result.ready, false, JSON.stringify(overrides));
+    assert.ok(result.blockers.includes('standing-reproof-independent-review-not-bound'));
+  }
+});
+
+test('altered analysis bytes and substituted expected digest fail closed', () => {
+  const artifact = structuredClone(reviewArtifact());
+  artifact.analysis.findings.push({ severity: 'P1', code: 'real-defect', path: 'shared/agents/example.mjs' });
+  for (const input of [
+    boundArtifactInput(artifact),
+    validInput({
+      independentReviewPayloadSha256: 'e'.repeat(64),
+      independentReviewEvidence: {
+        ...validInput().independentReviewEvidence,
+        payloadSha256: 'e'.repeat(64),
+      },
+    }),
+  ]) {
+    const result = buildStandingBuilderContinuityProtectedReproofV1(input);
+    assert.equal(result.ready, false);
+    assert.ok(result.blockers.includes('standing-reproof-independent-review-not-bound'));
+  }
 });

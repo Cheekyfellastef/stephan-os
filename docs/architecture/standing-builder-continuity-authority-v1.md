@@ -38,4 +38,10 @@ requiresProtectedWorkflowReproof=true
 
 A later integration slice must connect this eligibility result into the existing protected admission machinery without altering the generic high-risk provider-neutral receipt validator or inventing a synthetic specialist receipt.
 
+## Protected reproof artifact binding
+
+The reproof planner requires the canonical independent-review findings artifact, plus the exact workflow run, attempt and expected payload digest from authenticated upstream custody evidence. It reuses the existing read-only findings validator for the full artifact's identity, canonical digest, analysis and counts, then derives eligibility from all validated findings. Caller-supplied `eligibilityInput.independentFindings` cannot substitute for the artifact's contents; missing bytes, tuple drift or a mismatched digest blocks the proposal.
+
+This local integrity check does not authenticate GitHub transport, satisfy specialist review, publish findings or grant execution authority. The existing custody and protected workflow retain run/job/artifact authentication and independent reproof. Both first-attempt and terminal findings remain findings, and a substantive finding beyond the twenty-item display preview still blocks eligibility.
+
 This is deliberately separate from PR #2222's Mission Worker Windows source ownership, so the autonomy repair can progress without two writers touching the same runtime files.
