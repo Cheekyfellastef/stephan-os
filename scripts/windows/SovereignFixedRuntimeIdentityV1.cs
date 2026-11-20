@@ -393,6 +393,8 @@ namespace Stephanos.Sovereign {
             !(row.Path=="package.json" || row.Path==".gitattributes" ||
               row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs" ||
               row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs" ||
+              row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs" ||
+              row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc2-gateway-provider.mjs" ||
               row.Path=="src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp" ||
               System.Text.RegularExpressions.Regex.IsMatch(row.Path,@"^(scripts|shared|stephanos-server)/[A-Za-z0-9._/-]+$")) ||
             row.Path.Contains("..") || row.Path.Contains("//") || !RuntimeHexV1(row.Sha256,64) ||
