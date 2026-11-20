@@ -27,7 +27,7 @@ export function createHolodeckAudioControls({
   // Only explicit, currently discovered choices are saved. Never save permission,
   // microphone-active, app session, device label, transcript or capture state.
   const saveChoice=(kind,id,devices)=>{
-    preferences={...preferences,[kind]:devices.some(device=>device.id===id)?boundedAudioId(id):''};
+    preferences={...preferences,[kind]:uniqueDevice(devices,id)?boundedAudioId(id):''};
     try{prefStore?.setItem?.(SPATIAL_AUDIO_PREFERENCE_KEY,
       JSON.stringify({version:1,inputId:preferences.inputId,outputId:preferences.outputId}));}catch{}
   };
@@ -48,6 +48,9 @@ export function createHolodeckAudioControls({
   }
   const status=message=>{publish({status:message});return message;};
   const selection=value=>typeof value==='string'&&value.length<=1024?value:null;
+  // A remembered or freshly selected device ID must resolve to exactly one physical route.
+  const deviceCount=(devices,id)=>id?devices.filter(device=>device.id===id).length:0;
+  const uniqueDevice=(devices,id)=>deviceCount(devices,id)===1;
   const ownsMic=owner=>!disposed&&microphone===owner&&!owner.closed;
   const ownsSpeaker=owner=>!disposed&&speaker===owner&&!owner.closed;
   function ownerRecord(){
@@ -103,7 +106,7 @@ export function createHolodeckAudioControls({
   }
   function setInput(id){
     id=selection(id);if(disposed||id===null)return false;
-    if(id&& !state.inputs.some(device=>device.id===id))return false;
+    if(id&&!uniqueDevice(state.inputs,id))return false;
     // A missing remembered microphone is already shown as no current choice.
     // Explicitly selecting system default must still clear that stale hint.
     hotplugInputNeedsSelection=false; // This is a fresh explicit operator selection, including system default.
@@ -115,7 +118,7 @@ export function createHolodeckAudioControls({
   }
   function setOutput(id){
     id=selection(id);if(disposed||id===null)return false;
-    if(id&& !state.outputs.some(device=>device.id===id))return false;
+    if(id&&!uniqueDevice(state.outputs,id))return false;
     hotplugOutputNeedsSelection=false;
     if(id===state.outputId&&(id!==''||!preferences.outputId))return true;
     statusIntent++;releaseSpeaker();
@@ -137,12 +140,18 @@ export function createHolodeckAudioControls({
       deviceRefreshFailed=false;
       const wantedInput=hotplugInputNeedsSelection?'':state.inputId||preferences.inputId;
       const wantedOutput=hotplugOutputNeedsSelection?'':state.outputId||preferences.outputId;
-      const inputId=inputs.some(d=>d.id===wantedInput)?wantedInput:'';
-      const outputId=outputs.some(d=>d.id===wantedOutput)?wantedOutput:'';
+      const ambiguousInput=deviceCount(inputs,wantedInput)>1,ambiguousOutput=deviceCount(outputs,wantedOutput)>1;
+      const inputId=uniqueDevice(inputs,wantedInput)?wantedInput:'';
+      const outputId=uniqueDevice(outputs,wantedOutput)?wantedOutput:'';
+      // Once an ID was ambiguous, a later refresh must not silently re-adopt it.
+      if(ambiguousInput)hotplugInputNeedsSelection=true;
+      if(ambiguousOutput)hotplugOutputNeedsSelection=true;
       if(inputId!==state.inputId)releaseMicrophone();
       if(outputId!==state.outputId)releaseSpeaker();
       const missingInput=Boolean(wantedInput&&!inputId),missingOutput=Boolean(wantedOutput&&!outputId);
-      const reason=hotplugInputNeedsSelection||hotplugOutputNeedsSelection
+      const reason=ambiguousInput||ambiguousOutput
+        ?'Ambiguous audio device identity. Resolve duplicates, then explicitly re-select the intended device; no local test or ChatGPT Voice started.'
+        :hotplugInputNeedsSelection||hotplugOutputNeedsSelection
         ?(deviceRecoveryCause==='hotplug'?'Audio devices changed.':'Audio device discovery previously failed.')+
           ' Re-select the intended microphone and speaker; neither local test nor ChatGPT Voice has started.'
         :missingInput||missingOutput
@@ -176,7 +185,7 @@ export function createHolodeckAudioControls({
     if(!state.inputId&&preferences.inputId)return {ok:false,reason:status('Previous microphone unavailable. Re-select the intended device or explicitly choose system default before testing.')};
     // Test cannot choose a different discovered device: only setInput is a deliberate selection.
     if(deviceId!==state.inputId)return {ok:false,reason:status('Microphone test refused: select the intended microphone before requesting permission.')};
-    if(deviceId&&!state.inputs.some(device=>device.id===deviceId))return {ok:false,reason:status('Microphone is not in the current device list. Refresh and re-select it before testing.')};
+    if(deviceId&&!uniqueDevice(state.inputs,deviceId))return {ok:false,reason:status('Microphone identity is missing or ambiguous. Refresh and re-select it before testing.')};
     if(microphone)return {ok:false,reason:status(state.microphonePending
       ?'A microphone test is already waiting for permission. Stop it before starting another.'
       :'A microphone test is already active. Stop it before starting another.')};
@@ -278,7 +287,7 @@ export function createHolodeckAudioControls({
     if(!state.outputId&&preferences.outputId)return {ok:false,reason:status('Previous speaker unavailable. Re-select the intended output or explicitly choose system default before testing.')};
     // Test is not a device selector; never silently route a tone to an unchosen headset.
     if(deviceId!==state.outputId)return {ok:false,reason:status('Speaker test refused: select the intended output before testing.')};
-    if(deviceId&&!state.outputs.some(device=>device.id===deviceId))return {ok:false,reason:status('Speaker is not in the current device list. Refresh and re-select it before testing.')};
+    if(deviceId&&!uniqueDevice(state.outputs,deviceId))return {ok:false,reason:status('Speaker identity is missing or ambiguous. Refresh and re-select it before testing.')};
     if(speaker)return {ok:false,reason:status('A speaker test is already active.')};
     if(typeof AudioContextCtor!=='function')
       return {ok:false,reason:status('Browser speaker test is unavailable.')};
