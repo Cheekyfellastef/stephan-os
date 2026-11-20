@@ -8,6 +8,8 @@ import {
   CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
 } from './chatGptParticipantBridgeV1.mjs';
 import { buildInitialStephanosTenQuestionPacketV1 } from './stephanosInitialTenQuestionRoundV1.mjs';
+import { STEPHANOS_AMBIENT_CAPABILITY_QUESTION_SCHEMA_VERSION } from './stephanosAmbientCapabilityQuestionV1.mjs';
+import { createStephanosAmbientWorkspaceQuestionRecord } from './stephanosAmbientWorkspaceQuestionAdapterV1.mjs';
 import { answerStephanosWorkspaceQuestionRecord } from './stephanosSharedParticipantLiveQaV1.mjs';
 import {
   CHATGPT_SHARED_WORKSPACE_OWNER,
@@ -18,9 +20,8 @@ import {
 
 const NOW = new Date('2026-08-19T08:00:00.000Z');
 
-async function strandedQa() {
+async function strandedQa(question = canonicalQuestionRecord()) {
   const workspace = fakeWorkspace();
-  const question = canonicalQuestionRecord();
   const request = qaRequest(question);
   const counter = { count: 0 };
   let publishAllowed = false;
@@ -56,6 +57,8 @@ test('expired Q&A resumes only durable publication and preserves historical answ
   const payload = JSON.parse(fixture.body().match(/```json\s*([\s\S]*?)\s*```/)[1]);
   assert.equal(payload.sanitizedAnswer.freshness, 'STALE');
   assert.equal(payload.sanitizedAnswer.answeredAtUtc, NOW.toISOString());
+  assert.equal(payload.sanitizedAnswer.answerText, groundedResponse().output_text);
+  assert.equal(payload.sanitizedAnswer.roundId, fixture.question.correlationId);
   assert.equal(payload.publicationRecovery.cognitionRepeated, false);
   assert.equal(payload.source.sharedWorkspaceAuthoritative, true);
   assert.equal(payload.authority.mergeAuthority, false);
@@ -162,6 +165,30 @@ function canonicalQuestionRecord() {
   assert.equal(packet.valid, true, packet.errors?.join(','));
   assert.equal(packet.records.length, 10);
   return packet.records[0];
+}
+
+function ambientQuestionRecord() {
+  const built = createStephanosAmbientWorkspaceQuestionRecord({
+    schemaVersion: STEPHANOS_AMBIENT_CAPABILITY_QUESTION_SCHEMA_VERSION,
+    questionId: 'ambient-live-qa-001',
+    askerParticipantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
+    targetParticipantId: 'stephanos',
+    questionText: 'What product goal should advance next?',
+    questionClass: 'CURRENT_PROGRAMME_TRUTH',
+    intentFingerprint: 'intent-relay-ambient-001',
+    noveltyRefs: ['question:ambient-live-qa-001'],
+    contextRefs: ['goal:#1290'],
+    expectedEvidenceClass: 'CURRENT_PROGRAMME_STATE',
+    createdAtUtc: NOW.toISOString(),
+  }, {
+    correlationId: 'ambient-live-qa-001',
+    relatedIssue: '#1290',
+    relatedPr: '#2225',
+    proofRefs: ['receipts/live-ambient-source'],
+    workspaceValidationOptions: { nowMs: NOW.getTime() },
+  });
+  assert.equal(built.valid, true, built.errors?.join(','));
+  return built.record;
 }
 
 function qaRequest(questionRecord, overrides = {}) {
@@ -292,11 +319,80 @@ test('canonical Q&A delivery persists question then correlated answer before ter
   assert.equal(responseBody.includes(groundedResponse().output_text), true);
   assert.match(responseBody, /"rawAnswerIncluded": false/);
   assert.match(responseBody, /"authorityWidening": false/);
+  const payload = JSON.parse(responseBody.match(/```json\s*([\s\S]*?)\s*```/)[1]);
+  assert.equal(payload.sanitizedAnswer.roundId, questionRecord.correlationId);
 });
 
-test('resumed Q&A redacts canonical secret-shaped answer text before public response publication', async () => {
+test('ambient Q&A publishes the complete sanitized answer with durable correlation and no formal round', async () => {
   const workspace = fakeWorkspace();
-  const questionRecord = canonicalQuestionRecord();
+  const questionRecord = ambientQuestionRecord();
+  const request = qaRequest(questionRecord);
+  const answerCounter = { count: 0 };
+  let responseBody = '';
+  const result = await runChatGptSharedWorkspaceGitHubRelay(relayOptions(workspace, {
+    readRequest: () => ({ ok: true, body: envelope(request), authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER }),
+    writeResponse: (body) => {
+      responseBody = body;
+      return validateChatGptSharedWorkspaceResponseBody(body).valid
+        ? { ok: true } : { ok: false, reason: 'unsafe-response-text' };
+    },
+  }, answerCounter));
+
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_QA_PASS');
+  assert.equal(answerCounter.count, 1);
+  const payload = JSON.parse(responseBody.match(/```json\s*([\s\S]*?)\s*```/)[1]);
+  assert.ok(payload.sanitizedAnswer, 'a completed ambient answer must be visible to the requester');
+  assert.equal(payload.sanitizedAnswer.answerText, groundedResponse().output_text);
+  assert.equal(payload.sanitizedAnswer.questionId, questionRecord.subjectId);
+  assert.equal(payload.sanitizedAnswer.conversationMode, 'AMBIENT');
+  assert.equal(payload.sanitizedAnswer.correlationId, questionRecord.correlationId);
+  assert.equal(Object.hasOwn(payload.sanitizedAnswer, 'roundId'), false);
+  assert.equal(payload.sanitizedAnswer.rawAnswerIncluded, false);
+  assert.equal(payload.sanitizedAnswer.authorityWidening, false);
+  assert.equal(payload.authority.mergeAuthority, false);
+  assert.equal(payload.authority.commandExecutionAccess, false);
+  assert.equal(payload.conversationCanvasHandoff.publicProjection.bodyIncluded, false);
+  const handoffRecord = [...workspace.records.values()].find((record) => record.kind === 'stephanos.shared_workspace.record.handoff');
+  assert.ok(handoffRecord, 'ambient answers retain the mandatory private canvas handoff');
+  const privateBody = JSON.parse(handoffRecord.body);
+  for (const continuity of [privateBody.continuity, privateBody.presenterInput.richResponse.continuity]) {
+    assert.equal(continuity.conversationMode, 'AMBIENT');
+    assert.equal(continuity.correlationId, questionRecord.correlationId);
+    assert.equal(Object.hasOwn(continuity, 'roundId'), false);
+  }
+});
+
+test('expired ambient Q&A republishes the complete persisted answer without repeating cognition', async () => {
+  const fixture = await strandedQa(ambientQuestionRecord());
+  const original = new Map(fixture.workspace.records);
+  const writesBefore = fixture.workspace.writes.length;
+  const late = { ...fixture.options, now: new Date(NOW.getTime() + 2 * 60 * 60 * 1000) };
+  const result = await runChatGptSharedWorkspaceGitHubRelay(late);
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(result.publicationRecovered, true);
+  assert.equal(fixture.counter.count, 1);
+  assert.equal(fixture.workspace.writes.length, writesBefore + 1, 'only final completion is written');
+  for (const [key, record] of original) assert.deepEqual(fixture.workspace.records.get(key), record);
+  const payload = JSON.parse(fixture.body().match(/```json\s*([\s\S]*?)\s*```/)[1]);
+  assert.equal(payload.sanitizedAnswer.answerText, groundedResponse().output_text);
+  assert.equal(payload.sanitizedAnswer.questionId, fixture.question.subjectId);
+  assert.equal(payload.sanitizedAnswer.conversationMode, 'AMBIENT');
+  assert.equal(payload.sanitizedAnswer.correlationId, fixture.question.correlationId);
+  assert.equal(Object.hasOwn(payload.sanitizedAnswer, 'roundId'), false);
+  assert.equal(payload.sanitizedAnswer.freshness, 'STALE');
+  assert.equal(payload.sanitizedAnswer.answeredAtUtc, NOW.toISOString());
+  assert.equal(payload.sanitizedAnswer.rawAnswerIncluded, false);
+  assert.equal(payload.sanitizedAnswer.authorityWidening, false);
+  assert.equal(payload.publicationRecovery.cognitionRepeated, false);
+  const third = await runChatGptSharedWorkspaceGitHubRelay(late);
+  assert.equal(third.classification, 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED');
+});
+
+for (const [mode, makeQuestion] of [['formal', canonicalQuestionRecord], ['ambient', ambientQuestionRecord]]) {
+test(`resumed ${mode} Q&A redacts canonical secret-shaped answer text before public response publication`, async () => {
+  const workspace = fakeWorkspace();
+  const questionRecord = makeQuestion();
   const request = qaRequest(questionRecord);
   const answerCounter = { count: 0 };
   let responseAttempts = 0;
@@ -333,6 +429,11 @@ test('resumed Q&A redacts canonical secret-shaped answer text before public resp
   const persistedAnswer = workspace.records.get(answerKey);
   const answerBody = JSON.parse(persistedAnswer.body);
   answerBody.payload.answerText = 'password=do-not-publish';
+  answerBody.payload.sourcesConsulted = [
+    'api_key=do-not-publish',
+    '/workspace/private/source',
+    ...Array.from({ length: 10 }, (_, index) => `evidence-source-${index}-${'x'.repeat(140)}`),
+  ];
   workspace.records.set(answerKey, { ...persistedAnswer, body: JSON.stringify(answerBody) });
 
   const second = await runChatGptSharedWorkspaceGitHubRelay(options);
@@ -343,7 +444,13 @@ test('resumed Q&A redacts canonical secret-shaped answer text before public resp
   assert.equal(responseBody.includes('"answerText": "[REDACTED]"'), true);
   assert.match(responseBody, /"redacted": true/);
   assert.match(responseBody, /"rawAnswerIncluded": false/);
+  const payload = JSON.parse(responseBody.match(/```json\s*([\s\S]*?)\s*```/)[1]);
+  assert.equal(payload.sanitizedAnswer.sourcesConsulted.length, 8);
+  assert.equal(payload.sanitizedAnswer.sourcesConsulted.every((source) => source.startsWith('evidence-source-') && source.length <= 123), true);
+  assert.equal(responseBody.includes('api_key=do-not-publish'), false);
+  assert.equal(responseBody.includes('/workspace/private/source'), false);
 });
+}
 
 test('request and conversation lineage mismatch terminalizes safely before question persistence or Stephanos cognition', async () => {
   const workspace = fakeWorkspace();
