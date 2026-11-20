@@ -7,6 +7,10 @@ export const MAILBOX_ROTATION_DRAIN_WORKFLOWS = Object.freeze([
   'battle-bridge-out-of-band-observer-v1.yml', 'battle-bridge-tailscale-bootstrap-pipe.yml',
   'mailbox-receipt-index.yml', 'codex-banked-reset-telemetry.yml',
 ]);
+// GitHub returns at most 100 runs per page. Require a complete bounded inventory,
+// never interpret its first page as the entire set of live execution candidates.
+export const MAILBOX_ROTATION_ACTIONS_PAGE_SIZE = 100;
+export const MAILBOX_ROTATION_ACTIONS_MAX_PAGES = 10;
 const repo = 'Cheekyfellastef/stephan-os';
 const positive = n => Number.isSafeInteger(n) && n > 0;
 
@@ -103,11 +107,15 @@ export function evaluateMailboxRotationActionInventory(responses, now = new Date
     // exclude_pull_requests=true is not enough: all non-completed runs are
     // inspected, including waiting/environment approvals and previous source.
     if (!response || !Number.isSafeInteger(response.total_count) || response.total_count < 0
-      || response.total_count > 100 || !Array.isArray(response.workflow_runs)
+      || response.total_count > MAILBOX_ROTATION_ACTIONS_PAGE_SIZE * MAILBOX_ROTATION_ACTIONS_MAX_PAGES || !Array.isArray(response.workflow_runs)
       || response.workflow_runs.length !== response.total_count) throw new Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
+    const responseSeen = new Set();
     for (const run of response.workflow_runs) {
-      if (!positive(run.id) || !['completed', 'queued', 'in_progress', 'waiting', 'requested', 'pending'].includes(run.status)
-        || typeof run.path !== 'string') throw new Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INVALID');
+      if (!positive(run?.id) || !['completed', 'queued', 'in_progress', 'waiting', 'requested', 'pending'].includes(run.status)
+        || typeof run.path !== 'string' || responseSeen.has(run.id)) throw new Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INVALID');
+      // A repeated identity within one status may hide a missing page entry.
+      // A run can legitimately move between the separately read statuses.
+      responseSeen.add(run.id);
       const workflow = MAILBOX_ROTATION_DRAIN_WORKFLOWS.find(w => run.path === `.github/workflows/${w}`);
       // PR proof jobs cannot execute the production paths; all other live jobs count.
       if (workflow && run.status !== 'completed' && run.event !== 'pull_request' && !seen.has(run.id)) {
