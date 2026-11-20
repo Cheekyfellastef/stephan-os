@@ -58,15 +58,26 @@ const ancestor = (before, after) => ({ ok: true, ancestor: before <= after });
 let result;
 if (input.mode === 'sync') {
   const { runBattleBridgeGitHubSync, FIXED_SYNC_GIT_COMMANDS: ids } = await import(input.syncModule);
+  const rotationEvents = [];
   const outputs = {
     [ids.currentBranch.id]: () => 'main', [ids.originUrl.id]: () => 'https://github.com/Cheekyfellastef/stephan-os.git',
     [ids.statusPorcelain.id]: () => '', [ids.localHead.id]: () => state.local, [ids.remoteHead.id]: () => state.remote,
     [ids.mergeBase.id]: () => state.local, [ids.fetchOriginMain.id]: () => '',
-    [ids.mergeFfOnlyOriginMain.id]: () => { state.local = state.remote; return ''; },
+    [ids.mergeFfOnlyOriginMain.id]: () => { rotationEvents.push({ kind: 'merge' }); state.local = state.remote; return ''; },
   };
   result = await runBattleBridgeGitHubSync({ paths: input.paths, expectedPaths: input.paths,
     git: { isAncestor: ancestor, run(id) { if (!outputs[id]) throw Error('unexpected fixture Git command'); return { ok: true, stdout: outputs[id](), stderr: '' }; } },
-    rotationPreflightFn: () => ({ ok: true, required: false }) });
+    rotationPreflightFn: ({ expectedHead, guardToken }) => {
+      if (!input.rotationTransition) return { ok: true, required: false };
+      rotationEvents.push({ kind: 'preflight', expectedHead, guardToken: guardToken || '' });
+      return { ok: true, required: true, sourceHead: state.remote };
+    },
+    rotationGuardFn: operation => {
+      rotationEvents.push({ kind: 'lock' });
+      try { return operation({ token: 'fixture-epoch-token' }); }
+      finally { rotationEvents.push({ kind: 'unlock' }); }
+    } });
+  if (input.rotationTransition) result = { ...result, fixtureRotationEvents: rotationEvents };
   await writeFile(input.paths.sourceState, JSON.stringify(state));
   if (input.legacyWriter) {
     // Exact old-writer record/return shape after source-forward: no retained
@@ -95,7 +106,7 @@ if (input.mode === 'sync') {
 process.stdout.write(JSON.stringify(result));
 `;
 
-async function productionDebtFixture(t) {
+async function productionDebtFixture(t, { startSynced = true } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'sync-refresh-debt-composition-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const fixturePaths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace'), sourceState: join(root, 'source-state.json') };
@@ -110,7 +121,7 @@ async function productionDebtFixture(t) {
     assert.equal(executed.status, 0, executed.stderr);
     return { ok: true, result: JSON.parse(executed.stdout) };
   };
-  assert.equal(child('sync').result.sourceUpdated, true);
+  if (startSynced) assert.equal(child('sync').result.sourceUpdated, true);
   const calls = [];
   const invoke = (failUi, legacyCaller = false) => runSyncAndRefreshWithRealAncestry({
     capacityObservationHeartbeat: async () => ({ ok: true, capacityObservationOnly: true }),
@@ -954,6 +965,80 @@ test('default adapter caps every fixed child and treats a timed-out refresh as f
   ]);
   assert.equal(adapter.runSync(p, { timeoutMs: 0 }).blocker, 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING');
   assert.equal(adapter.runMailboxPulse(p, { timeoutMs: 0 }).blocker, 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING');
+});
+
+// Run the actual source/debt writer and both guarded preflights in a synchronous
+// child. Only elapsed transport time is virtual: the fixed adapter's timeout
+// still decides whether the completed child can be consumed by its parent.
+async function timedEpochSyncFixture(t, elapsedSyncMs) {
+  const fx = await productionDebtFixture(t, { startSynced: false });
+  const timedPaths = { ...fx.paths, syncExecutor: 'fixture-sync-executor' };
+  let clock = 0;
+  const calls = [];
+  const fixedAdapter = createFixedSyncAndRefreshAdapter({
+    spawnSyncFn: (_node, args, options) => {
+      assert.deepEqual(args, ['fixture-sync-executor']);
+      const child = fx.child('sync', { rotationTransition: true });
+      const elapsed = child.result.sourceUpdated ? elapsedSyncMs : 1_000;
+      calls.push({ phase: 'sync', timeout: options.timeout, elapsed,
+        events: child.result.fixtureRotationEvents });
+      clock += elapsed;
+      return { status: elapsed > options.timeout ? null : 0,
+        ...(elapsed > options.timeout ? { error: { code: 'ETIMEDOUT' } } : {}),
+        stdout: JSON.stringify(child.result) };
+    },
+  });
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths: timedPaths, expectedPaths: timedPaths, nowMs: () => clock,
+    platform: 'linux', ...safeGoalDiscoveryArgs(),
+    adapter: {
+      runSync: fixedAdapter.runSync,
+      runRefresh: ({ beforeHead, afterHead, timeoutMs }) => {
+        calls.push({ phase: 'refresh', timeout: timeoutMs });
+        clock += 1_000;
+        return fx.child('refresh', { beforeHead, afterHead, failUi: false });
+      },
+    },
+  });
+  assert.deepEqual(calls[0].events, [
+    { kind: 'preflight', expectedHead: B, guardToken: '' },
+    { kind: 'lock' },
+    { kind: 'preflight', expectedHead: B, guardToken: 'fixture-epoch-token' },
+    { kind: 'merge' },
+    { kind: 'unlock' },
+  ]);
+  return { fx, result, calls, clock };
+}
+
+test('two guarded epoch preflights can exceed sixty seconds without exceeding the existing child envelope', async t => {
+  // Two bounded 70s proof collections plus 5s for the surrounding source reads.
+  const { fx, result, calls, clock } = await timedEpochSyncFixture(t, 145_000);
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls.map(call => call.phase), ['sync', 'refresh', 'sync']);
+  assert.equal(calls[0].timeout, 175_000);
+  assert.equal(calls[1].timeout, 30_000);
+  assert.equal(calls[2].timeout, 29_000);
+  assert.equal(clock, 147_000);
+  assert.equal(result.refreshes[0].beforeHead, A);
+  assert.equal(result.refreshes[0].afterHead, B);
+  assert.deepEqual((await readPendingPostSyncRefresh(fx.paths)).spans, []);
+});
+
+test('an exhausted epoch sync leaves durable refresh debt for the next scheduled invocation', async t => {
+  const { fx, result, calls } = await timedEpochSyncFixture(t, 175_000);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SYNC_AND_REFRESH_PARENT_BUDGET_EXHAUSTED');
+  assert.equal(result.budgetPhase, 'POST_SYNC');
+  assert.deepEqual(calls.map(call => call.phase), ['sync']);
+  assert.deepEqual(result.refreshes, []);
+  assert.deepEqual(JSON.parse(await readFile(fx.paths.sourceState, 'utf8')), { local: B, remote: B });
+  const retained = await readPendingPostSyncRefresh(fx.paths);
+  assert.equal(retained.ok, true);
+  assert.deepEqual(retained.spans, [{ beforeHead: A, afterHead: B }]);
+  const resumed = await fx.invoke(false);
+  assert.equal(resumed.ok, true);
+  assert.deepEqual(fx.calls, [{ beforeHead: A, afterHead: B }]);
+  assert.deepEqual((await readPendingPostSyncRefresh(fx.paths)).spans, []);
 });
 
 test('a slow sync does not launch a 15-minute post-sync refresh after the parent budget is exhausted', async () => {
