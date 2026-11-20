@@ -91,9 +91,13 @@ Case 'real disposable absent and present path' {
     } finally { [IO.File]::Delete($fixture) }
 }
 
-# Execute the candidate's actual limited-parent continuation with native I/O
-# replaced by explicit fixtures. These prove decisions, never native admission.
-$entrySource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'recover-stephanos-core-lock.ps1'))
+# Preserve the old continuation adversaries as immutable test-only provenance.
+# The active recovery entry refuses all modes and never loads this fixture.
+$entryFixture = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\..\shared\agents\fixtures\stephanosCoreHistoricalRecoveryEntryV1.json')) | ConvertFrom-Json
+if ($entryFixture.schemaVersion -cne 'stephanos.test-only-core-recovery-entry-fixture.v1' -or
+    $entryFixture.sourceHead -cne '8ef452ae017a42f417dcbaa3f8365b38dce2b897' -or
+    $entryFixture.testOnly -ne $true -or $entryFixture.runtimeAuthority -ne $false) { throw 'HISTORICAL_ENTRY_FIXTURE_UNPROVEN' }
+$entrySource = $entryFixture.source
 $nativeBegin = $entrySource.IndexOf('            $absence = [StephanosCoreLockRecoveryV1]::new')
 $nativeEnd = $entrySource.IndexOf("            Write-CoreRecoveryResult `$true 'CORE_ABSENT_INVENTORY_OBSERVED'", $nativeBegin)
 if ($nativeBegin -lt 0 -or $nativeEnd -le $nativeBegin) { throw 'NATIVE_SOURCE_BOUNDARY_MISSING' }

@@ -25,6 +25,7 @@ function installFakeGh(directory) {
   const fakeSource = [
     "import { writeFileSync } from 'node:fs';",
     'const args = process.argv.slice(2);',
+    "if (process.env.GH_ANY_CAPTURE_PATH) writeFileSync(process.env.GH_ANY_CAPTURE_PATH, JSON.stringify(args), 'utf8');",
     "const mode = process.env.FAKE_GH_MODE || 'valid';",
     `const head = process.env.GH_HEAD_SHA || '${'a'.repeat(40)}';`,
     "if (args[0] === 'pr' && args[1] === 'list') {",
@@ -176,6 +177,8 @@ test('CLI refuses a truncated open PR estate', () => {
 
 test('CLI refuses a mixed prepared snapshot and live --from-gh without publishing a false live ledger', () => {
   const directory = mkdtempSync(join(tmpdir(), 'stephanos-pr-estate-mixed-source-'));
+  const fakeGhEnv = installFakeGh(directory);
+  const capture = join(directory, 'unexpected-gh-invocation.json');
   const snapshot = join(directory, 'snapshot.json');
   const families = join(directory, 'families.json');
   const output = join(directory, 'certified-ledger.json');
@@ -190,13 +193,16 @@ test('CLI refuses a mixed prepared snapshot and live --from-gh without publishin
   for (const flags of [
     ['--input', snapshot, '--from-gh'],
     ['--from-gh', '--input', snapshot, '--compare'],
+    ['--input', '', '--from-gh'],
+    ['--from-gh', '--input', '', '--compare'],
   ]) {
     const result = runCli([
       ...flags, '--repository', 'owner/repo', '--families', families, '--output', output,
-    ], { env: { PATH: directory } });
+    ], { env: { PATH: directory, ...fakeGhEnv, GH_ANY_CAPTURE_PATH: capture } });
     assert.equal(result.status, 2, result.stderr);
     assert.match(result.stderr, /PR_ESTATE_RECONCILER_BLOCKED: --input and --from-gh are mutually exclusive/);
     assert.equal(result.stdout.trim(), '');
     assert.equal(existsSync(output), false, 'must not write a counterfeit live estate');
+    assert.equal(existsSync(capture), false, 'must not even invoke the GitHub CLI');
   }
 });

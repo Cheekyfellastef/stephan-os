@@ -63,7 +63,7 @@ test('V9 keeps conflicting candidates held while independent capacity continues'
     goal:{ id, title:`Build ${id}`, intent:'Add bounded source code and tests', resourceIds:[resourceId] },
   });
   const engine = buildConciergeExecutionEngineV9({
-    receipts:[parallelReceipt('one','repo:main'),parallelReceipt('two','repo:main'),parallelReceipt('three','goal:three')],
+    receipts:[parallelReceipt('one','repo:cheekyfellastef/stephan-os'),parallelReceipt('two','repo:cheekyfellastef/stephan-os'),parallelReceipt('three','goal:three')],
     activeExecutionLanes:[{ laneId:'active-review', resourceIds:['pr:1712'] }],
     dispatchAdapterAvailable:true,
     sourceApproved:true,

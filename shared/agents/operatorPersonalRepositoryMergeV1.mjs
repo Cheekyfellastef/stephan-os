@@ -1417,6 +1417,31 @@ export function validatePersonalRepositoryCheckRuns(
         && text(candidate.check?.conclusion).toLowerCase() === 'success'
       ));
 
+    // The read-only pilot requests inspection only through workflow_dispatch.
+    // A PR skip is neutral only with its own exact, trusted contract-test proof.
+    const prMailboxFreeInspectionNotRequested = conclusion === 'skipped'
+      && name === 'inspect-goal'
+      && workflow === 'Stephanos Control Tower - Mailbox-Free Read-Only Pilot'
+      && path === '.github/workflows/stephanos-mailbox-free-readonly.yml'
+      && text(run?.event) === 'pull_request'
+      && text(run?.head_branch) === branch
+      && branch !== 'main'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success'
+      && exactCheckBindings.some((candidate) => (
+        candidate !== checkBinding
+        && candidate.exactRun
+        && candidate.checkId > 0 && candidate.checkId !== checkId
+        && candidate.checkSuiteId === checkSuiteId
+        && candidate.run?.id === run?.id
+        && text(candidate.check?.name) === 'contract-test'
+        && text(candidate.check?.head_sha).toLowerCase() === sourceHead
+        && text(candidate.check?.app?.slug) === 'github-actions'
+        && strictPositiveInteger(candidate.check?.app?.id) === 15368
+        && text(candidate.check?.status).toLowerCase() === 'completed'
+        && text(candidate.check?.conclusion).toLowerCase() === 'success'
+      ));
+
     // Mailbox Receipt Index mirrors receipts only for non-PR events. Its PR
     // proof job still runs, so the bound mirror skip is expected only for the
     // exact successful pull_request run. No push, dispatch, main-headed run or
@@ -1452,6 +1477,8 @@ export function validatePersonalRepositoryCheckRuns(
       disposition = 'pr-pages-deployment-not-requested';
     } else if (prMailboxMirrorNotRequested) {
       disposition = 'pr-mailbox-mirror-not-requested';
+    } else if (prMailboxFreeInspectionNotRequested) {
+      disposition = 'pr-mailbox-free-inspection-not-requested';
     } else if (cleanIndependentReviewProved
       && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
