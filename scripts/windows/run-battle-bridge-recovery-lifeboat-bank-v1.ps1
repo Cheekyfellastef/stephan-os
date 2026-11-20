@@ -53,6 +53,30 @@ $probe = $null
 try { $probe = $probeText | ConvertFrom-Json } catch { }
 
 $ok = $probeExitCode -eq 0 -and $null -ne $probe -and [bool]$probe.ok
+$autoHealVerdict = if ($SelfTestOnly) { 'SELF_TEST_ONLY' } else { 'NOT_ATTEMPTED' }
+$autoHealBlocker = ''
+$autoHealStartRequested = $false
+if (-not $SelfTestOnly -and $ok) {
+    try {
+        $autoHealOutput = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $actionPath -Action RECOVER_REMOTE_ACCESS_STACK 2>&1)
+        $autoHealExitCode = $LASTEXITCODE
+        $autoHealText = $autoHealOutput -join [Environment]::NewLine
+        $autoHeal = $null
+        try { $autoHeal = $autoHealText | ConvertFrom-Json } catch { }
+        if ($autoHealExitCode -eq 0 -and $null -ne $autoHeal -and [string]$autoHeal.action -ceq 'RECOVER_REMOTE_ACCESS_STACK') {
+            $autoHealVerdict = [string]$autoHeal.finalVerdict
+            $autoHealBlocker = [string]$autoHeal.blocker
+            $autoHealStartRequested = [bool]$autoHeal.startRequested
+        } else {
+            $autoHealVerdict = 'REMOTE_ACCESS_AUTO_HEAL_BLOCKED'
+            $autoHealBlocker = if ($null -ne $autoHeal -and $autoHeal.blocker) { [string]$autoHeal.blocker } else { 'REMOTE_ACCESS_AUTO_HEAL_RESPONSE_INVALID' }
+        }
+    } catch {
+        $autoHealVerdict = 'REMOTE_ACCESS_AUTO_HEAL_FAILED'
+        $autoHealBlocker = 'REMOTE_ACCESS_AUTO_HEAL_EXCEPTION'
+    }
+}
+
 $claimVerdict = if ($SelfTestOnly) { 'SELF_TEST_ONLY' } else { 'NOT_ATTEMPTED' }
 $claimBlocker = ''
 if (-not $SelfTestOnly -and $ok) {
@@ -87,6 +111,9 @@ $heartbeat = [ordered]@{
     startedAtUtc = $startedAt.ToString('o')
     completedAtUtc = [DateTime]::UtcNow.ToString('o')
     probeVerdict = if ($null -ne $probe) { [string]$probe.finalVerdict } else { 'PROBE_RESPONSE_INVALID' }
+    remoteAccessAutoHealVerdict = $autoHealVerdict
+    remoteAccessAutoHealBlocker = $autoHealBlocker
+    remoteAccessAutoHealStartRequested = [bool]$autoHealStartRequested
     githubClaimVerdict = $claimVerdict
     githubClaimBlocker = $claimBlocker
     selfTestOnly = [bool]$SelfTestOnly
@@ -95,6 +122,8 @@ $heartbeat = [ordered]@{
     gitMutationAllowed = $false
     sourceMutationAllowed = $false
     pcRestartAllowed = $false
+    remoteChatTransportReauthenticationClaimed = $false
+    physicalPowerRecoveryClaimed = $false
 }
 
 $temp = "$heartbeatPath.tmp-$PID-$([Guid]::NewGuid().ToString('N'))"

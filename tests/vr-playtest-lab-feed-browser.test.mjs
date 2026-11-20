@@ -65,6 +65,84 @@ const LIVE_FEED = {
     latestLessonId: 'vr-starfield-aer-observe-browser-proof',
     latestProtectReady: true,
   },
+  intelligence: {
+    schemaVersion: 'stephanos.vr-canonical-evidence-fanout.v1',
+    readOnly: true,
+    referenceCorpus: {
+      sourceCount: 26,
+      reusableSourceCount: 17,
+    },
+    latestEvidence: {
+      current: true,
+      sessionId: 'observe-browser-proof',
+      game: 'Starfield',
+      mode: 'OBSERVE',
+    },
+    correlationCandidates: [
+      {
+        sourceId: 'gsaw0-starfield2vr-stability',
+        repository: 'gsaw0/starfield2vr',
+        role: 'DLSS frame lifetime and Starfield stability candidate',
+      },
+      {
+        sourceId: 'mutar-starfield2vr',
+        repository: 'mutars/starfield2vr',
+        role: 'canonical Starfield VR implementation baseline',
+      },
+    ],
+    vrResearchAgent: {
+      action: 'PROPOSE_CANONICAL_VR_CORRELATION',
+      route: 'CHATGPT_GITHUB',
+    },
+  },
+};
+
+
+const SPATIAL_FEED = {
+  schemaVersion: 'stephanos.spatial-workspace-telemetry-feed.v1',
+  readOnly: true,
+  state: 'ready',
+  reason: 'SPATIAL_TELEMETRY_READY',
+  latest: {
+    eventId: 'spatial-vr-browser-proof-end-3',
+    timestampUtc: '2026-09-28T20:00:00.000Z',
+    summary: 'Spatial Workspace end evidence',
+    learningCandidate: false,
+    evidence: {
+      schemaVersion: 'stephanos.spatial-workspace-telemetry.v1',
+      runId: 'browser-proof',
+      phase: 'end',
+      sequence: 3,
+      observedAtUtc: '2026-09-28T20:00:00.000Z',
+      sourceHead: 'a'.repeat(40),
+      device: 'Quest/browser',
+      route: 'Stephanos Spatial Workspace / WebXR',
+      room: 'holodeck-starting-chamber',
+      durationMs: 60000,
+      frame: {
+        count: 4320,
+        poseFrames: 4318,
+        missingPoseFrames: 2,
+        trackingLossCount: 0,
+        averageFrameMs: 13.9,
+        maxFrameMs: 22.1,
+        estimatedFps: 71.9,
+        maxViewCount: 2,
+      },
+      input: {
+        sourceCountMax: 2,
+        handTrackedSourceCountMax: 0,
+        inputSourceChangeCount: 1,
+        selectCount: 3,
+        squeezeCount: 1,
+      },
+      webxr: { immersiveSupported: true, referenceSpace: 'local-floor' },
+      errorCount: 0,
+    },
+  },
+  history: [],
+  workspace: { live: true, safeWorkspaceRoot: 'SHARED_WORKSPACE' },
+  errors: [],
 };
 
 function contentType(path) {
@@ -147,6 +225,13 @@ async function preparePage(browser, feed = LIVE_FEED) {
       body: JSON.stringify(feed),
     });
   });
+  await page.route('**/api/shared-workspace/spatial-telemetry-feed', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(SPATIAL_FEED),
+    });
+  });
   return { page, consoleErrors };
 }
 
@@ -162,6 +247,32 @@ test('VR Research Lab renders reusable playtest Flywheel evidence in a real brow
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /AER faults 42/);
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /rollback RESTORED/);
     assert.match(await panel.locator('[data-role="method"]').innerText(), /AER presenter protection/);
+    assert.match(await panel.locator('[data-role="intelligence"]').innerText(), /PROPOSE_CANONICAL_VR_CORRELATION/);
+    assert.match(await panel.locator('[data-role="intelligence"]').innerText(), /pinned corpus 26/);
+    assert.match(await panel.locator('[data-role="correlations"]').innerText(), /gsaw0-starfield2vr-stability/);
+    const spatialPanel = page.locator('#spatial-workspace-telemetry-panel');
+    await page.waitForFunction(() => document.querySelector('#spatial-workspace-telemetry-panel [data-role="state"]')?.textContent === 'READY');
+    assert.match(await spatialPanel.locator('[data-role="summary"]').innerText(), /Quest\/browser/);
+    assert.match(await spatialPanel.locator('[data-role="summary"]').innerText(), /4320 frames/);
+    assert.match(await spatialPanel.locator('[data-role="provenance"]').innerText(), /Exact head aaaaaaaa/);
+
+    const localNav = page.locator('#vr-lab-local-nav');
+    await localNav.waitFor({ state: 'visible' });
+    assert.equal(await localNav.locator('[data-role="crumb-current"]').innerText(), 'Visual Cockpit');
+    assert.equal(await localNav.getByRole('button', { name: '← Back' }).isVisible(), true);
+    assert.equal(await localNav.getByRole('button', { name: 'Command Deck' }).isVisible(), true);
+
+    const bodyText = await page.locator('body').innerText();
+    assert.doesNotMatch(bodyText, /\\n\\n/, 'literal escaped newlines must never render in the VR Lab');
+
+    await localNav.getByRole('button', { name: 'Deep Evidence' }).click();
+    await page.waitForFunction(() => document.body.classList.contains('vr-lab-deep-mode'));
+    await page.waitForFunction(() => document.querySelector('#vr-lab-local-nav [data-role="crumb-current"]')?.textContent === 'Deep Evidence');
+
+    await localNav.getByRole('button', { name: '← Back' }).click();
+    await page.waitForFunction(() => document.body.classList.contains('vr-lab-visual-mode'));
+    assert.equal(await localNav.locator('[data-role="crumb-current"]').innerText(), 'Visual Cockpit');
+
     assert.equal(consoleErrors.length, 0, consoleErrors.join('\n'));
   });
 });
@@ -177,6 +288,8 @@ test('Starfield VR Reference Lab renders title-specific Protect readiness in a r
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /AER faults 42/);
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /next PROTECT/);
     assert.match(await panel.locator('[data-role="provenance"]').innerText(), /Baseline 63db15c370d3/);
+    assert.match(await panel.locator('[data-role="intelligence"]').innerText(), /PROPOSE_CANONICAL_VR_CORRELATION/);
+    assert.match(await panel.locator('[data-role="intelligence"]').innerText(), /gsaw0-starfield2vr-stability/);
     assert.equal(consoleErrors.length, 0, consoleErrors.join('\n'));
   });
 });

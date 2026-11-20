@@ -260,6 +260,58 @@ function buildRouteEvaluation(input = {}, capability = 'sourceImplementation') {
   });
 }
 
+export function auditZeroOpenAiBuilderPortabilityV1(input = {}) {
+  const capability = text(input.requiredCapability, 'sourceImplementation');
+  const builderTasks = Array.isArray(input.builderTasks) ? input.builderTasks : [];
+  const routeRecords = normalizedRoutes(input);
+  const invalidRoutes = Object.freeze(routeRecords
+    .filter(({ validation }) => !validation.valid)
+    .map(({ route, validation }) => Object.freeze({ routeId: route.routeId, errors: validation.errors })));
+  const results = [];
+  for (const task of builderTasks) {
+    const taskValidation = validateProviderNeutralTaskEnvelope(task);
+    if (!taskValidation.valid) {
+      results.push(Object.freeze({
+        taskId: text(task?.taskId),
+        sourceAdapter: text(task?.sourceAdapter).toLowerCase(),
+        ready: false,
+        reason: 'TASK_ENVELOPE_INVALID',
+        selectedRoute: null,
+      }));
+      continue;
+    }
+    const choice = chooseRouteForTask(task, routeRecords, capability, { forceNonOpenAi: true });
+    results.push(Object.freeze({
+      taskId: task.taskId,
+      sourceAdapter: text(task.sourceAdapter).toLowerCase(),
+      ready: Boolean(choice.selectedRoute && choice.selectedRoute.providerFamily !== 'OPENAI'),
+      reason: choice.selectedRoute ? '' : choice.blocker,
+      selectedRoute: choice.selectedRoute
+        ? Object.freeze({
+            routeId: choice.selectedRoute.routeId,
+            adapterId: choice.selectedRoute.adapterId,
+            providerFamily: choice.selectedRoute.providerFamily,
+            proofRef: choice.selectedRoute.proofRef,
+          })
+        : null,
+    }));
+  }
+  const uncovered = Object.freeze(results.filter((entry) => !entry.ready));
+  return Object.freeze({
+    schemaVersion: ZERO_OPENAI_BUILDER_FAILOVER_V1_SCHEMA,
+    capability,
+    builderCount: builderTasks.length,
+    coveredBuilderCount: builderTasks.length - uncovered.length,
+    results: Object.freeze(results),
+    uncovered,
+    invalidRoutes,
+    authority: zeroAuthority(),
+    finalVerdict: builderTasks.length > 0 && uncovered.length === 0 && invalidRoutes.length === 0
+      ? 'ZERO_OPENAI_BUILDER_FLEET_READY'
+      : 'ZERO_OPENAI_BUILDER_FLEET_GAPS',
+  });
+}
+
 export function planProviderIndependentCapacityRefillV1(input = {}) {
   const capability = text(input.requiredCapability, 'sourceImplementation');
   if (!CAPABILITY_KEYS.has(capability)) {

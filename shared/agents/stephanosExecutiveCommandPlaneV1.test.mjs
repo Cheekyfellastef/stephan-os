@@ -353,6 +353,13 @@ test('mission orchestrator delegation explicitly completes the selected goal and
   assert.equal(plan.delegation.goalCompletionContract.mode, 'COMPLETE_SELECTED_GOAL_AND_REFILL');
   assert.equal(plan.delegation.goalCompletionContract.completionRequired, true);
   assert.equal(plan.delegation.goalCompletionContract.terminalExecutionReceiptRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.downstreamPickupProofRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.responsibilityRetainedUntilPickup, true);
+  assert.equal(plan.delegation.goalCompletionContract.handoffPublicationIsTerminal, false);
+  assert.equal(plan.delegation.goalCompletionContract.escalateOrRetryUntilPickup, true);
+  assert.equal(plan.delegation.handoffResponsibility.downstreamPickupProofRequired, true);
+  assert.equal(plan.delegation.handoffResponsibility.responsibilityRetainedUntilPickup, true);
+  assert.equal(plan.delegation.handoffResponsibility.handoffPublicationIsTerminal, false);
   assert.equal(plan.delegation.goalCompletionContract.exactHeadReviewHandoffRequired, true);
   assert.equal(plan.delegation.goalCompletionContract.releaseConstructionCapacityAfterTerminal, true);
   assert.equal(plan.delegation.goalCompletionContract.selectNextEligibleAfterRelease, true);
@@ -378,6 +385,10 @@ test('mission orchestrator delegation explicitly completes the selected goal and
   const body = JSON.parse(handoff.record.body);
   assert.equal(body.goalCompletionContract.selectedGoal, '#1556');
   assert.equal(body.goalCompletionContract.selectNextEligibleAfterRelease, true);
+  assert.equal(body.returnContract.downstreamPickupProofRequired, true);
+  assert.equal(body.returnContract.responsibilityRetainedUntilPickup, true);
+  assert.equal(body.returnContract.handoffPublicationIsTerminal, false);
+  assert.equal(body.returnContract.escalateOrRetryUntilPickup, true);
   assert.equal(body.returnContract.selectedGoalCompletionRequired, true);
   assert.equal(body.returnContract.continueAfterGoalReleaseRequired, true);
 });

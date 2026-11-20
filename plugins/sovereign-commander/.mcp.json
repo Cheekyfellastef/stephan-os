@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "sovereign-commander": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-commander-mcp.mjs"
+      ],
+      "env": {
+        "STEPHANOS_REPO_ROOT": "C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os"
+      }
+    }
+  }
+}

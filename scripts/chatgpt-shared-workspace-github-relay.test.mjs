@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-// PR #2493: run authority-read freshness and pinned executable regressions in hosted CI.
+// Exercise the original recovery guardian's bounded authority-read broker in current CI.
 import './recovery-mesh-guardian-github-observation.test.mjs';
 
 import {
@@ -10,6 +10,7 @@ import {
   CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID,
   createFixedChatGptSharedWorkspaceGitHubAdapter,
   parseChatGptSharedWorkspaceRequestComment,
+  renderChatGptSharedWorkspaceResponse,
   runChatGptSharedWorkspaceGitHubRelay,
   validateChatGptSharedWorkspaceResponseBody,
 } from './chatgpt-shared-workspace-github-relay.mjs';
@@ -40,6 +41,31 @@ function request(overrides = {}) {
     ...overrides,
   };
 }
+
+test('response validation checks decoded JSON values rather than harmless transport escapes', () => {
+  for (const answerText of ['Plan\\nNext outcome', 'A quoted "goal" and a single \\ separator', 'A normal\nparagraph']) {
+    const body = renderChatGptSharedWorkspaceResponse({ sanitizedAnswer: { answerText } });
+    assert.equal(validateChatGptSharedWorkspaceResponseBody(body).valid, true, answerText);
+  }
+});
+
+test('decoded private paths and secret-shaped values remain forbidden including JSON unicode escapes', () => {
+  for (const value of ['C:\\Users\\private', '\\\\server\\private', '/home/private', 'ghp_' + 'a'.repeat(30)]) {
+    const json = JSON.stringify({ nested: [value] }).replaceAll('C', '\\u0043').replaceAll('g', '\\u0067');
+    const body = '<!-- stephanos-chatgpt-shared-workspace-response-v1 -->\n```json\n' + json + '\n```';
+    assert.deepEqual(validateChatGptSharedWorkspaceResponseBody(body).errors, ['unsafe-response-text']);
+  }
+  const safeBody = renderChatGptSharedWorkspaceResponse({ ok: true });
+  assert.equal(validateChatGptSharedWorkspaceResponseBody(safeBody + '\n/home/private').valid, false);
+});
+
+test('malformed, multiple and non-object response JSON fail closed', () => {
+  const prefix = '<!-- stephanos-chatgpt-shared-workspace-response-v1 -->\n';
+  for (const json of ['{bad}', 'null', '[]']) {
+    assert.equal(validateChatGptSharedWorkspaceResponseBody(prefix + '```json\n' + json + '\n```').valid, false);
+  }
+  assert.equal(validateChatGptSharedWorkspaceResponseBody(prefix + '```json\n{}\n```\n```json\n{}\n```').valid, false);
+});
 
 function projection() {
   return {
@@ -163,6 +189,33 @@ test('fixed adapter uses only the two canonical GitHub comment endpoints without
   assert.equal(calls.every((call) => call.options.shell === false), true);
 });
 
+test('completed cached ChatGPT request uses durable receipt without another GitHub read', async () => {
+  const workspace = fakeWorkspace();
+  let freshReads = 0;
+  const cached = request({ requestId: 'completed-cached-request-1' });
+  const adapter = {
+    readRequest: () => ({
+      ok: true,
+      body: envelope(cached),
+      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      observationSource: 'SHARED_CACHE',
+    }),
+    readRequestFresh: () => {
+      freshReads += 1;
+      throw new Error('fresh GitHub read must not happen for completed request');
+    },
+    writeResponse: () => ({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }),
+  };
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, adapter),
+    receiptExistsFn: async () => true,
+  });
+  assert.equal(freshReads, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED');
+  assert.equal(result.requestId, 'completed-cached-request-1');
+});
+
 test('cached non-idle ChatGPT request is freshly rebound before any workspace side effect', async () => {
   const workspace = fakeWorkspace();
   let freshReads = 0;
@@ -193,45 +246,6 @@ test('cached non-idle ChatGPT request is freshly rebound before any workspace si
   assert.equal(freshReads, 1);
   assert.equal(result.ok, true);
   assert.equal(result.requestId, 'fresh-request-1');
-});
-
-test('already-processed cached ChatGPT request is satisfied locally without a fresh GitHub rebind', async () => {
-  const workspace = fakeWorkspace();
-  const cached = request({ requestId: 'cached-completed-request-1' });
-  const directAdapter = {
-    readRequest: () => ({
-      ok: true,
-      body: envelope(cached),
-      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
-      observationSource: 'DIRECT',
-    }),
-    writeResponse: () => ({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }),
-  };
-  const first = await runChatGptSharedWorkspaceGitHubRelay({
-    ...baseOptions(workspace, directAdapter),
-    projectionBuilder: async () => projection(),
-  });
-  assert.equal(first.ok, true);
-
-  let freshReads = 0;
-  const cachedAdapter = {
-    readRequest: () => ({
-      ok: true,
-      body: envelope(cached),
-      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
-      observationSource: 'SHARED_CACHE',
-    }),
-    readRequestFresh: () => {
-      freshReads += 1;
-      return { ok: false, reason: 'SHOULD_NOT_READ_GITHUB' };
-    },
-    writeResponse: () => ({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }),
-  };
-  const second = await runChatGptSharedWorkspaceGitHubRelay(baseOptions(workspace, cachedAdapter));
-  assert.equal(second.ok, true);
-  assert.equal(second.classification, 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED');
-  assert.equal(second.requestId, cached.requestId);
-  assert.equal(freshReads, 0);
 });
 
 test('authenticated read publishes canonical head truth, a sanitized workspace summary, audit event and final completion receipt', async () => {
@@ -310,6 +324,79 @@ test('current-status read uses canonical head truth and does not let unrelated g
   assert.match(responseBody, new RegExp(`"windowsCheckoutHead": "${main}"`));
   assert.match(responseBody, /"sourceHeadsAgree": true/);
   assert.match(responseBody, /"currentStatus"/);
+});
+
+test('Starfield VR telemetry read uses the dedicated Shared Workspace projection and avoids the global status path', async () => {
+  let responseBody = '';
+  let globalProjectionCalls = 0;
+  let telemetryReadCalls = 0;
+  const workspace = fakeWorkspace();
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, {
+      readRequest: () => ({
+        ok: true,
+        body: envelope(request({
+          operation: 'READ_STARFIELD_VR_TELEMETRY',
+          recordKind: 'starfield-vr-telemetry-projection',
+          requestId: 'request-starfield-vr-telemetry-1',
+          correlationId: 'goal-1506-starfield-vr-telemetry',
+        })),
+        authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      }),
+      writeResponse: (body) => {
+        responseBody = body;
+        return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' };
+      },
+    }),
+    projectionBuilder: async () => {
+      globalProjectionCalls += 1;
+      return projection();
+    },
+    starfieldVrTelemetryReader: async () => {
+      telemetryReadCalls += 1;
+      return {
+        projectionKind: 'starfield-vr-telemetry-projection',
+        aggregationOk: true,
+        aggregationReason: 'STARFIELD_VR_TELEMETRY_CURRENT_AND_HISTORY_READ',
+        current: {
+          sessionId: 'starfield-vr-performance-20261002-003000',
+          provider: 'mutar-openxr',
+          providerIdentityStatus: 'VERIFIED_PROVIDER',
+          sessionOutcome: 'CRASHED',
+          focus: 'CRASH_FORENSICS',
+          sampleCount: 73,
+          maxGpuMemoryPct: 98.3,
+          crashEvidence: [{
+            moduleName: 'RuntimeIPCServiceClient_64.dll',
+            exceptionCode: '0xc0000409',
+            faultOffset: '0x0000000000248541',
+          }],
+        },
+        history: {
+          available: true,
+          sessionCount: 3,
+          rawTelemetryAlreadyCanonicalInSharedWorkspace: true,
+        },
+        recentSessions: [],
+        authority: {
+          readOnlyProjection: true,
+          arbitraryFilesystemAccess: false,
+          commandExecutionAccess: false,
+          sourceMutationAccess: false,
+          mergeAuthority: false,
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_READ_PASS');
+  assert.equal(globalProjectionCalls, 0);
+  assert.equal(telemetryReadCalls, 1);
+  assert.match(responseBody, /"projectionKind": "starfield-vr-telemetry-projection"/);
+  assert.match(responseBody, /"provider": "mutar-openxr"/);
+  assert.match(responseBody, /RuntimeIPCServiceClient_64\.dll/);
+  assert.match(responseBody, /"rawTelemetryAlreadyCanonicalInSharedWorkspace": true/);
 });
 
 test('authenticated bounded write persists only the canonical message, audit, event and completion records', async () => {

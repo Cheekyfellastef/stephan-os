@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { executeVrResearchCalibrationV1, runRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
+import { evaluateRecurringCalibrationReadinessV1, executeVrResearchCalibrationV1, runRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import { createSharedWorkspaceParticipantStatusRecord, validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
 
 const NOW='2026-09-27T15:00:00.000Z';
@@ -10,6 +10,28 @@ function status(participantId, timestampUtc, status='calibrated') {
 const CORE_IDS=['stephanos','openclaw-local','openclaw-standalone'];
 function currentCoreStatuses(){return CORE_IDS.map(id=>status(id,'2026-09-26T15:00:00.000Z'));}
 const stubCoreExam=async({participantId})=>({participantId,questionCount:10,answeredCount:10,gapCount:0,requiresRepairReplay:false});
+test('readiness evaluator reports due participants without executing exams or publishing results', async () => {
+  let examCalls = 0;
+  let publicationCalls = 0;
+  const result = await evaluateRecurringCalibrationReadinessV1({
+    nowUtc: NOW,
+    trigger: 'SCHEDULED',
+    loadParticipantStatuses: async () => ({
+      records: [
+        status('stephanos-vr-research', '2026-09-26T15:00:00.000Z'),
+        ...CORE_IDS.map((id) => status(id, '2026-09-19T15:00:00.000Z')),
+      ],
+    }),
+    executeCoreParticipantExam: async () => { examCalls += 1; },
+    publishRecord: async () => { publicationCalls += 1; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.executionDeferred, true);
+  assert.deepEqual(result.dueParticipantIds, ['openclaw-local', 'openclaw-standalone', 'stephanos']);
+  assert.equal(examCalls, 0);
+  assert.equal(publicationCalls, 0);
+});
+
 test('scheduled runner marks VR Research due after interval and publishes receipt', async () => {
   const published=[];
   const result=await runRecurringCalibrationReadinessV1({

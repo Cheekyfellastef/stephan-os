@@ -8,10 +8,29 @@ import {
   buildEngineeringCodingMemoryPackV1,
   buildEngineeringIncidentMethodRecordV1,
   validateEngineeringIncidentMethodRecordInputV1,
+  validateEngineeringCodingMemoryPackV1,
 } from './engineeringIncidentMethodMemoryV1.mjs';
 
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
+
+test('existing memory packs validate with content identity and zero authority preserved', () => {
+  const record = buildEngineeringIncidentMethodRecordV1(recordInput());
+  const pack = buildEngineeringCodingMemoryPackV1({problemClass:record.problemClass,
+    componentRefs:['#1574'],createdAtUtc:'2026-10-30T14:00:00.000Z',records:[record]});
+  assert.equal(validateEngineeringCodingMemoryPackV1(pack),true);
+  for (const changed of [{...pack,packId:'foreign'},
+    {...pack,authority:{...pack.authority,approvalAllowed:true}},
+    {...pack,records:[{...record,symptom:'different content'}]},
+    Object.defineProperty({...pack},'hiddenAuthority',{value:true}),
+    {...pack,[Symbol('authority')]:true}]) {
+    assert.equal(validateEngineeringCodingMemoryPackV1(changed),false);
+  }
+  let invoked=false;
+  const accessor=Object.defineProperty({...pack},'records',{enumerable:true,get(){invoked=true;return pack.records;}});
+  assert.equal(validateEngineeringCodingMemoryPackV1(accessor),false);
+  assert.equal(invoked,false);
+});
 
 function recordInput(overrides = {}) {
   return {

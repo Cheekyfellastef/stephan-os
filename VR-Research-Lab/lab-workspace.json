@@ -1,9 +1,9 @@
 {
   "schemaVersion": "stephanos.vr-research-lab.workspace.v4",
-  "updatedAt": "2026-09-24T06:45:00+01:00",
+  "updatedAt": "2026-09-29T04:55:00+01:00",
   "mission": "Grow a compounding flat-to-VR capability factory: turn verified external knowledge, Battle Bridge proof and Stephan's headset judgement into reusable methods that accelerate Starfield VR and every later conversion.",
   "overview": [
-    "The Lab now coordinates a 25-source VR knowledge stack rather than a small collection of game notes. Every source retains provenance, licence, freshness, confidence and reuse boundaries.",
+    "The Lab now coordinates a 26-source VR knowledge stack rather than a small collection of game notes. Every source retains provenance, licence, freshness, confidence and reuse boundaries.",
     "Starfield VR is the flagship proving ground. The current path combines Starfield and Creation Kit authoring evidence, Mutar/OpenXR implementation evidence, Skyrim VR parity references and exact Quest 3 Battle Bridge proof.",
     "CyberpunkVR Port adds a current open implementation reference for genuine per-eye engine rendering, OpenXR, embodiment, tracked hands, physical weapons, holsters, stereo HUD and in-headset diagnostics.",
     "The Witcher 3 route adds a different conversion grammar: compose a first-person camera adapter, stereo presentation layer and creator headset evidence when a native engine route is unavailable.",
@@ -111,7 +111,7 @@
     {"name":"Stephanos Spatial Volume","priority":"P1","mode":"Quest 3 seated command bridge over the canonical Stephanos brain","focus":"Goals as spatial objects, AI agents as inhabitants, voice intent, controller navigation and evidence-rich mission execution without separate state."}
   ],
   "knowledgeBuckets": [
-    "25-source canonical registry: provenance, revision, licence, freshness and promotion state",
+    "26-source canonical registry: provenance, revision, licence, freshness and promotion state",
     "Flat-to-VR route planner and failure-layer ownership",
     "Starfield / Creation Kit authoring evidence",
     "Mutar / NoMoreFlat Starfield implementation evidence",
@@ -200,6 +200,7 @@
     {"label":"Reusable Modules","path":"VR-Research-Lab/modules/"},
     {"label":"Spatial Bridge Doctrine","path":"VR-Research-Lab/docs/research-notes/stephanos-spatial-bridge-doctrine.md"},
     {"label":"Battle Bridge Intake Contract","path":"VR-Research-Lab/docs/research-notes/battle-bridge-downloads-vr-source-intake.md"},
+    {"label":"Battle Bridge Installed VR Corpus","path":"VR-Research-Lab/knowledge-sources/battle-bridge-installed-vr-corpus/knowledge-extraction.md"},
     {"label":"Meta VR CLI Research","path":"VR-Research-Lab/knowledge-sources/meta-vr-cli/knowledge-extraction.md"}
   ],
   "integrationSeams": [

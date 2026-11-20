@@ -1,6 +1,5 @@
 ﻿import {
-  readSharedWorkspaceDashboardFeed,
-  SHARED_WORKSPACE_FEED_RECORD_SCOPES,
+  readSharedWorkspaceRecordDirectory,
 } from './shared-workspace-dashboard-feed.mjs';
 import {
   buildEngineeringIncidentMethodRecordV1,
@@ -89,23 +88,24 @@ export async function promoteSharedWorkspaceLearningCandidatesV1(input = {}) {
   }
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
-  const feed = await readSharedWorkspaceDashboardFeed({
-    root: resolved.root,
-    repoRoot,
-    nowMs,
-    recordScope: SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY,
-  });
+  const [eventHistory, lessonHistory] = await Promise.all([
+    readSharedWorkspaceRecordDirectory(resolved.root, 'events', { repoRoot, nowMs }),
+    readSharedWorkspaceRecordDirectory(resolved.root, 'lessons', { repoRoot, nowMs }),
+  ]);
   const existingLessonIds = new Set(
-    list(feed?.records?.lessonRecords).map((record) => text(record?.lessonId)).filter(Boolean),
+    list(lessonHistory?.records).map((record) => text(record?.lessonId)).filter(Boolean),
   );
   const maxPromotions = Number.isSafeInteger(input.maxPromotions)
     ? Math.max(1, Math.min(32, input.maxPromotions))
     : DEFAULT_LEARNING_PROMOTION_LIMIT_V1;
   const promotedLessonIds = [];
   const skippedLessonIds = [];
-  const errors = [];
+  const errors = [
+    ...list(eventHistory?.errors),
+    ...list(lessonHistory?.errors),
+  ];
 
-  for (const event of list(feed?.records?.eventRecords)) {
+  for (const event of list(eventHistory?.records)) {
     if (promotedLessonIds.length >= maxPromotions) break;
     if (!event?.learningCandidate) continue;
     try {
