@@ -1215,3 +1215,43 @@ test('reviewer P0 source evidence rejects accessor-backed claims before executin
     }
   }
 });
+
+test('reviewer P0 and source claims reject Proxy traps without executing user code', () => {
+  const cases = [
+    ['root input', (claim, guard) => guard(claim)],
+    ['analysis', (claim, guard) => { claim.analysis = guard(claim.analysis); return claim; }],
+    ['finding array', (claim, guard) => { claim.analysis.findings = guard(claim.analysis.findings); return claim; }],
+    ['finding object', (claim, guard) => { claim.analysis.findings[0] = guard(claim.analysis.findings[0]); return claim; }],
+    ['counts', (claim, guard) => { claim.analysis.counts = guard(claim.analysis.counts); return claim; }],
+    ['source array', (claim, guard) => { claim.sources = guard(claim.sources); return claim; }],
+    ['source object', (claim, guard) => { claim.sources[0] = guard(claim.sources[0]); return claim; }],
+  ];
+  assert.equal(analyzeWindowsAuthorityVrResourceGovernorReviewV1(input()).clean, true);
+  for (const [name, mutate] of cases) {
+    let traps = 0;
+    const guard = (value) => new Proxy(value, {
+      get() { traps++; throw new Error('untrusted Proxy get: ' + name); },
+      getOwnPropertyDescriptor() { traps++; throw new Error('untrusted Proxy descriptor: ' + name); },
+      ownKeys() { traps++; throw new Error('untrusted Proxy keys: ' + name); },
+      getPrototypeOf() { traps++; throw new Error('untrusted Proxy prototype: ' + name); },
+    });
+    const review = analyzeWindowsAuthorityVrResourceGovernorReviewV1(mutate(input(), guard));
+    assert.equal(review.clean, false, name);
+    assert.deepEqual(review.proofRefs, [], name);
+    assert.equal(traps, 0, name + ' must never execute Proxy traps');
+    for (const authority of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(review[authority], false, name + ': ' + authority);
+    }
+  }
+  for (const target of ['root', 'findings', 'sources']) {
+    const claim = input();
+    const revoked = Proxy.revocable(target === 'root' ? claim
+      : target === 'findings' ? claim.analysis.findings : claim.sources, {});
+    revoked.revoke();
+    if (target === 'findings') claim.analysis.findings = revoked.proxy;
+    if (target === 'sources') claim.sources = revoked.proxy;
+    const review = analyzeWindowsAuthorityVrResourceGovernorReviewV1(target === 'root' ? revoked.proxy : claim);
+    assert.equal(review.clean, false, target + ' revoked proxy');
+    assert.deepEqual(review.proofRefs, [], target + ' revoked proxy');
+  }
+});

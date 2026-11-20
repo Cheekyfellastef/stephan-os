@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { types } from 'node:util';
 
 export const WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1 = Object.freeze([
   'scripts/windows/run-vr-resource-governor.ps1',
@@ -44,7 +45,7 @@ function blobSha(source) {
 
 function ownDataFields(value, fields) {
   // Review evidence must be literal data, never getter-based executable claims.
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+  return Boolean(value && typeof value === 'object' && !types.isProxy(value) && !Array.isArray(value)
     && fields.every((key) => {
       const field = Object.getOwnPropertyDescriptor(value, key);
       return field && Object.hasOwn(field, 'value');
@@ -55,6 +56,9 @@ function exactEscalation(analysis = {}) {
   // Review findings, counts and verdict must be explicit, not inherited P0 claims.
   if (!ownDataFields(analysis, ['findings', 'counts', 'verdict'])
     || (Object.hasOwn(analysis, 'clean') && !ownDataFields(analysis, ['clean']))) return false;
+  // A Proxy can execute code even through a property-descriptor inspection.
+  // Review claims must be inert arrays, including on revoked proxies.
+  if (types.isProxy(analysis.findings)) return false;
   const findings = Array.isArray(analysis.findings) ? analysis.findings : [];
   const counts = analysis.counts;
   // An accessor installed at array index zero is not a wire finding.
@@ -407,7 +411,8 @@ export function analyzeWindowsAuthorityVrResourceGovernorReviewV1(input = {}) {
     });
   }
 
-  const sources = ownDataFields(input, ['sources']) && Array.isArray(input.sources) ? input.sources : [];
+  const sources = ownDataFields(input, ['sources']) && !types.isProxy(input.sources)
+    && Array.isArray(input.sources) ? input.sources : [];
   const source = sources.length === 1 ? Object.getOwnPropertyDescriptor(sources, '0')?.value : null;
   const findings = [];
   const proofRefs = [];
