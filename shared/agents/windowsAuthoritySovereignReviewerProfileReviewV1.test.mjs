@@ -6,6 +6,7 @@ import {
   WINDOWS_AUTHORITY_SOVEREIGN_REVIEWER_PROFILE_PATHS_V1 as PATHS,
   WINDOWS_AUTHORITY_SOVEREIGN_REVIEWER_PROFILE_BLOBS_V1 as BLOBS,
   analyzeWindowsAuthoritySovereignReviewerProfileReviewV1 as analyze,
+  activePowerShell,
 } from './windowsAuthoritySovereignReviewerProfileReviewV1.mjs';
 
 const REPOSITORY='Cheekyfellastef/stephan-os';
@@ -66,4 +67,36 @@ test('wrong PR branch escalation or moving-main lineage never enters the profile
   const partial=input({sources});partial.analysis={findings:partial.analysis.findings.slice(0,2),counts:{P0:2,P1:0,P2:0}};
   assert.equal(analyze(partial).eligible,false);
   assert.equal(analyze(input({sources,lineageEvidence:lineage({liveMainAfterSha:'d'.repeat(40)})})).eligible,false);
+});
+
+test('source lineage must carry a bounded, non-reused, valid parent identity set',async()=>{
+  const sources=await exactSources();
+  for(const variant of [
+    undefined,null,[],['not-a-sha'],['c'.repeat(40),'c'.repeat(40)],
+    [HEAD],Array.from({length:5},(_,i)=>String(i).repeat(40)),
+  ]){
+    const details=lineage();
+    if(variant===undefined)delete details.parents;
+    else details.parents=variant;
+    assert.equal(analyze(input({sources,lineageEvidence:details})).eligible,false,
+      'Malformed or missing source parent evidence admitted');
+  }
+  assert.equal(analyze(input({sources,lineageEvidence:lineage({parents:['c'.repeat(40)]})})).eligible,true);
+});
+
+test('PowerShell scanner cannot erase executable interpolation disguised as comment delimiters',()=>{
+  const unsafe=[
+    String.raw`$x = "prefix <#$(Invoke-Expression 'Write-Output 7')#> suffix"`,
+    '$x = @"\ntext <#$(Start-Process cmd)#>\n"@\n',
+    'Write-Output "text # $(Invoke-Expression evil)"',
+  ];
+  for(const source of unsafe)
+    assert.match(activePowerShell(source),/\b(?:Invoke-Expression|Start-Process)\b/i);
+  for(const comment of [
+    '<# Invoke-Expression blocked-text #>\nWrite-Output safe',
+    'Write-Output safe # Start-Process blocked-text\n',
+    '<# outer\nStart-Process inert\n#>\nWrite-Output safe',
+  ])assert.doesNotMatch(activePowerShell(comment),/\b(?:Invoke-Expression|Start-Process)\b/i);
+  assert.match(activePowerShell('Write-Output "literal # Start-Process"'),/Start-Process/);
+  assert.equal(activePowerShell("Write-Output 'safe' # Start-Process").includes('Start-Process'),false);
 });
