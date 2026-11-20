@@ -300,3 +300,208 @@ test('legacy base blockers are discarded when live cards replace the seeded esta
   assert.equal(projection.operatorAttention.localProofNeeded.length, 0);
   assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_CURRENT');
 });
+
+
+test('future-dated observations cannot be current, including valid timestamp boundaries', () => {
+  const fixture = (when) => overlayGoalDashboardWithLivePortfolio({
+    baseProjection: baseProjection(),
+    nowMs: NOW,
+    staleAfterMs: 60_000,
+    liveProjection: {
+      githubTelemetry: {
+        adapterAvailable: true,
+        lastUpdatedAt: when,
+        pullRequests: [{ number: 1785, title: 'Future observation', headSha: HEAD, checksStatus: 'passed', blockers: [] }],
+      },
+    },
+  });
+  for (const [offset, expected] of [
+    [1, 'UNKNOWN'],
+    [60 * 60_000, 'UNKNOWN'],
+    [0, 'CURRENT'],
+    [-60_000, 'CURRENT'],
+    [-60_001, 'STALE'],
+  ]) {
+    const projection = fixture(new Date(NOW + offset).toISOString());
+    assert.equal(projection.sourceTruth, expected, `GitHub timestamp offset ${offset}`);
+    assert.equal(projection.goals[0].statusTruth, expected, `PR timestamp offset ${offset}`);
+    if (offset > 0) {
+      assert.equal(projection.goals[0].proofTruth, 'UNKNOWN');
+      assert.ok(projection.goals[0].blockers.includes('UNKNOWN_GITHUB_TELEMETRY'));
+      assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+    }
+  }
+  assert.equal(fixture('not-a-timestamp').sourceTruth, 'UNKNOWN');
+});
+
+test('future-dated Shared Workspace status and proof remain unknown even with successful records', () => {
+  const projection = overlayGoalDashboardWithLivePortfolio({
+    baseProjection: baseProjection(),
+    nowMs: NOW,
+    goalRecords: [{
+      goalId: 'goal-future', status: 'ACTIVE',
+      timestampUtc: new Date(NOW + 1).toISOString(),
+    }],
+    proofRecords: [{
+      goalId: 'goal-future', status: 'PASS',
+      timestampUtc: new Date(NOW + 60_000).toISOString(),
+      proofRefs: ['proofs/not-yet-observed.json'],
+    }],
+  });
+  assert.equal(projection.sourceTruth, 'UNKNOWN');
+  assert.equal(projection.goals[0].statusTruth, 'UNKNOWN');
+  assert.equal(projection.goals[0].proofTruth, 'UNKNOWN');
+  assert.ok(projection.goals[0].blockers.includes('UNKNOWN_STATUS_RECORD'));
+  assert.ok(projection.goals[0].blockers.includes('UNKNOWN_PROOF_RECORD'));
+  assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+});
+
+test('authoritative exact-head check batch outranks stale workflow failures but never denied batches', () => {
+  const historicalRuns = REQUIRED_WORKFLOWS.map((name, index) => ({
+    id: `prior-${index}`, name, prNumber: 1835, headSha: HEAD,
+    status: index === 0 ? 'failed' : 'passed', updatedAt: '2026-08-14T10:00:00Z',
+  }));
+  const project = (checksStatus, checkBatchObserved, headSha = HEAD) =>
+    overlayGoalDashboardWithLivePortfolio({
+      baseProjection: baseProjection(), nowMs: NOW,
+      liveProjection: { githubTelemetry: {
+        adapterAvailable: true, lastUpdatedAt: '2026-08-14T11:29:50Z',
+        pullRequests: [{ number: 1835, headSha, checksStatus, checkBatchObserved, blockers: [] }],
+        workflows: historicalRuns,
+      }},
+    }).goals[0];
+  const current = project('passed', true);
+  assert.match(current.summary, /checks passed/);
+  assert.equal(current.proofTruth, 'CURRENT');
+  assert.equal(current.state, 'VERIFYING', 'passing CI does not prove physical building');
+  for (const [direct, expected] of [['failed','FAILED'], ['pending','PENDING'], ['unknown','UNKNOWN']]) {
+    const card = project(direct, true);
+    assert.ok(card.blockers.includes(`GITHUB_CHECKS_${expected}`));
+    assert.equal(card.proofTruth, 'UNKNOWN');
+  }
+  assert.ok(project('passed', false).blockers.includes('GITHUB_CHECKS_FAILED'),
+    'legacy fallback keeps failed historical workflow conservatism');
+  const headless = project('passed', true, '');
+  assert.ok(headless.blockers.includes('GITHUB_CHECKS_UNKNOWN'));
+  assert.ok(headless.blockers.includes('GITHUB_HEAD_UNKNOWN'));
+  assert.equal(headless.proofTruth, 'UNKNOWN');
+});
+
+test('unverified PRs cannot be counted as active builders from open-PR presence alone', () => {
+  const makeCard = (checksStatus, draft = false) => overlayGoalDashboardWithLivePortfolio({
+    baseProjection: baseProjection(),
+    nowMs: NOW,
+    liveProjection: { githubTelemetry: {
+      adapterAvailable: true,
+      lastUpdatedAt: '2026-08-14T11:29:50Z',
+      pullRequests: [{
+        number: 1899, title: 'No physical execution receipt',
+        headSha: HEAD, checksStatus, draft, blockers: [],
+      }],
+      workflows: [],
+    }},
+  });
+  const unknown = makeCard('unknown');
+  assert.equal(unknown.goals[0].state, 'UNKNOWN');
+  assert.match(unknown.goals[0].summary, /^UNKNOWN · checks unknown/);
+  assert.ok(unknown.goals[0].blockers.includes('GITHUB_CHECKS_UNKNOWN'));
+  assert.equal(unknown.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+  assert.equal(makeCard('pending').goals[0].state, 'VERIFYING');
+  assert.equal(makeCard('failed').goals[0].state, 'BLOCKED');
+  assert.equal(makeCard('passed').goals[0].state, 'VERIFYING',
+    'CI success without native execution receipts never becomes BUILDING');
+  assert.equal(makeCard('unknown', true).goals[0].state, 'VERIFYING');
+});
+
+test('fresh failed or unreferenced workspace receipts cannot falsely qualify live completion', () => {
+  const fixture = (status, proofRefs, timeOffset = -2000) =>
+    overlayGoalDashboardWithLivePortfolio({
+      baseProjection: baseProjection(), nowMs: NOW,
+      goalRecords: [{ goalId: 'goal-handoff', status: 'ACTIVE',
+        timestampUtc: new Date(NOW - 3000).toISOString() }],
+      proofRecords: [{ goalId: 'goal-handoff', status, proofRefs,
+        timestampUtc: new Date(NOW + timeOffset).toISOString() }],
+    });
+  for (const status of ['FAIL', 'ERROR', 'PENDING', 'UNKNOWN', 'COMPLETED', '']) {
+    const result = fixture(status, ['proofs/failed-or-unqualified.json']);
+    assert.equal(result.goals[0].proofTruth, 'UNKNOWN', status);
+    assert.ok(result.goals[0].blockers.includes('PROOF_RESULT_NOT_PASSED'), status);
+    assert.equal(result.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+  }
+  for (const refs of [[], [''], ['   '], [null], [{ path: 'forged' }]]) {
+    const result = fixture('PASS', refs);
+    assert.equal(result.goals[0].proofTruth, 'UNKNOWN');
+    assert.ok(result.goals[0].blockers.includes('PROOF_REFERENCE_MISSING'));
+    assert.equal(result.sourceTruth, 'UNKNOWN');
+    assert.equal(result.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
+  }
+  for (const status of ['PASS', 'PASSED', 'SUCCESS', 'SUCCEEDED', 'VERIFIED']) {
+    const result = fixture(status, ['proofs/goal-handoff.json']);
+    assert.equal(result.goals[0].proofTruth, 'CURRENT', status);
+    assert.equal(result.finalVerdict, 'LANDING_GOAL_DASHBOARD_CURRENT');
+  }
+  assert.equal(fixture('PASS', ['proofs/goal-handoff.json'], -90_000_000).goals[0].proofTruth, 'STALE');
+  assert.equal(fixture('PASS', ['proofs/goal-handoff.json'], 1000).goals[0].proofTruth, 'UNKNOWN');
+});
+
+test('workspace evidence accepts either canonical proof reference field without trusting non-string objects', () => {
+  const project = (proofRecord) => overlayGoalDashboardWithLivePortfolio({
+    baseProjection: baseProjection(), nowMs: NOW,
+    goalRecords: [{ goalId: 'goal-ref', status: 'ACTIVE',
+      timestampUtc: new Date(NOW - 3000).toISOString() }],
+    proofRecords: [{ goalId: 'goal-ref', status: 'PASS',
+      timestampUtc: new Date(NOW - 2000).toISOString(), ...proofRecord }],
+  }).goals[0];
+  const valid = project({ refs: [], proofRefs: ['proofs/goal-ref.json'] });
+  assert.equal(valid.proofTruth, 'CURRENT');
+  assert.deepEqual(valid.proofRefs, ['proofs/goal-ref.json']);
+  const invalid = project({ refs: [{ path: 'object-not-proof-ref' }], proofRefs: [''] });
+  assert.equal(invalid.proofTruth, 'UNKNOWN');
+  assert.deepEqual(invalid.proofRefs, []);
+  assert.ok(invalid.blockers.includes('PROOF_REFERENCE_MISSING'));
+});
+
+test('source-bound workspace handoff proof rejects mismatched or missing receiver head identities', () => {
+  const headA = 'a'.repeat(40);
+  const headB = 'b'.repeat(40);
+  const observed = '2026-08-14T11:29:50Z';
+  const project = (goalHead, proofHead, proofStatus = 'PASS') => {
+    const goal = { goalId: 'goal-2670', status: 'ACTIVE', timestampUtc: observed };
+    const proof = { goalId: 'goal-2670', status: proofStatus,
+      timestampUtc: observed, proofRefs: ['proofs/goal-2670-receipt.json'] };
+    if (goalHead !== undefined) goal.sourceHead = goalHead;
+    if (proofHead !== undefined) proof.sourceHead = proofHead;
+    const result = overlayGoalDashboardWithLivePortfolio({
+      baseProjection: baseProjection(), nowMs: NOW,
+      goalRecords: [goal], proofRecords: [proof],
+    });
+    return { result, card: result.goals[0] };
+  };
+
+  // Reproduced pre-fix: these unacknowledged head combinations all returned CURRENT.
+  for (const [description, producerHead, receiverHead] of [
+    ['different SHA', headA, headB],
+    ['missing receiver SHA', headA, undefined],
+    ['missing producer SHA', undefined, headA],
+    ['malformed producer SHA', 'not-a-sha', headA],
+    ['malformed receiver SHA', headA, 'not-a-sha'],
+  ]) {
+    const { result, card } = project(producerHead, receiverHead);
+    assert.equal(card.proofTruth, 'UNKNOWN', description);
+    assert.ok(card.blockers.includes('PROOF_SOURCE_HEAD_UNBOUND'), description);
+    assert.match(card.exactNextAction, /Reconcile exact source head/, description);
+    assert.equal(result.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED', description);
+  }
+
+  for (const [description, producerHead, receiverHead] of [
+    ['matched exact SHA', headA, headA],
+    ['case-insensitive exact SHA', headA.toUpperCase(), headA],
+    ['legacy records without claimed source heads', undefined, undefined],
+  ]) {
+    const { card } = project(producerHead, receiverHead);
+    assert.equal(card.proofTruth, 'CURRENT', description);
+    assert.equal(card.blockers.includes('PROOF_SOURCE_HEAD_UNBOUND'), false, description);
+  }
+  assert.equal(project(headA, headA, 'FAIL').card.proofTruth, 'UNKNOWN',
+    'correct SHA must not rescue a failing receipt');
+});

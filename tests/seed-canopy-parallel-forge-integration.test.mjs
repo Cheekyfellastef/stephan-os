@@ -61,7 +61,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     await mkdir(governorDir, { recursive: true });
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, phase: 'NORMAL', localModelAllowed: true, updatedAtUtc: new Date().toISOString() }));
+        active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false, updatedAtUtc: new Date().toISOString() }));
     const builderModule = await readFile(join(sourceRoot, 'scripts/seed-canopy-parallel-builder.mjs'), 'utf8');
     // The fixture supplies its own fresh governor; never run production Windows
     // resource reconciliation or model workloads in a temporary test checkout.
@@ -592,7 +592,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
       })) + '\n```';
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, phase: 'NORMAL', localModelAllowed: true,
+        active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false,
         updatedAtUtc: new Date().toISOString() }));
     const previousInferenceCalls = inferenceCount;
     const deterministicRun = await runAsync(process.execPath,
@@ -685,7 +685,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     advanceMainOnNextInference = true;
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, phase: 'NORMAL', localModelAllowed: true,
+        active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false,
         updatedAtUtc: new Date().toISOString() }));
     const racedRun = await runAsync(process.execPath,
       [executable, 'build', raceManifest, '--execute'], { cwd: repo, env });
@@ -729,7 +729,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
       redirectParentOnNextInference = { taskId: aliasTaskId, outside };
       await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
         JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-          active: false, phase: 'NORMAL', localModelAllowed: true,
+          active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false,
           updatedAtUtc: new Date().toISOString() }));
       const aliasedRun = await runAsync(process.execPath,
         [executable, 'build', aliasManifest, '--execute'], { cwd: repo, env });
@@ -771,7 +771,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     poisonTestOnNextInference = { taskId: poisonTaskId };
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, phase: 'NORMAL', localModelAllowed: true,
+        active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false,
         updatedAtUtc: new Date().toISOString() }));
     const poisoned = await runAsync(process.execPath,
       [executable, 'build', poisonManifest, '--execute'], { cwd: repo, env });
@@ -815,7 +815,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     poisonLocalGitConfigOnNextInference = true;
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, phase: 'NORMAL', localModelAllowed: true,
+        active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false,
         updatedAtUtc: new Date().toISOString() }));
     try {
       const configRun = await runAsync(process.execPath,
@@ -860,7 +860,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     ].join('\n');
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, phase: 'NORMAL', localModelAllowed: true,
+        active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false,
         updatedAtUtc: new Date().toISOString() }));
     const collision = await runAsync(process.execPath,
       [executable, 'build', aliasClaimManifest, '--execute'], { cwd: repo, env });
@@ -948,7 +948,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     }
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, phase: 'NORMAL', localModelAllowed: true,
+        active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false,
         updatedAtUtc: new Date().toISOString() }));
     const beforeBatchModelCalls = inferenceCount;
     const batch = await runAsync(process.execPath,
@@ -1010,7 +1010,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     ].join('\n');
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, phase: 'NORMAL', localModelAllowed: true,
+        active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false,
         updatedAtUtc: new Date().toISOString() }));
     const mutated = await runAsync(process.execPath,
       [executable, 'build', mutationManifest, '--execute'], { cwd: repo, env });
@@ -1053,7 +1053,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     ].join('\n');
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, phase: 'NORMAL', localModelAllowed: true,
+        active: false, phase: 'NORMAL', localModelAllowed: true, prepareLeaseActive: false,
         updatedAtUtc: new Date().toISOString() }));
     // Create the oversized config-output adversary through the owned fixture
     // file: a 70k argv exceeds Windows' command-line limit before Git can run.

@@ -2,6 +2,12 @@
 
 import { readFileSync } from 'node:fs';
 import { assertMailboxRotationWorkflowAdmission } from './canonical-mailbox-workflow-admission-v1.mjs';
+import { hasReadyReviewSelection } from '../shared/agents/protectedReadyReviewLifecycleV1.mjs';
+import {
+  prepareReadyReviewProducer,
+  finishReadyReviewProducer,
+  readyReviewTransports,
+} from './protected-ready-review-lifecycle-v1.mjs';
 import {
   PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
   PROTECTED_WORKFLOW_DISPATCH_ISSUE,
@@ -213,7 +219,16 @@ async function main() {
   const command = validation.command;
 
   if (command.operation === PROTECTED_WORKFLOW_READY_OPERATION) {
+    // Legacy packets retain only their existing READY behavior. A complete
+    // owner-pinned selection enables the new immutable review handoff, whose
+    // clean review and complete zero-thread admission are checked before any
+    // ready mutation; the exact PR identity is reread immediately afterwards.
+    const transport = hasReadyReviewSelection(command) ? readyReviewTransports() : null;
+    const prepared = transport ? await prepareReadyReviewProducer({
+      command, comment: event.comment, ...transport,
+    }) : null;
     const before = await readExactState(command, { allowDraft: true });
+    if (prepared && before.pull.draft !== prepared.beforeDraft) fail('PROTECTED_READY_REVIEW_DRAFT_STATE_CHANGED');
     let lifecycleResult = 'ALREADY_READY';
     if (before.pull.draft === true) {
       await assertMailboxRotationWorkflowAdmission({ mode: 'protected', prNumber: command.prNumber, head: command.expectedHead });
@@ -229,6 +244,7 @@ async function main() {
     const after = await readExactState(command, { allowDraft: true });
     if (after.pull.draft !== false) fail('PROTECTED_WORKFLOW_READY_POST_MUTATION_NOT_READY');
     const receipt = await postReceipt(command, lifecycleResult);
+    if (prepared) await finishReadyReviewProducer(prepared, lifecycleResult, transport);
     console.log(JSON.stringify({ ok: true, verdict: lifecycleResult, receipt }));
     return;
   }

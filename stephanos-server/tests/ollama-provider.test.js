@@ -1,11 +1,160 @@
-import test from 'node:test';
+import test, { beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 
 import { getProviderHealthSnapshot } from '../services/llm/router/routeLLMRequest.js';
 import { checkOllamaHealth, resolveOllamaConfig, runOllamaProvider } from '../services/llm/providers/ollamaProvider.js';
 import { determineFastLaneEligibility } from '../services/llm/router/fastResponseLane.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
+const ORIGINAL_READ_FILE_SYNC = fs.readFileSync;
+
+// Provider tests must not inherit the operator's real gaming/custody record.
+// Default to a fresh admitted idle record; held-record cases below replace this
+// filesystem observation, never a caller-controlled provider flag.
+beforeEach(t => {
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (String(path).endsWith('vr-resource-governor-current.json')) {
+      return JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+        updatedAtUtc: new Date().toISOString(), phase: 'NORMAL', active: false,
+        flatGameActive: false, airLinkActive: false, realAirLinkActive: false,
+        virtualAirLinkTestActive: false, prepareLeaseActive: false,
+        nativeProbeCustodyHeld: false, dependencyObservationKnown: true,
+        localModelAllowed: true, heavyModelAllowed: true, evictionHealthy: true });
+    }
+    return ORIGINAL_READ_FILE_SYNC(path, ...args);
+  });
+  syncBuiltinESMExports();
+});
+afterEach(t => {
+  t.mock.restoreAll();
+  syncBuiltinESMExports();
+});
+
+test('actual Ollama provider refuses idle resource holds and invalid present state before any HTTP request', async t => {
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const originalRead = fs.readFileSync;
+  let fixture;
+  let calls = 0;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (String(path).endsWith('vr-resource-governor-current.json')) return fixture;
+    return originalRead(path, ...args);
+  });
+  syncBuiltinESMExports();
+  globalThis.fetch = async () => { calls++; throw new Error('HELD_PROVIDER_MUST_NOT_FETCH'); };
+  try {
+    const normal = { schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+      updatedAtUtc: new Date().toISOString(), phase: 'NORMAL', active: false,
+      flatGameActive: false, airLinkActive: false, realAirLinkActive: false,
+      virtualAirLinkTestActive: false, prepareLeaseActive: false,
+      nativeProbeCustodyHeld: false, dependencyObservationKnown: true,
+      localModelAllowed: true, heavyModelAllowed: true, evictionHealthy: true };
+    for (const state of [
+      { ...normal, nativeProbeCustodyHeld: true },
+      { ...normal, dependencyObservationKnown: false },
+      { ...normal, localModelAllowed: false },
+      { ...normal, evictionHealthy: false },
+      { ...normal, nativeProbeCustodyHeld: 'false' },
+      { ...normal, updatedAtUtc: new Date(Date.now() - 20000).toISOString() },
+      { schemaVersion: 'other' }, null,
+    ]) {
+      fixture = JSON.stringify(state);
+      const result = await runOllamaProvider({ model: 'qwen3.5:27b', messages: [{ role: 'user', content: 'repair' }] },
+        { baseURL: 'http://127.0.0.1:11434', ollamaLoadMode: 'performance', forceHeavyModel: true });
+      assert.equal(result.ok, false);
+      assert.equal(result.diagnostics.ollama.localModelAllowed, false);
+      assert.equal(calls, 0);
+    }
+    fixture = '{';
+    const malformed = await runOllamaProvider({}, { forceHeavyModel: true });
+    assert.equal(malformed.ok, false);
+    assert.equal(malformed.diagnostics.ollama.localModelAllowed, false);
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+test('actual Ollama provider rechecks custody after tags and before a warmup retry', async t => {
+  const originalRead = fs.readFileSync;
+  let held = false;
+  let posts = 0;
+  let holdAt = 'tags';
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (!String(path).endsWith('vr-resource-governor-current.json')) return originalRead(path, ...args);
+    return JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+      updatedAtUtc: new Date().toISOString(), phase: 'NORMAL', active: false,
+      flatGameActive: false, airLinkActive: false, realAirLinkActive: false,
+      virtualAirLinkTestActive: false, prepareLeaseActive: false,
+      nativeProbeCustodyHeld: held, dependencyObservationKnown: true,
+      localModelAllowed: true, heavyModelAllowed: true, evictionHealthy: true });
+  });
+  syncBuiltinESMExports();
+  globalThis.fetch = async url => {
+    if (String(url).endsWith('/api/tags')) {
+      if (holdAt === 'tags') held = true;
+      return { ok: true, status: 200, json: async () => ({ models: [{ name: 'gpt-oss:20b' }] }) };
+    }
+    posts++;
+    held = true;
+    throw Object.assign(new Error('fixture timeout'), { name: 'AbortError' });
+  };
+  try {
+    for (holdAt of ['tags', 'retry']) {
+      held = false; posts = 0;
+      const result = await runOllamaProvider({ messages: [{ role: 'user', content: 'analyse' }] }, {
+        baseURL: 'http://127.0.0.1:11434', model: 'gpt-oss:20b', ollamaLoadMode: 'performance',
+        forceHeavyModel: true, selectedProviderHealthOkAtSelection: true,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.error.retryable, false);
+      assert.equal(result.error.details.failureType, 'resource_hold');
+      assert.equal(posts, holdAt === 'tags' ? 0 : 1);
+    }
+  } finally { globalThis.fetch = ORIGINAL_FETCH; }
+});
+
+test('actual provider refuses missing Windows governor evidence and cannot force an unlisted heavy model', async t => {
+  const originalRead = fs.readFileSync;
+  let absent = process.platform === 'win32';
+  const postedModels = [];
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (!String(path).endsWith('vr-resource-governor-current.json')) return originalRead(path, ...args);
+    if (absent) throw Object.assign(new Error('fixture absent'), { code: 'ENOENT' });
+    return JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+      updatedAtUtc: new Date().toISOString(), phase: 'NORMAL', active: false,
+      flatGameActive: false, airLinkActive: false, realAirLinkActive: false,
+      virtualAirLinkTestActive: false, prepareLeaseActive: false,
+      nativeProbeCustodyHeld: false, dependencyObservationKnown: true,
+      localModelAllowed: true, heavyModelAllowed: false, evictionHealthy: true });
+  });
+  syncBuiltinESMExports();
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) return {
+      ok: true, status: 200, json: async () => ({ models: [{ name: 'custom:70b' }, { name: 'llama3.2:3b' }] }),
+    };
+    const body = JSON.parse(options.body);
+    postedModels.push(body.model);
+    return { ok: true, status: 200, json: async () => ({ model: body.model, message: { content: 'safe lightweight' } }) };
+  };
+  try {
+    const request = { model: 'custom:70b', messages: [{ role: 'user', content: 'complex architecture repair' }] };
+    const config = { baseURL: 'http://127.0.0.1:11434', ollamaLoadMode: 'performance', forceHeavyModel: true };
+    if (absent) {
+      const missing = await runOllamaProvider(request, config);
+      assert.equal(missing.ok, false);
+      assert.equal(missing.diagnostics.ollama.localModelAllowed, false);
+      assert.deepEqual(postedModels, []);
+    }
+    absent = false;
+    await runOllamaProvider(request, config);
+    assert.ok(postedModels.every(model => model === 'llama3.2:3b'));
+  } finally { globalThis.fetch = ORIGINAL_FETCH; }
+});
 
 test('resolveOllamaConfig ignores blank URL values and keeps localhost default', () => {
   const empty = resolveOllamaConfig({ baseURL: '' });

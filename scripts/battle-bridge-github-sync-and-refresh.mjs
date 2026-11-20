@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { resolveBattleBridgeGitExecution, battleBridgeCanonicalRepositoryArgs }
+  from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { IGNITION_SETTLED_REFRESH_SCHEMA_V1, projectIgnitionSettledRefreshEvidenceV1, projectIgnitionInertEvidenceV1, projectIgnitionOwnerResultV1 }
+  from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { performance } from 'node:perf_hooks';
@@ -20,7 +24,12 @@ export const MAX_SYNC_REFRESH_CYCLES = 3;
 export const SYNC_AND_REFRESH_CHILD_BUDGET_MS = 180_000;
 export const SYNC_AND_REFRESH_MIN_REMAINING_MS = 5_000;
 export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: 60_000, refresh: 150_000, mailbox: 30_000 });
+export const SYNC_CONTENTION_WAIT_MS = 30_000;
+export const SYNC_CONTENTION_POLL_MS = 1_000;
+const MAX_SYNC_CONTENTION_POLLS = SYNC_CONTENTION_WAIT_MS / SYNC_CONTENTION_POLL_MS;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const SAFE_SYNC_FAILURE_REASONS = new Set(['SYNC_ALREADY_RUNNING', 'LOCK_ACQUISITION_FAILED',
+  'NON_CANONICAL_REPOSITORY_PATH', 'NON_CANONICAL_WORKSPACE_PATH', 'REPOSITORY_WORKSPACE_OVERLAP']);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -86,6 +95,26 @@ function boundedStatusCode(value, limit = 180) {
   return normalized && normalized.length <= limit && /^[A-Z0-9_:-]+$/.test(normalized) ? normalized : '';
 }
 
+function syncFailureReason(result) {
+  const reason = result?.evaluation?.exactNextAction;
+  return SAFE_SYNC_FAILURE_REASONS.has(reason) ? reason : '';
+}
+
+function isNonOwnerSyncContention(result) {
+  // This is the executor's refusal before source inspection or mutation. An
+  // unknown/partial execution is never retried, and the original lock owner
+  // remains authoritative. Every retry must acquire admission in the executor.
+  return result?.ok === false
+    && Object.keys(result).every(key => ['ok', 'evaluation', 'lock', 'publication'].includes(key))
+    && result.publication === null
+    && result.evaluation?.classification === 'BLOCKED_INSTALL_OR_PERMISSION_REQUIRED'
+    && result.evaluation.exactNextAction === 'SYNC_ALREADY_RUNNING'
+    && result.evaluation.performsGitMutation === false
+    && result.evaluation.performsShellExecution === false
+    && result.lock?.ok === false
+    && result.lock.reason === 'SYNC_ALREADY_RUNNING';
+}
+
 export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new Date().toISOString() } = {}) {
   const mailboxPulse = result?.mailboxPulse && typeof result.mailboxPulse === 'object'
     ? result.mailboxPulse
@@ -112,9 +141,23 @@ export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new D
     schema: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
     observedAtUtc,
     sourceHead: safeHead(result?.sourceHead),
+    syncBlockerReason: SAFE_SYNC_FAILURE_REASONS.has(result?.syncBlockerReason) ? result.syncBlockerReason : '',
     ok,
     blocker,
     finalVerdict,
+    capacityObservationObserved: result?.capacityObservationObserved === true,
+    capacityObservation: result?.capacityObservation ? Object.freeze({
+      ok: result.capacityObservation.ok === true,
+      sourceHead: safeHead(result.capacityObservation.sourceHead),
+      blocker: boundedStatusCode(result.capacityObservation.blocker),
+      workerObservationProven: result.capacityObservation.workerObservationProven === true,
+      capacityObservationProven: result.capacityObservation.capacityObservationProven === true,
+      capacityAvailable: result.capacityObservation.lifeboatCapacity?.available === true,
+      reportedWorkerVerdict: boundedStatusCode(result.capacityObservation.reportedWorkerVerdict),
+      executionMetadataState: result.capacityObservation.executionMetadataState === 'REPORTED' ? 'REPORTED' : 'UNREPORTED',
+      idleProven: false, physicalExclusionGranted: false, workAuthorized: false,
+      admissionAttempted: false, sourceBuildAttempted: false,
+    }) : null,
     mailboxPulseObserved: result?.mailboxPulseObserved === true,
     mailboxPulse: mailboxPulse ? Object.freeze({
       ok: mailboxPulse?.ok === true,
@@ -174,17 +217,44 @@ function parseMarkedJson(stdout, marker) {
 }
 
 export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {}) {
+  // One execution/config/environment boundary serves HEAD and ancestry. The
+  // validated wrapper binds the first repository; a different root cannot reuse
+  // this adapter's observations or remaining ancestry allowance.
+  const git = resolveBattleBridgeGitExecution({ platform: process.platform, environment: process.env });
+  let repository = null;
+  function repositoryArgs(repoRoot) {
+    if (typeof repoRoot !== 'string' || !repoRoot || /[\0\r\n]/.test(repoRoot)) return null;
+    const root = path.resolve(repoRoot);
+    if (repository && repository.root !== root) return null;
+    if (!repository) repository = Object.freeze({ root, args: battleBridgeCanonicalRepositoryArgs(root) });
+    return repository.args;
+  }
   let ancestryBudgetMs = 5_000;
   return Object.freeze({
-    isAncestor(beforeHead, afterHead, repoRoot) {
+    observeCurrentHead(repoRoot, { timeoutMs = 1000 } = {}) {
+      const timeout = Number.isFinite(timeoutMs) ? Math.min(1000, Math.floor(timeoutMs)) : 0;
+      if (timeout <= 0) return { ok: false, head: '' };
+      const args = repositoryArgs(repoRoot);
+      if (!args) return { ok: false, head: '' };
+      const result = spawnSyncFn(git.executable, [...git.fixedConfigArgs, ...args,
+        'rev-parse', '--verify', 'HEAD'], { cwd: repoRoot, shell: false, encoding: 'utf8', windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'], timeout, maxBuffer: 256, env: git.environment });
+      const valid = result?.status === 0 && !result.error && !result.signal
+        && typeof result.stdout === 'string' && /^[a-f0-9]{40}(?:\r?\n)?$/.test(result.stdout);
+      return { ok: valid, head: valid ? result.stdout.trim() : '' };
+    },
+    isAncestor(beforeHead, afterHead, repoRoot, { timeoutMs = 1000 } = {}) {
       if (typeof beforeHead !== 'string' || typeof afterHead !== 'string' || !/^[0-9a-f]{40}$/.test(beforeHead)
         || !/^[0-9a-f]{40}$/.test(afterHead) || ancestryBudgetMs <= 0) return { ok: false, ancestor: false };
+      const args = repositoryArgs(repoRoot);
+      const timeout = Number.isFinite(timeoutMs) ? Math.min(1000, ancestryBudgetMs, Math.floor(timeoutMs)) : 0;
+      if (!args || timeout <= 0) return { ok: false, ancestor: false };
       const started = Date.now();
-      const result = spawnSyncFn('git', ['merge-base', '--is-ancestor', beforeHead, afterHead], {
-        cwd: repoRoot, encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: Math.min(1_000, ancestryBudgetMs), maxBuffer: 64 * 1024,
+      const result = spawnSyncFn(git.executable, [...git.fixedConfigArgs, ...args, 'merge-base', '--is-ancestor', beforeHead, afterHead], {
+        cwd: repoRoot, encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout, maxBuffer: 64 * 1024, env: git.environment,
       });
       ancestryBudgetMs -= Math.max(1, Date.now() - started);
-      return { ok: !result.error && [0, 1].includes(result.status), ancestor: result.status === 0 };
+      return { ok: !result.error && !result.signal && [0, 1].includes(result.status), ancestor: result.status === 0 };
     },
     runSync(paths, { timeoutMs = SYNC_AND_REFRESH_CHILD_BUDGET_MS } = {}) {
       const timeout = boundedChildTimeoutMs(timeoutMs, SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.sync);
@@ -228,7 +298,7 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
   });
 }
 
-export async function readPendingPostSyncRefresh(paths) {
+export async function readCanonicalPostSyncRefreshEvidenceV1(paths) {
   const records = {};
   for (const [key, filename] of [['syncRecord', 'battle-bridge-github-sync-current.json'], ['refreshRecord', 'post-sync-runtime-refresh-current.json']]) {
     try {
@@ -236,8 +306,64 @@ export async function readPendingPostSyncRefresh(paths) {
       records[key] = raw.length <= 64 * 1024 ? JSON.parse(raw) : {};
     } catch (error) { records[key] = error?.code === 'ENOENT' ? null : {}; }
   }
-  const evidence = collectPostSyncRefreshDebt(records);
-  return evidence.ok && !evidence.spans.length && !evidence.completion ? null : evidence;
+  const inertRecords = projectIgnitionInertEvidenceV1(records);
+  if (!inertRecords) return Object.freeze({ ok: false, blocker: 'PENDING_POST_SYNC_EVIDENCE_INVALID' });
+  const evidence = collectPostSyncRefreshDebt(inertRecords);
+  return evidence.ok ? Object.freeze({ ...evidence,
+    schemaVersion: 'stephanos.canonical-post-sync-refresh-evidence.v1', canonicalRecords: inertRecords }) : evidence;
+}
+
+export async function readPendingPostSyncRefresh(paths) {
+  const observed = await readCanonicalPostSyncRefreshEvidenceV1(paths);
+  if (observed.ok !== true) return observed;
+  const { canonicalRecords: inertRecords, schemaVersion: _readSchema, ...evidence } = observed;
+  return evidence.ok && !evidence.spans.length && !evidence.completion ? null : Object.freeze({ ...evidence,
+    ...(evidence.ok && evidence.completion ? { completionRecord: inertRecords.refreshRecord, syncStatusRecord: inertRecords.syncRecord } : {}),
+  });
+}
+
+// Only actual published current-head records can establish settled adoption.
+// Absence of refresh history is not a positive witness. The existing adapter's
+// before/after HEAD barrier fences a concurrent main advance during re-read.
+async function readSettledIgnitionRefreshEvidence({ paths, sourceHead, sync, pendingReader, adapter, remaining }) {
+  try {
+    const published = projectIgnitionInertEvidenceV1(sync, ['result', 'receipt', 'statusRecord']);
+    if (!published || typeof adapter.observeCurrentHead !== 'function') return null;
+    const before = adapter.observeCurrentHead(paths.repoRoot, { timeoutMs: remaining() });
+    if (before?.ok !== true || before.head !== sourceHead) return null;
+    const observed = projectIgnitionInertEvidenceV1(await pendingReader(paths));
+    if (!observed || !observed.completionRecord || !observed.syncStatusRecord) return null;
+    // Summaries from the reader are not authority. Re-derive from these exact
+    // normalized canonical records before any debt/completion consumer runs.
+    const evidence = collectPostSyncRefreshDebt({ syncRecord: observed.syncStatusRecord, refreshRecord: observed.completionRecord });
+    if (!evidence.ok || !evidence.completion) return null;
+    const syncKeys = ['schemaVersion', 'kind', 'statusId', 'classification', 'localHeadBefore', 'remoteHeadObserved', 'pendingRefresh'];
+    if (syncKeys.some(key => published[key] !== observed.syncStatusRecord[key])) return null;
+    const ancestry = [];
+    const resolved = resolvePostSyncRefreshDebt({ ...evidence, currentHead: sourceHead, requireCurrentCoverage: true,
+      isAncestor(beforeHead, afterHead) {
+        const result = adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot, { timeoutMs: remaining() });
+        if (result?.ok === true && typeof result.ancestor === 'boolean') ancestry.push({ beforeHead, afterHead, ancestor: result.ancestor });
+        return result;
+      } });
+    if (!resolved.ok || resolved.debt !== null) return null;
+    const after = adapter.observeCurrentHead(paths.repoRoot, { timeoutMs: remaining() });
+    if (after?.ok !== true || after.head !== sourceHead) return null;
+    return projectIgnitionSettledRefreshEvidenceV1({ schemaVersion: IGNITION_SETTLED_REFRESH_SCHEMA_V1, sourceHead,
+      syncStatusRecord: observed.syncStatusRecord, refreshCompletionRecord: observed.completionRecord, ancestry }, sourceHead);
+  } catch { return null; }
+}
+
+async function readInertPendingRefresh(paths, pendingReader) {
+  const observed = await pendingReader(paths);
+  if (observed === null) return null;
+  return projectIgnitionInertEvidenceV1(observed)
+    || Object.freeze({ ok: false, blocker: 'PENDING_POST_SYNC_EVIDENCE_INVALID' });
+}
+
+function inertOwnerChild(value, kind = 'sync') {
+  return projectIgnitionOwnerResultV1(value, kind)
+    || Object.freeze({ ok: false, blocker: 'SYNC_AND_REFRESH_OWNER_EVIDENCE_INVALID' });
 }
 
 function refreshHeadsFromSyncResult(result = {}) {
@@ -269,6 +395,16 @@ async function runFreshGoalDiscoveryHeartbeat(sourceHead) {
     return Object.freeze({ ok: false, blocker: 'GOAL_DISCOVERY_HEARTBEAT_EXPORT_MISSING' });
   }
   return heartbeatModule.runBattleBridgeGoalDiscoveryHeartbeat();
+}
+
+async function runFreshCapacityObservation(sourceHead, options) {
+  const heartbeatUrl = new URL('./battle-bridge-goal-discovery-heartbeat.mjs', import.meta.url);
+  heartbeatUrl.searchParams.set('sourceHead', sourceHead);
+  const heartbeatModule = await import(heartbeatUrl.href);
+  if (typeof heartbeatModule.runBattleBridgeCapacityObservationHeartbeat !== 'function') {
+    return Object.freeze({ ok: false, blocker: 'CAPACITY_OBSERVATION_EXPORT_MISSING', capacityObservationOnly: true });
+  }
+  return heartbeatModule.runBattleBridgeCapacityObservationHeartbeat(options);
 }
 
 function pulseConvergedMailbox({ paths, adapter, platform, timeoutMs }) {
@@ -352,6 +488,7 @@ export async function runBattleBridgeSyncAndRefresh({
   pendingReader = readPendingPostSyncRefresh,
   controlPlaneReconciler = reconcileBattleBridgeControlPlane,
   goalDiscoveryHeartbeat = null,
+  capacityObservationHeartbeat = null,
   platform = process.platform,
   maxCycles = MAX_SYNC_REFRESH_CYCLES,
   nowMs = () => performance.now(),
@@ -363,6 +500,10 @@ export async function runBattleBridgeSyncAndRefresh({
   }
 
   const refreshes = [];
+  let capacityObservation = null;
+  let capacityObservationAttempted = false;
+  const capacityResult = () => ({ capacityObservation,
+    capacityObservationObserved: capacityObservationAttempted });
   const start = nowMs();
   if (!Number.isFinite(start)) {
     return Object.freeze({ ok: false, blocker: 'SYNC_AND_REFRESH_CLOCK_INVALID', finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
@@ -374,6 +515,7 @@ export async function runBattleBridgeSyncAndRefresh({
       ? Math.max(0, Math.floor(deadline - observed)) : 0;
   };
   const budgetHeld = (phase, sourceHead = '') => Object.freeze({
+    ...capacityResult(),
     ok: false,
     blocker: 'SYNC_AND_REFRESH_PARENT_BUDGET_EXHAUSTED',
     budgetPhase: phase,
@@ -382,27 +524,72 @@ export async function runBattleBridgeSyncAndRefresh({
     finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
   });
   const safeRemaining = () => remaining() - SYNC_AND_REFRESH_MIN_REMAINING_MS;
-  const pending = await pendingReader(paths);
+  const pending = await readInertPendingRefresh(paths, pendingReader);
   const pendingInvalid = pending?.ok === false ? pending : null;
   let pendingSpans = pending?.ok === true ? pending.spans || [{ beforeHead: pending.beforeHead, afterHead: pending.afterHead }] : [];
   let requiredTargetIds = pending?.requiredTargetIds || [];
   let sovereignRelayRefreshRequired = pending?.ok === true ? pending.sovereignRelayRefreshRequired : false;
+  let governorRefreshRequired = pending?.ok === true && pending.governorRefreshRequired === true;
+  let spatialAdoptionRequired = pending?.ok === true && pending.spatialAdoptionRequired === true;
   let completion = pending?.completion || null;
   let pendingRefreshObserved = pendingSpans.length > 0;
   let sourceForwardedBeforeRefresh = false;
   let refreshDebtCoalesced = false;
+  let contentionStartedAt = null;
+  let contentionPolls = 0;
 
   for (let cycle = 0; cycle < maxCycles; cycle += 1) {
     if (safeRemaining() <= 0) return budgetHeld('SYNC');
-    const sync = adapter.runSync(paths, { timeoutMs: safeRemaining() });
+    let sync = inertOwnerChild(adapter.runSync(paths, { timeoutMs: safeRemaining() }));
+    while (sync?.ok === true
+      && (!sync.execution || (sync.execution.status === 2 && sync.execution.errorCode === ''))
+      && isNonOwnerSyncContention(sync.result)) {
+      const observedAt = nowMs();
+      if (contentionStartedAt === null) contentionStartedAt = observedAt;
+      const contentionRemaining = Number.isFinite(observedAt) && Number.isFinite(contentionStartedAt)
+        ? SYNC_CONTENTION_WAIT_MS - Math.max(0, observedAt - contentionStartedAt) : 0;
+      const waitMs = Math.min(SYNC_CONTENTION_POLL_MS, contentionRemaining, safeRemaining());
+      if (waitMs <= 0 || contentionPolls >= MAX_SYNC_CONTENTION_POLLS) {
+        return Object.freeze({ ...capacityResult(), ok: false, blocker: 'SYNC_ALREADY_RUNNING',
+          syncBlockerReason: 'SYNC_ALREADY_RUNNING',
+          syncClassification: sync.result.evaluation.classification,
+          pendingRefreshObserved, refreshes: Object.freeze([...refreshes]),
+          finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
+      }
+      contentionPolls += 1;
+      await sleepFn(waitMs);
+      if (safeRemaining() <= 0) {
+        return Object.freeze({ ...budgetHeld('SYNC_CONTENTION'), syncBlockerReason: 'SYNC_ALREADY_RUNNING' });
+      }
+      // Do not infer admission or success from another owner's status or from
+      // a disappearing lock. Re-enter the fixed executor under its own lock.
+      sync = inertOwnerChild(adapter.runSync(paths, { timeoutMs: safeRemaining() }));
+    }
     if (!sync.ok) {
-      return Object.freeze({ ok: false, blocker: sync.blocker, refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
+      return Object.freeze({ ok: false, blocker: sync.blocker, syncBlockerReason: '', refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
     }
 
     if (safeRemaining() <= 0) return budgetHeld('POST_SYNC', syncHead(sync.result));
     const converged = syncIsConverged(sync.result);
     const currentHeads = refreshHeadsFromSyncResult(sync.result);
     const currentSourceHead = syncHead(sync.result);
+    // Model/resource observation cannot pay runtime debt or authorize work.
+    // Only an authenticated converged source child reaches this closed stage;
+    // its own exact-head/launch checks and the producer's governor still apply.
+    if (converged && currentSourceHead && !capacityObservationAttempted) {
+      if (safeRemaining() <= 0) return budgetHeld('CAPACITY_OBSERVATION', currentSourceHead);
+      capacityObservationAttempted = true;
+      const observationOptions = { expectedSourceHead: currentSourceHead,
+        budgetMs: Math.min(30_000, safeRemaining()), paths };
+      try {
+        capacityObservation = typeof capacityObservationHeartbeat === 'function'
+          ? await capacityObservationHeartbeat(observationOptions)
+          : await runFreshCapacityObservation(currentSourceHead, observationOptions);
+      } catch {
+        capacityObservation = { ok: false, blocker: 'CAPACITY_OBSERVATION_EXCEPTION', capacityObservationOnly: true };
+      }
+      if (safeRemaining() <= 0) return budgetHeld('POST_CAPACITY_OBSERVATION', currentSourceHead);
+    }
     // A different invocation may have advanced source after our initial read.
     // Include the debt actually retained by this sync child under its lock.
     const freshDebt = inspectPendingPostSyncRefreshDebt(sync.result?.facts?.pendingRefresh);
@@ -410,6 +597,8 @@ export async function runBattleBridgeSyncAndRefresh({
       pendingSpans = [...new Map([...pendingSpans, ...freshDebt.spans].map(span => [`${span.beforeHead}:${span.afterHead}`, span])).values()];
       requiredTargetIds = [...new Set([...requiredTargetIds, ...freshDebt.requiredTargetIds])];
       if (freshDebt.sovereignRelayRefreshRequired) sovereignRelayRefreshRequired = true;
+      if (freshDebt.governorRefreshRequired) governorRefreshRequired = true;
+      if (freshDebt.spatialAdoptionRequired) spatialAdoptionRequired = true;
       pendingRefreshObserved ||= freshDebt.spans.length > 0;
     }
 
@@ -419,6 +608,7 @@ export async function runBattleBridgeSyncAndRefresh({
         blocker: sync.result?.evaluation?.classification || 'SYNC_NOT_CONVERGED',
         sourceHead: currentSourceHead,
         syncClassification: sync.result?.evaluation?.classification || '',
+        syncBlockerReason: syncFailureReason(sync.result),
         refreshes: Object.freeze(refreshes),
         sourceForwardedBeforeRefresh,
         refreshDebtCoalesced,
@@ -429,6 +619,7 @@ export async function runBattleBridgeSyncAndRefresh({
     if (pendingInvalid || !freshDebt.ok) {
       sourceForwardedBeforeRefresh = sync.result?.sourceUpdated === true;
       return Object.freeze({
+        ...capacityResult(),
         ok: false,
         blocker: pendingInvalid?.blocker || freshDebt.blocker,
         sourceHead: currentSourceHead,
@@ -443,11 +634,13 @@ export async function runBattleBridgeSyncAndRefresh({
 
     const pendingAfterHead = pendingSpans.at(-1)?.afterHead || '';
     const resolved = resolvePostSyncRefreshDebt({
-      spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion, sovereignRelayRefreshRequired,
+      spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion, sovereignRelayRefreshRequired, governorRefreshRequired,
+      spatialAdoptionRequired,
       currentHead: currentSourceHead,
-      isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
+      isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot, { timeoutMs: safeRemaining() }),
     });
     if (!resolved.ok) return Object.freeze({
+      ...capacityResult(),
       ok: false, blocker: resolved.blocker, sourceHead: currentSourceHead,
       syncClassification: sync.result?.evaluation?.classification || '', refreshes: Object.freeze(refreshes),
       pendingRefreshObserved, sourceForwardedBeforeRefresh: sync.result?.sourceUpdated === true,
@@ -461,7 +654,7 @@ export async function runBattleBridgeSyncAndRefresh({
 
     if (refreshHeads) {
       if (safeRemaining() <= 0) return budgetHeld('REFRESH', currentSourceHead);
-      const refresh = adapter.runRefresh({ ...refreshHeads, paths, timeoutMs: safeRemaining() });
+      const refresh = inertOwnerChild(adapter.runRefresh({ ...refreshHeads, paths, timeoutMs: safeRemaining() }), 'refresh');
       refreshes.push(Object.freeze({
         ...refreshHeads,
         pendingAfterHead,
@@ -470,17 +663,21 @@ export async function runBattleBridgeSyncAndRefresh({
       }));
       if (!refresh.ok || refresh.result?.ok !== true) {
         const refreshBlocker = refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED';
-        if (refreshBlocker === 'POST_SYNC_REFRESH_ALREADY_RUNNING') {
+        // A concurrent generic completion/disappearance cannot pay an earlier
+        // Spatial obligation. No Spatial verifier exists in this wrapper, so
+        // keep the original debt instead of entering its legacy settlement path.
+        if (refreshBlocker === 'POST_SYNC_REFRESH_ALREADY_RUNNING' && resolved.debt.spatialAdoptionRequired !== true) {
           let settled = false;
           while (safeRemaining() > 1_000) {
             await sleepFn(Math.min(1_000, safeRemaining()));
-            const observedPending = await pendingReader(paths);
+            const observedPending = await readInertPendingRefresh(paths, pendingReader);
             if (!observedPending) {
               settled = true;
               break;
             }
             if (observedPending?.ok === false) {
               return Object.freeze({
+                ...capacityResult(),
                 ok: false,
                 blocker: observedPending.blocker || 'PENDING_POST_SYNC_REFRESH_INVALID',
                 sourceHead: currentSourceHead,
@@ -491,6 +688,12 @@ export async function runBattleBridgeSyncAndRefresh({
                 refreshDebtCoalesced,
                 finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
               });
+            }
+            if (observedPending.spatialAdoptionRequired === true) {
+              // Another invocation can first discover Spatial debt while this
+              // one waits. Keep it monotonic; later disappearance is not proof.
+              spatialAdoptionRequired = true;
+              break;
             }
             const observedSpans = Array.isArray(observedPending?.spans)
               ? observedPending.spans
@@ -506,11 +709,14 @@ export async function runBattleBridgeSyncAndRefresh({
             pendingSpans = [];
             requiredTargetIds = [];
             sovereignRelayRefreshRequired = false;
+            governorRefreshRequired = false;
+            spatialAdoptionRequired = false;
             completion = null;
             continue;
           }
         }
         return Object.freeze({
+          ...capacityResult(),
           ok: false,
           blocker: refreshBlocker,
           sourceHead: currentSourceHead,
@@ -526,10 +732,13 @@ export async function runBattleBridgeSyncAndRefresh({
       const covered = completed.ok ? resolvePostSyncRefreshDebt({
         spans: [resolved.debt], requiredTargetIds: resolved.debt.requiredTargetIds, completion: completed,
         sovereignRelayRefreshRequired: resolved.debt.sovereignRelayRefreshRequired,
+        governorRefreshRequired: resolved.debt.governorRefreshRequired,
+        spatialAdoptionRequired: resolved.debt.spatialAdoptionRequired,
         currentHead: currentSourceHead,
-        isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
+        isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot, { timeoutMs: safeRemaining() }),
       }) : completed;
       if (!covered.ok || covered.debt) return Object.freeze({
+        ...capacityResult(),
         ok: false, blocker: covered.blocker || 'PENDING_POST_SYNC_COMPLETION_COVERAGE_UNPROVEN',
         sourceHead: currentSourceHead, refreshes: Object.freeze(refreshes),
         finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
@@ -538,6 +747,8 @@ export async function runBattleBridgeSyncAndRefresh({
       pendingSpans = [];
       requiredTargetIds = [];
       sovereignRelayRefreshRequired = false;
+      governorRefreshRequired = false;
+      spatialAdoptionRequired = false;
       completion = completed;
       continue;
     }
@@ -569,6 +780,7 @@ export async function runBattleBridgeSyncAndRefresh({
       if (safeRemaining() <= 0) return budgetHeld('POST_CONTROL_PLANE', sourceHead);
       if (goalDiscovery?.ok !== true) {
         return Object.freeze({
+          ...capacityResult(),
           ok: false,
           blocker: String(goalDiscovery?.blocker || goalDiscovery?.finalVerdict || 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED'),
           sourceHead,
@@ -586,7 +798,12 @@ export async function runBattleBridgeSyncAndRefresh({
       }
 
       if (!controlPlaneRepair.ok) {
+        const settledRefreshEvidence = await readSettledIgnitionRefreshEvidence({ paths, sourceHead, sync,
+          pendingReader, adapter, remaining: safeRemaining });
+        if (safeRemaining() <= 0) return budgetHeld('POST_SETTLED_REFRESH_EVIDENCE', sourceHead);
         return Object.freeze({
+          settledRefreshEvidence,
+          ...capacityResult(),
           ok: false,
           blocker: controlPlaneRepair.blocker,
           sourceHead,
@@ -606,6 +823,7 @@ export async function runBattleBridgeSyncAndRefresh({
       }
 
       return Object.freeze({
+        ...capacityResult(),
         schemaVersion: BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA,
         ok: true,
         sourceHead,
@@ -632,6 +850,7 @@ export async function runBattleBridgeSyncAndRefresh({
   }
 
   return Object.freeze({
+    ...capacityResult(),
     ok: false,
     blocker: 'SYNC_AND_REFRESH_CYCLE_LIMIT_EXCEEDED',
     refreshes: Object.freeze(refreshes),

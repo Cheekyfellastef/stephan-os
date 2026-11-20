@@ -12,7 +12,7 @@ test('the runtime kernel remains a separate bounded unit without changing Core l
   assert.ok(core.length <= 32768);
 });
 
-function runFixture(terminalGuardBaseline = 'None', witnessPublication = 'Atomic') {
+function runFixture(terminalGuardBaseline = 'None', witnessPublication = 'Atomic', witnessReader = 'ReadDelete') {
   const fixtureUrl = new URL('./windows/test-sovereign-fixed-runtime-job-v1.ps1', import.meta.url);
   const ps = value => "'" + value.replaceAll("'", "''") + "'";
   const fixturePath = fileURLToPath(fixtureUrl);
@@ -25,7 +25,7 @@ function runFixture(terminalGuardBaseline = 'None', witnessPublication = 'Atomic
     + "$sha=[Security.Cryptography.SHA256]::Create();try{$actual=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()};"
     + "if($actual -cne '" + expected + "'){throw 'FIXTURE_SOURCE_CHANGED'};"
     + "$source=[Text.UTF8Encoding]::new($false,$true).GetString($bytes).Replace('$PSScriptRoot'," + ps(ps(fixtureDirectory)) + ");"
-    + "& ([scriptblock]::Create($source)) -FixtureNodePath " + ps(process.execPath) + " -FixtureTerminalGuardBaseline " + ps(terminalGuardBaseline) + " -FixtureWitnessPublication " + ps(witnessPublication);
+    + "& ([scriptblock]::Create($source)) -FixtureNodePath " + ps(process.execPath) + " -FixtureTerminalGuardBaseline " + ps(terminalGuardBaseline) + " -FixtureWitnessPublication " + ps(witnessPublication) + " -FixtureWitnessReader " + ps(witnessReader);
   assert.ok(code.length < 4096);
   let stdout;
   try { stdout = execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
@@ -89,6 +89,8 @@ test('native runtime stage has actual bound zero/exclusion and never promotes cl
   assert.equal(cases.get('drain-cancel').Receipt.Reason, 'CANCELLED');
   assert.equal(cases.get('drain-parent-death').Receipt.Reason, 'OWNER_ENDED');
   assert.equal(cases.get('witness-paused').PartialWitnessIgnored, true);
+  assert.equal(cases.get('witness-paused').DeleteHandleHeldBeforeCommit, true);
+  assert.equal(cases.get('witness-paused').SameFileAcrossRename, true);
   const orphan = cases.get('orphan');
   assert.equal(orphan.Receipt.NormalRootExit, true);
   assert.equal(orphan.DescendantCaptured, true);
@@ -151,4 +153,22 @@ test('a visible incomplete producer cannot become a native process witness', {
   assert.equal(row.Receipt.AssignedBeforeExecution,true);
   assert.equal(row.Receipt.ExecutionCustodyReleased,true);
   assert.equal(row.Receipt.ZeroActiveProcessesObserved,true);
+});
+
+test('a committed witness remains readable through retained rename access and the old reader fails closed', {
+  skip: process.platform !== 'win32', timeout: 30000,
+}, () => {
+  const observed=runFixture('None','Atomic','LegacyNoDeleteSharing');
+  assert.equal(observed.ok,false); assert.equal(observed.runtimeQualified,false);
+  assert.equal(observed.witnessReaderVariant,'LegacyNoDeleteSharing'); assert.equal(observed.cases.length,1);
+  const row=observed.cases[0];
+  assert.equal(row.Mode,'witness-paused'); assert.equal(row.PartialWitnessIgnored,true);
+  assert.equal(row.DeleteHandleHeldBeforeCommit,true);
+  assert.equal(row.ObserverFaultCode,'WITNESS_READ_FAILED'); assert.equal(row.ObserverFaultPhase,'COMMITTED_READ');
+  assert.equal(row.ObserverFaultType,'System.IO.IOException'); assert.equal(row.ObserverFaultWin32,32);
+  assert.equal(row.ObserverFaultHResult,-2147024864);
+  assert.equal(row.RootCaptured,false); assert.equal(row.Receipt.OperationOk,false);
+  assert.equal(row.Receipt.CancellationRequested,true);
+  assert.equal(row.Receipt.Launched,true); assert.equal(row.Receipt.AssignedBeforeExecution,true);
+  assert.equal(row.Receipt.ExecutionCustodyReleased,true); assert.equal(row.Receipt.ZeroActiveProcessesObserved,true);
 });

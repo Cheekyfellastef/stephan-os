@@ -10,6 +10,7 @@ import {
   WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1,
   WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1,
   WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1,
+  WINDOWS_AUTHORITY_SOVEREIGN_REVIEWER_PROFILE_PATHS_V1,
   WINDOWS_AUTHORITY_CANONICAL_MAILBOX_NATIVE_PATHS_V1,
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
@@ -35,6 +36,7 @@ await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrLauncherReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrAerObserveReviewV1.test.mjs');
 await import('./windowsAuthoritySovereignFixedRuntimeReviewV1.test.mjs');
+await import('./windowsAuthoritySovereignReviewerProfileReviewV1.test.mjs');
 await import('./windowsAuthorityCanonicalMailboxNativeEvidenceReviewV1.test.mjs');
 
 const HEAD = '7acff57ddff6a506244af99d518b9b73bf1208f6';
@@ -137,7 +139,7 @@ test('registry source pins the current bounded mailbox recovery blobs and grants
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
-  assert.match(source, /3b108f3c7a44c008ce827228a3f73028f96ebd1d/);
+  assert.match(source, /f66cc26ef865bb840522b16cbb53f830f9499838/);
   assert.match(source, /1b103fda85c371a218f38f20fe5163ca3f5042bf/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
@@ -352,4 +354,23 @@ test('routes exact #3302 seven Windows source-only P0s before the frozen legacy 
   assert.equal(result.freezeCertified, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.epochAdoptionAuthorized, false);
+});
+
+test('routes exact #3439 Reviewer bootstrap escalation before frozen fallback', () => {
+  const head='a'.repeat(40), base='b'.repeat(40);
+  const result=analyzeWindowsAuthoritySpecialistReview({
+    repository:'Cheekyfellastef/stephan-os',prNumber:3439,
+    branch:'fix/sovereign-reviewer-win32-wsl-proof-bridge-20261012',
+    sourceHead:head,baseSha:base,
+    analysis:{findings:WINDOWS_AUTHORITY_SOVEREIGN_REVIEWER_PROFILE_PATHS_V1.map(path=>({
+      severity:'P0',code:'unsupported-high-risk-surface',path})),counts:{P0:3,P1:0,P2:0}},
+    lineageEvidence:{schemaVersion:'stephanos.windows-authority-reconciliation-lineage.v1',
+      repository:'Cheekyfellastef/stephan-os',sourceHead:head,sourceCommitSha:head,baseSha:base,
+      liveMainBeforeSha:base,liveMainAfterSha:base,parents:['c'.repeat(40)],
+      comparison:{status:'ahead',aheadBy:1,behindBy:0,baseCommitSha:base,mergeBaseCommitSha:base}},
+    sources:[],
+  });
+  assert.equal(result.eligible,true);
+  assert.deepEqual(result.reviewedPaths,WINDOWS_AUTHORITY_SOVEREIGN_REVIEWER_PROFILE_PATHS_V1);
+  assert.equal(result.clean,false);
 });

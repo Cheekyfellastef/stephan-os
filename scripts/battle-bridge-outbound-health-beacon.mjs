@@ -20,6 +20,7 @@ import { projectBoundedMissionWorkerRestartBlocker } from './battle-bridge-worke
 import { projectPublicGoalGateObservatoryV1 } from '../shared/runtime/goalBuildGatePublicProjectionV1.mjs';
 import { projectGoalBuildGateObservatoryV1 } from '../shared/runtime/goalBuildGateObservatoryV1.mjs';
 import { projectControlTowerBuildBeaconFactsV1 } from '../shared/agents/controlTowerBuildBeaconFactsV1.mjs';
+import { projectMailboxGuardDiagnosticV1 } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import {
   COMMANDER_HEALTH_PROJECTION_SCHEMA,
   projectLocalCommanderHealth,
@@ -117,9 +118,26 @@ function safeWatchdogRestartVerdict(value) {
   return WATCHDOG_RESTART_VERDICTS.has(verdict) ? verdict : '';
 }
 
+// Original #1291: never mirror private watchdog probe errors to GitHub.
+// This diagnosis is advisory-only and cannot permit a restart or release custody.
+function projectWatchdogInspectFailureCode(record, classification) {
+  if (classification !== 'WORKER_WATCHDOG_PROBE_FAILED') return '';
+  const raw = record.probeError;
+  if (typeof raw !== 'string' || !raw.length || raw.length > 2048) {
+    return 'WATCHDOG_INSPECT_CAUSE_UNPROVEN';
+  }
+  const matches = [
+    [/\bETIMEDOUT\b/i, 'WATCHDOG_INSPECT_TIMEOUT'],
+    [/\bENOENT\b/i, 'WATCHDOG_INSPECT_EXECUTABLE_MISSING'],
+    [/^Worker watchdog probe returned invalid JSON\.$/, 'WATCHDOG_INSPECT_INVALID_JSON'],
+  ].filter(([pattern]) => pattern.test(raw));
+  return matches.length === 1 ? matches[0][1] : 'WATCHDOG_INSPECT_CAUSE_UNPROVEN';
+}
+
 export function projectWorkerWatchdogBeaconFacts(record = {}, expectedHead = '') {
   const classification = safeWatchdogClassification(record.classification || record.status);
   const restartBlocker = projectBoundedMissionWorkerRestartBlocker(record.restartBlocker);
+  const probeFailureCode = projectWatchdogInspectFailureCode(record, classification);
   const expected = validHead(expectedHead);
   const initial = record.initialAssessment && typeof record.initialAssessment === 'object' && !Array.isArray(record.initialAssessment)
     ? record.initialAssessment
@@ -132,6 +150,9 @@ export function projectWorkerWatchdogBeaconFacts(record = {}, expectedHead = '')
   const exactHeadMatch = Boolean(expected && sourceHead && expected === sourceHead);
   let exactNextAction = 'READ_WATCHDOG_FAILURE_BOUNDARY';
   if (restartBlocker) exactNextAction = 'REPAIR_TYPED_MISSION_WORKER_RESTART_BLOCKER';
+  else if (probeFailureCode === 'WATCHDOG_INSPECT_TIMEOUT') exactNextAction = 'QUALIFY_WATCHDOG_INSPECT_LATENCY';
+  else if (probeFailureCode === 'WATCHDOG_INSPECT_EXECUTABLE_MISSING') exactNextAction = 'VERIFY_CANONICAL_POWERSHELL_PROBE_PATH';
+  else if (probeFailureCode === 'WATCHDOG_INSPECT_INVALID_JSON') exactNextAction = 'REPAIR_WATCHDOG_PROBE_JSON_BOUNDARY';
   else if (WORKER_WATCHDOG_SUCCESS_CLASSIFICATIONS.has(classification) && exactHeadMatch) {
     exactNextAction = 'VERIFY_MISSION_WORKER_HEARTBEAT_AND_BUILD_EXECUTION';
   } else if (classification === 'WORKER_WATCHDOG_RECOVERY_COOLDOWN') {
@@ -142,6 +163,7 @@ export function projectWorkerWatchdogBeaconFacts(record = {}, expectedHead = '')
   return Object.freeze({
     classification,
     restartBlocker,
+    probeFailureCode,
     restartVerdict: safeWatchdogRestartVerdict(record.restartVerdict),
     sourceHead,
     expectedHead: expected,
@@ -172,6 +194,9 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
   const base = core.projectBeaconStatus(record, spec, nowMs, expectedHead);
   const workerWatchdogFacts = projectWorkerWatchdogBeaconFacts(record, expectedHead);
   const watchdogBlocker = workerWatchdogFacts.restartBlocker
+    || (workerWatchdogFacts.classification === 'WORKER_WATCHDOG_PROBE_FAILED'
+      && workerWatchdogFacts.probeFailureCode !== 'WATCHDOG_INSPECT_CAUSE_UNPROVEN'
+      ? workerWatchdogFacts.probeFailureCode : '')
     || (!WORKER_WATCHDOG_SUCCESS_CLASSIFICATIONS.has(workerWatchdogFacts.classification)
       && workerWatchdogFacts.classification !== 'UNKNOWN'
       ? workerWatchdogFacts.classification
@@ -782,10 +807,63 @@ export function buildBattleBridgeOutboundBeacon(args = {}) {
       args.statusRecords?.sovereignRelay || null,
       { expectedHead: base.sourceHead, nowMs: Date.parse(base.observedAtUtc) },
     ),
+    mailboxGuard: projectMailboxGuardBeaconFacts(
+      args.statusRecords?.sovereignRelay || null,
+      { expectedHead: base.sourceHead, nowMs: Date.parse(base.observedAtUtc) },
+    ),
     goalBuildGateObservatory: projectPublicGoalGateObservatoryV1(
       args.statusRecords?.coreGateStatus || null,
       { sourceHead: base.sourceHead, nowMs: Date.parse(base.observedAtUtc) },
     ),
+  });
+}
+
+/** Revalidate the existing reader's projection before either public or local publication. */
+export function projectMailboxGuardBeaconFacts(relay, {
+  expectedHead, nowMs = Date.now(), maxAgeMs = 180_000,
+} = {}) {
+  // This is a diagnostic of one guard cycle, never command acceptance, execution,
+  // debt reconciliation or a custody grant. No raw guard error/detail survives.
+  const flags = Object.freeze({ commandIngressProven: false, receiptAcceptanceProven: false,
+    executionProven: false, sourceMutationAllowed: false, mergeAuthority: false, custodyReleaseAllowed: false });
+  const unavailable = blocker => Object.freeze({
+    schemaVersion: 'stephanos.mailbox-guard-beacon-facts.v1',
+    observed: false, state: 'UNPROVEN', blocker,
+    sourceHead: '', observedAtUtc: '', stage: '', outcome: '', reasonCode: '',
+    childInvocationAttempted: null, cycleInFlight: null, ...flags,
+  });
+  if (typeof expectedHead !== 'string' || !SHA40.test(expectedHead) || !Number.isFinite(nowMs)
+    || !Number.isSafeInteger(maxAgeMs) || maxAgeMs < 1000 || maxAgeMs > 300_000)
+    return unavailable('MAILBOX_GUARD_CONTEXT_INVALID');
+  if (!relay || typeof relay !== 'object' || Array.isArray(relay)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(relay)))
+    return unavailable('MAILBOX_GUARD_RELAY_MISSING');
+  const keys = Reflect.ownKeys(relay), descriptors = Object.getOwnPropertyDescriptors(relay);
+  if (keys.length > 96 || keys.some(key => typeof key !== 'string' || !Object.hasOwn(descriptors[key], 'value'))
+    || relay.schema !== 'stephanos.sovereign-relay-daemon.v1' || relay.statusId !== 'sovereign-relay-current'
+    || typeof relay.cycleInFlight !== 'boolean'
+    || ['duplicateExecutionAllowed', 'arbitraryShellAllowed', 'sourceMutationAllowed'].some(key => relay[key] !== false))
+    return unavailable('MAILBOX_GUARD_RELAY_INVALID');
+  if (relay.sourceHead !== expectedHead) return unavailable('MAILBOX_GUARD_SOURCE_MISMATCH');
+  const fresh = value => typeof value === 'string' && value.length === 24 && Number.isFinite(Date.parse(value))
+    && new Date(value).toISOString() === value
+    && Date.parse(value) <= nowMs + 5000 && nowMs - Date.parse(value) <= maxAgeMs;
+  if (!fresh(relay.heartbeatAtUtc)) return unavailable('MAILBOX_GUARD_RELAY_STALE');
+  const diagnostic = projectMailboxGuardDiagnosticV1(relay.guardDiagnostic);
+  if (!diagnostic) return unavailable('MAILBOX_GUARD_DIAGNOSTIC_UNPROVEN');
+  if (relay.guardVerdict !== (diagnostic.outcome === 'CHILD_SUCCEEDED'
+    ? 'MAILBOX_OUTBOX_GUARD_READY' : 'MAILBOX_OUTBOX_GUARD_BLOCKED'))
+    return unavailable('MAILBOX_GUARD_DIAGNOSTIC_UNPROVEN');
+  if (!fresh(diagnostic.observedAtUtc)
+    || Date.parse(diagnostic.observedAtUtc) > Date.parse(relay.heartbeatAtUtc) + 5000)
+    return unavailable('MAILBOX_GUARD_DIAGNOSTIC_STALE');
+  return Object.freeze({
+    schemaVersion: 'stephanos.mailbox-guard-beacon-facts.v1',
+    observed: true, state: 'OBSERVED', blocker: '', sourceHead: expectedHead,
+    observedAtUtc: diagnostic.observedAtUtc, stage: diagnostic.stage,
+    outcome: diagnostic.outcome, reasonCode: diagnostic.reasonCode,
+    childInvocationAttempted: diagnostic.childInvocationAttempted,
+    cycleInFlight: relay.cycleInFlight, ...flags,
   });
 }
 
@@ -1019,6 +1097,10 @@ export function runBattleBridgeOutboundHealthBeacon(options = {}) {
       expectedHead: coreResult.record.sourceHead, nowMs: Date.parse(coreResult.record.observedAtUtc),
     }),
     controlTowerBuild: projectControlTowerBuildBeaconFactsV1(sovereignRelayRecord, {
+      expectedHead: coreResult.record.sourceHead,
+      nowMs: Date.parse(coreResult.record.observedAtUtc),
+    }),
+    mailboxGuard: projectMailboxGuardBeaconFacts(sovereignRelayRecord, {
       expectedHead: coreResult.record.sourceHead,
       nowMs: Date.parse(coreResult.record.observedAtUtc),
     }),

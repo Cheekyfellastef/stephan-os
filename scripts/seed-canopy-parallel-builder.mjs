@@ -261,6 +261,7 @@ async function localModelWrite(request, existingContent, seed, preflight) {
       const state = JSON.parse(await readFile(governorFile, 'utf8'));
       if (state.schemaVersion !== 'stephanos.vr-resource-governor.v1'
         || state.active !== false || state.phase !== 'NORMAL' || state.localModelAllowed !== true
+        || state.prepareLeaseActive !== false
         || !isParallelSeedGovernorSnapshotFreshV1(state)) {
         resourceAbort = 'GAME_PRIORITY_ABORTED_LOCAL_INFERENCE';
         controller.abort();
@@ -290,6 +291,7 @@ async function localModelWrite(request, existingContent, seed, preflight) {
       const state = JSON.parse(await readFile(governorFile, 'utf8'));
       if (state.schemaVersion !== 'stephanos.vr-resource-governor.v1'
         || state.active !== false || state.phase !== 'NORMAL' || state.localModelAllowed !== true
+        || state.prepareLeaseActive !== false
         || !isParallelSeedGovernorSnapshotFreshV1(state)) {
         resourceAbort = 'GAME_PRIORITY_ABORTED_LOCAL_INFERENCE';
         controller.abort();

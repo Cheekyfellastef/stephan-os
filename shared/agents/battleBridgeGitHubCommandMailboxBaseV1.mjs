@@ -91,6 +91,21 @@ export const WINDOWS_BROWSER_PROOF_TARGETS = Object.freeze([
 ]);
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
+const SESSION_TELEMETRY_PATTERN = /session/i;
+
+export function hasUnsafeMailboxTelemetryText(value) {
+  return UNSAFE_TELEMETRY_PATTERN.test(value) || SESSION_TELEMETRY_PATTERN.test(value);
+}
+
+export function projectMailboxReceiptRequestId(value) {
+  if (typeof value !== 'string' || value.trim() !== value || !REQUEST_ID_PATTERN.test(value)) return '';
+  if (UNSAFE_TELEMETRY_PATTERN.test(value)) return '';
+  // A public protocol ID may name a single-session operation. Exempt only
+  // that label from the session scan after checking the unmodified value.
+  const textForSessionCheck = value.replace(/-session(?=-)/gi, '-');
+  return SESSION_TELEMETRY_PATTERN.test(textForSessionCheck) ? '' : value;
+}
 const RESET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const PR_NUMBER_PATTERN = /^[1-9][0-9]{0,9}$/;
@@ -424,6 +439,9 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
   if (!REQUEST_ID_PATTERN.test(String(command.requestId || ''))) {
     return fail('COMMAND_REQUEST_ID_INVALID');
   }
+  if (!projectMailboxReceiptRequestId(String(command.requestId))) {
+    return fail('COMMAND_REQUEST_ID_PUBLICATION_UNSAFE');
+  }
   if (!BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(command.operation)) {
     return fail('COMMAND_OPERATION_NOT_ALLOWED', { operation: command.operation || '' });
   }
@@ -627,7 +645,7 @@ function projectTerminalMailboxRejection(comment = {}, command = {}, validation 
   const commentId = Number(comment?.id || 0);
   if (comment?.user?.login !== BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR
     || !Number.isSafeInteger(commentId) || commentId < 1
-    || !REQUEST_ID_PATTERN.test(requestId)
+    || !projectMailboxReceiptRequestId(requestId)
     || !BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation)
     || command?.repository !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY
     || Number(command?.issueNumber) !== BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE

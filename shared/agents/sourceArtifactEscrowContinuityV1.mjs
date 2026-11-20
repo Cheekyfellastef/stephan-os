@@ -33,15 +33,27 @@ const SAFE_PATH = /^(?!\/)(?![A-Za-z]:\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@
 const EXPLICIT_TIMEZONE = /(?:Z|[+-][0-9]{2}:[0-9]{2})$/;
 
 function text(value) { return String(value ?? '').trim(); }
+function rawSha(value) { return typeof value === 'string' && value === value.trim() && SHA.test(value); }
+function rawSha256(value) { return typeof value === 'string' && value === value.trim() && SHA256.test(value); }
 function list(value) { return Array.isArray(value) ? value : []; }
-function integer(value) { const parsed = Number.parseInt(value, 10); return Number.isSafeInteger(parsed) ? parsed : 0; }
+function integer(value) {
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : 0;
+  if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value)) return 0;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : 0;
+}
 function canonicalPr(value) { return value === null ? null : integer(value); }
 function canonicalOwnerMatches(left = {}, right = {}) {
   const leftPr = canonicalPr(left.canonicalPr);
   const rightPr = canonicalPr(right.canonicalPr);
   if (leftPr !== rightPr) return false;
-  if (leftPr === null) return integer(left.canonicalIssue) > 0 && integer(left.canonicalIssue) === integer(right.canonicalIssue);
-  if (integer(left.canonicalIssue) > 0 || integer(right.canonicalIssue) > 0) return integer(left.canonicalIssue) === integer(right.canonicalIssue);
+  const leftIssuePresent = left.canonicalIssue !== null && left.canonicalIssue !== undefined;
+  const rightIssuePresent = right.canonicalIssue !== null && right.canonicalIssue !== undefined;
+  const leftIssue = integer(left.canonicalIssue);
+  const rightIssue = integer(right.canonicalIssue);
+  if ((leftIssuePresent && leftIssue < 1) || (rightIssuePresent && rightIssue < 1)) return false;
+  if (leftPr === null) return leftIssue > 0 && leftIssue === rightIssue;
+  if (leftIssuePresent || rightIssuePresent) return leftIssue === rightIssue;
   return true;
 }
 function isoMilliseconds(value) {
@@ -84,26 +96,43 @@ export function validateSourceArtifactEscrowV1(escrow = {}, nowUtc = new Date().
   if (prNumber === null && issueNumber < 1) errors.push('invalid-canonical-issue');
   if (escrow.canonicalIssue !== null && escrow.canonicalIssue !== undefined && issueNumber < 1) errors.push('invalid-canonical-issue');
   if (!safeBranch(escrow.canonicalBranch)) errors.push('invalid-canonical-branch');
-  if (!SHA.test(text(escrow.exactParentHead))) errors.push('invalid-parent-head');
-  if (!SHA.test(text(escrow.exactParentTree))) errors.push('invalid-parent-tree');
-  if (!SHA.test(text(escrow.exactResultTree))) errors.push('invalid-result-tree');
-  if (escrow.localCommitSha && !SHA.test(text(escrow.localCommitSha))) errors.push('invalid-local-commit');
-  if (!SHA256.test(text(escrow.completeArtifactSha256))) errors.push('invalid-artifact-sha256');
+  if (!rawSha(escrow.exactParentHead)) errors.push('invalid-parent-head');
+  if (!rawSha(escrow.exactParentTree)) errors.push('invalid-parent-tree');
+  if (!rawSha(escrow.exactResultTree)) errors.push('invalid-result-tree');
+  if (escrow.localCommitSha && !rawSha(escrow.localCommitSha)) errors.push('invalid-local-commit');
+  if (!rawSha256(escrow.completeArtifactSha256)) errors.push('invalid-artifact-sha256');
   if (!text(escrow.artifactRef)) errors.push('missing-artifact-ref');
   if (escrow.externallyReadable !== true) errors.push('artifact-not-externally-readable');
   if (!text(escrow.commitMessage)) errors.push('missing-commit-message');
   if (!text(escrow.executorIdentity)) errors.push('missing-executor-identity');
   if (!Number.isFinite(nowMs) || !Number.isFinite(createdMs) || !Number.isFinite(expiresMs) || createdMs > nowMs + 5 * 60 * 1000 || expiresMs <= nowMs || expiresMs <= createdMs) errors.push('invalid-escrow-time-window');
   if (!changedFiles.length || new Set(paths).size !== paths.length) errors.push('invalid-changed-files');
-  for (const file of changedFiles) {
-    if (!SAFE_PATH.test(file.path)) errors.push(`unsafe-path:${file.path || 'missing'}`);
-    if (!SHA.test(file.beforeBlobSha) || !SHA.test(file.afterBlobSha)) errors.push(`invalid-blob-identity:${file.path || 'missing'}`);
-    if (!SHA256.test(file.sha256)) errors.push(`invalid-file-sha256:${file.path || 'missing'}`);
+  for (let index = 0; index < changedFiles.length; index += 1) {
+    const file = changedFiles[index];
+    const rawFile = escrow.changedFiles[index];
+    if (typeof rawFile?.path !== 'string' || rawFile.path !== file.path
+      || !SAFE_PATH.test(file.path)
+      || file.path.split('/').some((component) => component === '.' || component !== component.trim())) {
+      errors.push(`unsafe-path:${file.path || 'missing'}`);
+    }
+    if (!rawSha(rawFile?.beforeBlobSha) || !rawSha(rawFile?.afterBlobSha)) errors.push(`invalid-blob-identity:${file.path || 'missing'}`);
+    if (!rawSha256(rawFile?.sha256)) errors.push(`invalid-file-sha256:${file.path || 'missing'}`);
   }
-  const testsRun = list(escrow.testsRun).map(text).filter(Boolean);
-  const testVerdicts = list(escrow.testVerdicts).map((value) => text(value).toUpperCase());
-  if (!testsRun.length || testsRun.length !== testVerdicts.length || testVerdicts.some((verdict) => verdict !== 'PASS')) errors.push('tests-not-proven');
-  if (text(escrow.diffCheckVerdict).toUpperCase() !== 'PASS') errors.push('diff-check-not-proven');
+  // Test evidence is an exact raw manifest: never discard empty entries or
+  // convert non-string, padded authority values into passing proof.
+  const testsRun = list(escrow.testsRun);
+  const testVerdicts = list(escrow.testVerdicts);
+  if (!Array.isArray(escrow.testsRun) || !Array.isArray(escrow.testVerdicts)
+    || !testsRun.length || testsRun.length !== testVerdicts.length
+    || testsRun.some((command) => typeof command !== 'string'
+      || !command.trim() || command !== command.trim())
+    || testVerdicts.some((verdict) => typeof verdict !== 'string'
+      || verdict !== verdict.trim() || verdict.toUpperCase() !== 'PASS')) {
+    errors.push('tests-not-proven');
+  }
+  if (typeof escrow.diffCheckVerdict !== 'string'
+    || escrow.diffCheckVerdict !== escrow.diffCheckVerdict.trim()
+    || escrow.diffCheckVerdict.toUpperCase() !== 'PASS') errors.push('diff-check-not-proven');
 
   return Object.freeze({
     valid: errors.length === 0,
@@ -141,8 +170,10 @@ function publicationEvidenceMatches(escrow, evidence = {}) {
     && evidence.repository === REPOSITORY
     && canonicalOwnerMatches(evidence, escrow)
     && typeof evidence.canonicalBranch === 'string' && evidence.canonicalBranch === escrow.canonicalBranch
+    && rawSha(evidence.previousHead)
     && text(evidence.previousHead).toLowerCase() === text(escrow.exactParentHead).toLowerCase()
-    && SHA.test(text(evidence.newHead))
+    && rawSha(evidence.newHead)
+    && rawSha(evidence.newTree)
     && text(evidence.newTree).toLowerCase() === text(escrow.exactResultTree).toLowerCase()
     && evidence.fastForward === true
     && Object.values(SOURCE_PUBLICATION_ROUTE).includes(evidence.route)
@@ -163,7 +194,7 @@ export function buildSourceArtifactPublicationRecoveryV1(input = {}) {
   if (remote.repository !== REPOSITORY
       || !canonicalOwnerMatches(remote, escrow)
       || typeof remote.canonicalBranch !== 'string' || remote.canonicalBranch !== escrow.canonicalBranch
-      || text(remote.head).toLowerCase() !== text(escrow.exactParentHead).toLowerCase()) {
+      || !rawSha(remote.head) || text(remote.head).toLowerCase() !== text(escrow.exactParentHead).toLowerCase()) {
     return Object.freeze({ ...base, escrowValid: true, blocker: SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED, exactNextAction: 'Stop publication. Re-read the canonical branch and require a separately governed recovery plan; do not rebase, reset, force-update or rebuild the verified source artifact.', finalVerdict: SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED });
   }
 

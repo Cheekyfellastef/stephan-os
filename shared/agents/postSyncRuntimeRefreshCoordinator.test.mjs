@@ -6,12 +6,13 @@ import {
   buildPostSyncRefreshProjection,
   classifyPostSyncRefresh,
   executePostSyncRefreshPlan,
+  postSyncRefreshTargetResultPass,
   parseGitChangedPathStatus,
   projectPostSyncSovereignRelayProof,
   projectPostSyncTargetFailureHistory,
   reducePostSyncTargetFailureHistory as reduceTargetFailureHistory,
 } from './postSyncRuntimeRefreshCoordinator.mjs';
-import { projectPostSyncSovereignRelayProof as projectSyncPolicyRelayProof }
+import { collectPostSyncRefreshDebt, projectPostSyncSovereignRelayProof as projectSyncPolicyRelayProof }
   from '../../scripts/battle-bridge-github-sync-policy.mjs';
 
 const A = 'a'.repeat(40);
@@ -546,8 +547,50 @@ test('classifies docs and tests as no-runtime changes', () => {
   assert.equal(plan.noRuntimePathCount, 2);
 });
 
+test('one-shot PR estate source is no-runtime, but unregistered sibling scripts stay blocked', () => {
+  const exact = classifyPostSyncRefresh(['scripts/pr-estate-reconcile.mjs']);
+  assert.equal(exact.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(exact.targetIds, []);
+  assert.equal(exact.noRuntimePathCount, 1);
+  assert.equal(exact.unknownPathCount, 0);
+  const sibling = classifyPostSyncRefresh(['scripts/pr-estate-reconcile-unregistered.mjs']);
+  assert.equal(sibling.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(sibling.internal.unknownPaths, ['scripts/pr-estate-reconcile-unregistered.mjs']);
+  assert.equal(sibling.automaticExecutionAllowed, false);
+});
+
+test('imported Stephanos card stylesheet requires exact UI refresh without widening shared styles', () => {
+  const css = 'shared/styles/stephanos-card-layout.css';
+  const exact = classifyPostSyncRefresh([css, 'stephanos-ui/src/main.jsx']);
+  assert.equal(exact.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(exact.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  assert.equal(exact.unknownPathCount, 0);
+  const sibling = classifyPostSyncRefresh(['shared/styles/stephanos-card-layout-other.css']);
+  assert.equal(sibling.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(sibling.internal.unknownPaths, ['shared/styles/stephanos-card-layout-other.css']);
+});
+
+test('both exact 9 November unknowns clear while Spatial host and unsafe-path holds survive', () => {
+  const sources = ['scripts/pr-estate-reconcile.mjs', 'shared/styles/stephanos-card-layout.css'];
+  const clear = classifyPostSyncRefresh(sources);
+  assert.equal(clear.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(clear.unknownPathCount, 0);
+  assert.equal(clear.noRuntimePathCount, 1);
+  assert.deepEqual(clear.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  const spatial = classifyPostSyncRefresh([...sources, 'scripts/spatial-window-host.mjs']);
+  assert.equal(spatial.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED);
+  assert.equal(spatial.spatialAdoptionRequired, true);
+  assert.equal(spatial.unknownPathCount, 0);
+  assert.deepEqual(spatial.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  const unsafe = classifyPostSyncRefresh([...sources, '../untrusted.js']);
+  assert.equal(unsafe.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH);
+  assert.equal(unsafe.unsafePathCount, 1);
+  assert.equal(unsafe.automaticExecutionAllowed, false);
+});
+
 test('classifies the exact GitHub-hosted review toolchain as no-runtime', () => {
   const hostedReviewPaths = [
+    'scripts/exact-head-qualified-escalation-v1.mjs',
     'scripts/exact-head-review-dispatch.mjs',
     'scripts/exact-head-review-current-main-admission-v1.mjs',
     'scripts/bind-independent-review-handoff-provenance-v1.mjs',
@@ -627,6 +670,95 @@ test('continuous repair script is a natural-reload source and never becomes an u
   assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
   assert.deepEqual(plan.internal.unknownPaths, []);
   assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('the existing Starfield splash monitor closure adopts source without starting a game', () => {
+  const directory = 'scripts/windows/starfield-native-monitor/';
+  const runtime = [
+    'splash_monitor_bridge.py',
+    'run_native_eye_output_monitor.py',
+    'start_native_eye_output_session.py',
+    'analyze_native_eye_output_session.py',
+    'analyze_paired_source_session.py',
+    'monitor_session_custody.py',
+    'paired_session_adapter.py',
+  ].map(name => directory + name);
+  const fixtures = [
+    'test_splash_monitor_bridge.py',
+    'test_run_native_eye_output_monitor.py',
+    'test_start_native_eye_output_session.py',
+    'test_analyze_native_eye_output_session.py',
+    'test_analyze_paired_source_session.py',
+    'test_monitor_session_custody.py',
+    'test_paired_session_adapter.py',
+  ].map(name => directory + name);
+  fixtures.push('scripts/windows/Test-StarfieldMonitorSplash.ps1');
+  const plan = classifyPostSyncRefresh([
+    'scripts/windows/launch-starfield-vr-with-splash.ps1',
+    ...runtime,
+    ...fixtures,
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.noRuntimePathCount, fixtures.length);
+  assert.equal(plan.automaticExecutionAllowed, true);
+
+  for (const unexpected of ['splash_monitor_bridge_v2.py', 'launch_game.py', 'test_unreviewed.py']) {
+    const refused = classifyPostSyncRefresh([directory + unexpected]);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(refused.internal.unknownPaths, [directory + unexpected]);
+    assert.equal(refused.automaticExecutionAllowed, false);
+  }
+  const neighboringFixture = classifyPostSyncRefresh(['scripts/windows/Test-StarfieldMonitorSplashV2.ps1']);
+  assert.equal(neighboringFixture.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.equal(neighboringFixture.automaticExecutionAllowed, false);
+});
+
+test('the complete Starfield monitor delivery change set has no unclassified probe', () => {
+  const changedPaths = [
+    '.gitattributes',
+    '.github/workflows/sovereign-commander-capability-parity.yml',
+    'scripts/starfield-native-monitor-source.test.mjs',
+    'scripts/starfield-vr-delivery-truth-probe.mjs',
+    'scripts/starfield-vr-delivery-truth-probe.test.mjs',
+    'scripts/starfield-vr-launcher-source.test.mjs',
+    'scripts/starfield-vr-monitor-splash.test.mjs',
+    'scripts/starfield-vr-provider-cockpit.test.mjs',
+    'scripts/windows/Test-StarfieldMonitorSplash.ps1',
+    'scripts/windows/launch-starfield-vr-with-splash.ps1',
+    'scripts/windows/starfield-native-monitor/README.md',
+    'scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py',
+    'scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py',
+    'scripts/windows/starfield-native-monitor/splash_monitor_bridge.py',
+    'scripts/windows/starfield-native-monitor/start_native_eye_output_session.py',
+    'scripts/windows/starfield-native-monitor/test_analyze_native_eye_output_session.py',
+    'scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py',
+    'scripts/windows/starfield-native-monitor/test_splash_monitor_bridge.py',
+    'scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs',
+    'shared/agents/starfieldVrBattleBridgeMailboxV1.mjs',
+    'shared/agents/starfieldVrBattleBridgeMailboxV1.test.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER, POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.automaticExecutionAllowed, true);
+
+  const probe = classifyPostSyncRefresh(['scripts/starfield-vr-delivery-truth-probe.mjs']);
+  assert.deepEqual(probe.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(probe.automaticExecutionAllowed, true);
+  for (const unknown of ['scripts/starfield-vr-delivery-truth-probe-v2.mjs',
+    'scripts/Starfield-vr-delivery-truth-probe.mjs', 'scripts/windows/starfield-vr-delivery-truth-probe.mjs']) {
+    const refused = classifyPostSyncRefresh([...changedPaths, unknown]);
+    assert.equal(refused.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+    assert.deepEqual(refused.internal.unknownPaths, [unknown]);
+    assert.equal(refused.automaticExecutionAllowed, false);
+  }
 });
 
 test('exact six-path mailbox starvation delivery is installable through natural reload', () => {
@@ -744,6 +876,7 @@ test('mailbox runtime changes require a fresh mailbox process before natural rel
 test('launcher-critical shell sources select the UI refresh target', () => {
   for (const path of [
     'main.js',
+    'style.css',
     'modules/command-deck/command-deck.js',
     'system/module_loader.js',
     'system/workspace.js',
@@ -751,6 +884,70 @@ test('launcher-critical shell sources select the UI refresh target', () => {
     const plan = classifyPostSyncRefresh([path]);
     assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
     assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  }
+});
+
+test('canonical launcher stylesheet requires served UI proof and cannot use natural reload proof', async () => {
+  const calls = [];
+  const stale = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: ['style.css'],
+    adapters: {
+      refreshUi: async () => { calls.push('ui'); return pass(A); },
+      confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+    },
+  });
+  assert.equal(stale.ok, false);
+  assert.equal(stale.exactHeadProofOk, false);
+  assert.equal(stale.blocker, `REFRESH_PROOF_FAILED:${POST_SYNC_REFRESH_TARGETS.UI_4173}`);
+  assert.deepEqual(calls, ['ui']);
+
+  const missing = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: ['style.css'],
+    adapters: { confirmNaturalReload: () => assert.fail('Stylesheet needs the served UI owner') },
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.blocker, `REFRESH_HANDLER_MISSING:${POST_SYNC_REFRESH_TARGETS.UI_4173}`);
+});
+
+test('Control Tower launcher update refreshes its established owners while retaining Spatial adoption debt', async () => {
+  const changedPaths = [
+    'apps/control-tower/app.json', 'apps/control-tower/index.html', 'apps/index.json',
+    'main.js', 'modules/command-deck/command-deck.js', 'style.css',
+    'shared/runtime/launcherTileLayout.mjs', 'shared/runtime/launcherTileLayout.test.mjs',
+    'shared/runtime/paneOrder.mjs', 'shared/runtime/stephanosSessionMemory.mjs',
+    'stephanos-ui/src/utils/paneOrderPersistence.js', 'system/apps/app_discovery.js',
+    'tests/control-tower-launcher-entry.test.mjs', 'tests/session-memory-launcher-order.test.mjs',
+    'scripts/spatial-window-host.mjs', 'shared/vr/spatialDesktopSurfaceContractV1.mjs',
+  ];
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: {
+      refreshUi: async () => { calls.push('ui'); return pass(); },
+      restartBackend: async () => { calls.push('backend'); return pass(); },
+    },
+  });
+  assert.deepEqual(result.plan.internal.unknownPaths, []);
+  assert.equal(result.plan.automaticExecutionAllowed, true);
+  assert.deepEqual(result.plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173, POST_SYNC_REFRESH_TARGETS.BACKEND_8787]);
+  assert.deepEqual(calls, ['ui', 'backend']);
+  assert.equal(result.safeRefreshesCompleted, true);
+  assert.equal(result.plan.spatialAdoptionPathCount, 2);
+  assert.equal(result.ok, false);
+  assert.equal(result.exactHeadProofOk, false);
+  assert.equal(result.blocker, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN');
+});
+
+test('unregistered root stylesheets still block every refresh before invoking an owner', async () => {
+  for (const path of ['styles.css', 'style-v2.css', 'style.css.bak', 'unknown-root.css']) {
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: ['style.css', path],
+      adapters: { refreshUi: () => assert.fail('Unknown neighboring CSS must retain its hold') },
+    });
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.equal(result.plan.automaticExecutionAllowed, false, path);
+    assert.deepEqual(result.plan.internal.unknownPaths, [path], path);
+    assert.deepEqual(result.results, [], path);
   }
 });
 
@@ -1290,13 +1487,126 @@ test('versioned Sovereign manifests never claim desktop skill activation from th
     beforeHead: A, afterHead: B, changedPaths,
     adapters: {
       refreshSovereignCommander: async () => pass(),
-      verifySovereignPluginHost: async () => ({
-        ...pass(), desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true,
-      }),
+      verifySovereignPluginHost: async () => authenticatedHostProof(),
     },
   });
   assert.equal(witnessed.ok, true);
   assert.equal(witnessed.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_PASS');
+});
+
+function authenticatedHostProof(sourceHead = B) {
+  const now = Date.now();
+  return {
+    ...pass(sourceHead), schemaVersion: 'stephanos.sovereign-plugin-host-activation.v1',
+    desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true,
+    hostPrincipalVerified: true, hostProcessBirthVerified: true,
+    hostProcessId: 456, sessionId: 'session_0123456789abcdef',
+    sessionRevoked: false, sessionExpired: false,
+    hostProcessStartedAtUtc: new Date(now - 60_000).toISOString(),
+    observedAtUtc: new Date(now - 1_000).toISOString(),
+    expiresAtUtc: new Date(now + 10_000).toISOString(),
+    expectedManifestSha256: 'd'.repeat(64), loadedManifestSha256: 'd'.repeat(64),
+    manifestDigestVerified: true,
+  };
+}
+
+test('private plugin host proof refuses absent stale revoked and contradictory process-session identity', async () => {
+  const changedPaths = ['plugins/sovereign-commander/plugin.json'];
+  const run = proof => executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths,
+    adapters: { refreshSovereignCommander: () => pass(), verifySovereignPluginHost: () => proof } });
+  const valid = authenticatedHostProof();
+  assert.equal((await run(valid)).ok, true, 'inert synthetic well-formed receipt only');
+  const bad = [
+    { ...valid, sessionId: '' },
+    { ...valid, hostProcessId: 0 },
+    { ...valid, sessionRevoked: true },
+    { ...valid, sessionExpired: true },
+    { ...valid, hostPrincipalVerified: false },
+    { ...valid, hostProcessBirthVerified: false },
+    { ...valid, loadedManifestSha256: 'e'.repeat(64) },
+    { ...valid, manifestDigestVerified: false },
+    { ...valid, observedAtUtc: new Date(Date.now() - 60_000).toISOString() },
+    { ...valid, expiresAtUtc: new Date(Date.now() - 100).toISOString() },
+    // A future-dated observation must not accept an earlier expiry, even if
+    // both timestamps individually sit within their wall-clock allowances.
+    { ...valid, observedAtUtc: new Date(Date.now() + 1_500).toISOString(),
+      expiresAtUtc: new Date(Date.now() + 1_000).toISOString() },
+    { ...valid, observedAtUtc: new Date(Date.now() + 1_200).toISOString(),
+      expiresAtUtc: new Date(Date.now() + 1_200).toISOString() },
+    { ...valid, hostProcessStartedAtUtc: new Date(Date.now() + 60_000).toISOString() },
+    { ...valid, schemaVersion: 'foreign.proof.v1' },
+  ];
+  for (const [index, receipt] of bad.entries()) {
+    const result = await run(receipt);
+    assert.equal(result.ok, false, 'negative case '+index);
+    assert.equal(result.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN', 'negative case '+index);
+  }
+});
+
+test('private Sovereign plugin host proof refuses accessor, inherited and Proxy success fields', async () => {
+  const changedPaths = ['plugins/sovereign-commander/plugin.json'];
+  const accepted = authenticatedHostProof();
+  const run = (hostProof) => executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: {
+      refreshSovereignCommander: () => pass(),
+      verifySovereignPluginHost: async () => hostProof,
+    },
+  });
+  let getterCalls = 0;
+  const accessor = { ...accepted };
+  Object.defineProperty(accessor, 'desktopPluginHostHandshakeVerified', {
+    enumerable: true, get() { getterCalls += 1; return true; },
+  });
+  const getterResult = await run(accessor);
+  assert.equal(getterResult.ok, false);
+  assert.equal(getterResult.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
+  assert.equal(getterCalls, 0, 'host proof flag getter must not run');
+  assert.equal((await run(Object.create(accepted))).ok, false, 'inherited flags cannot authenticate');
+  let proxyFlagReads = 0;
+  const proxy = new Proxy(accepted, {
+    get(target, key, receiver) {
+      if (key === 'ok') proxyFlagReads += 1;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  assert.equal((await run(proxy)).ok, false, 'host evidence cannot come from a Proxy');
+  assert.equal(proxyFlagReads, 0, 'Proxy success field must not be read');
+  const revoked = Proxy.revocable(accepted, {});
+  revoked.revoke();
+  assert.equal((await run(revoked.proxy)).ok, false, 'revoked Proxy must fail closed');
+  assert.equal((await run(accepted)).ok, true, 'ordinary owned data remains valid');
+});
+
+test('unresponsive Sovereign plugin host inspection is bounded and fails closed without a repeat', { timeout: 8_000 }, async () => {
+  let inspected = 0;
+  let signal;
+  let finish;
+  const started = Date.now();
+  const blocked = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B,
+    changedPaths: ['plugins/sovereign-commander/plugin.json'],
+    adapters: {
+      refreshSovereignCommander: () => pass(),
+      verifySovereignPluginHost: ({ signal: issuedSignal }) => {
+        inspected += 1;
+        signal = issuedSignal;
+        return new Promise(resolve => { finish = resolve; });
+      },
+    },
+  });
+  assert.equal(inspected, 1);
+  assert.equal(signal?.aborted, true);
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.exactHeadProofOk, false);
+  assert.equal(blocked.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(blocked.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
+  assert.equal(blocked.pluginHostActivationRequired, true);
+  assert.ok(Date.now() - started >= 2_900);
+  assert.ok(Date.now() - started < 7_000);
+  finish(authenticatedHostProof());
+  await Promise.resolve();
+  assert.equal(blocked.ok, false, 'late settlement must not promote a persisted success');
 });
 
 test('ordinary Commander script refreshes remain independent of desktop-plugin reattachment', async () => {
@@ -1516,4 +1826,792 @@ test('relay and ignition allowances refuse unknown neighboring scripts before an
     assert.ok(result.plan.internal.unknownPaths.includes(path), path);
     assert.deepEqual(calls, [], path);
   }
+});
+
+// The 37 unknown paths in the complete, untruncated authenticated comparison:
+// d729d17c65298e4c27305bca243848585a5bc8aa -> 853343b699a3d0b8ee901c6717c145471719c85c
+// trees d6e4cb02212a21a1dfb87ce4dda618a58d9ec490 -> 7cfe21101979b47b676e0ab627b01bea31e18ee9.
+// These are the audited unknown subset of the 482-path range, not a claim that
+// source classification proves activation of any installed native component.
+const PENDING_853343_WORKER_PATH = 'scripts/completion-guardian.mjs';
+const PENDING_853343_NATURAL_PATHS = [
+  'scripts/sovereign-commander-browser-observe.mjs',
+  'scripts/sovereign-commander-capability-parity-reconcile.mjs',
+  'scripts/windows/SovereignDirectoryCreateV1.cs',
+  'scripts/windows/sovereign-create-directory.ps1',
+  'scripts/windows/StephanosCoreLockRecoveryV1.cs',
+  'scripts/windows/recover-stephanos-core-lock.ps1',
+  'scripts/windows/stephanos-core-lock-recovery-policy.ps1',
+];
+const PENDING_853343_OFFLINE_PATHS = [
+  'scripts/fixtures/sovereign-directory-package-fixture-v1.mjs',
+  'scripts/protected-ready-review-lifecycle-v1.mjs',
+  'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+  'scripts/sovereign-reviewer-v1.mjs',
+  'scripts/sovereign-reviewer-wsl-bridge-v1.mjs',
+  'scripts/windows/stephanos-core-absent-bootstrap.test.ps1',
+  'scripts/windows/test-starfield-vr-telemetry-invocation.ps1',
+  'scripts/windows/SovereignBrowserWitnessHost.cs',
+  'scripts/windows/install-sovereign-browser-witness.ps1',
+  'scripts/windows/uninstall-sovereign-browser-witness.ps1',
+  'scripts/windows/build-original-r7-native-qualification.ps1',
+  'scripts/windows/inspect-r7-hosted-linux-lab-capacity.py',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/ProspectiveNativeScopeCapture.cs',
+  'src/windows/Stephanos.OriginalR7CustodyWitness/ProspectiveProcessingClaimContext.cs',
+  'src/windows/Stephanos.OriginalR7NativeQualification/.gitignore',
+  'src/windows/Stephanos.OriginalR7NativeQualification/Client.c',
+  'src/windows/Stephanos.OriginalR7NativeQualification/NativeQualification.c',
+  'src/windows/Stephanos.OriginalR7NativeQualification/Protocol.h',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/.gitignore',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Program.cs',
+  'src/windows/Stephanos.ProspectiveProcessingClaimContext.Tests/Stephanos.ProspectiveProcessingClaimContext.Tests.csproj',
+  'scripts/windows/build-spatial-window.ps1',
+  'scripts/windows/install-spatial-window.ps1',
+  'scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1',
+  'scripts/windows/launch-stephanos-spatial-workspace.ps1',
+  'scripts/windows/start-spatial-window-host.ps1',
+  'src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',
+];
+const PENDING_853343_KNOWN_PATHS = [
+  PENDING_853343_WORKER_PATH, ...PENDING_853343_NATURAL_PATHS, ...PENDING_853343_OFFLINE_PATHS,
+];
+const PENDING_853343_UNRESOLVED_PATHS = [
+  'scripts/spatial-window-host.mjs',
+  'shared/vr/spatialDesktopSurfaceContractV1.mjs',
+];
+const PENDING_853343_UNKNOWN_ESTATE = [
+  ...PENDING_853343_KNOWN_PATHS, ...PENDING_853343_UNRESOLVED_PATHS,
+];
+// Five actual members of the same range retain its six existing refresh
+// targets and its separate desktop plugin-host and resident relay obligations.
+const PENDING_853343_EXISTING_OWNER_PATHS = [
+  'apps/spatial-bridge/holodeck-room-v1.mjs',
+  'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+  'scripts/battle-bridge-github-command-mailbox.mjs',
+  'plugins/sovereign-commander/plugin.json',
+  'scripts/control-tower-build-consumer-v1.mjs',
+];
+
+function pending853343Adapters(calls, sourceHead = B) {
+  return Object.fromEntries([
+    'refreshUi', 'proveVrAtlas', 'restartBackend', 'restartMissionWorker',
+    'restartGitHubMailbox', 'refreshSovereignCommander', 'confirmNaturalReload',
+    'verifySovereignPluginHost',
+  ].map(name => [name, async () => { calls.push(name); return pass(sourceHead); }]));
+}
+
+test('audited pending 853343 partition assigns 35 exact paths to their existing owners', async () => {
+  assert.equal(new Set(PENDING_853343_UNKNOWN_ESTATE).size, 37);
+  assert.equal(PENDING_853343_NATURAL_PATHS.length, 7);
+  assert.equal(PENDING_853343_OFFLINE_PATHS.length, 27);
+  for (const [paths, targets, classification] of [
+    [[PENDING_853343_WORKER_PATH], [POST_SYNC_REFRESH_TARGETS.MISSION_WORKER],
+      POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY],
+    [PENDING_853343_NATURAL_PATHS, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD],
+      POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY],
+    [PENDING_853343_OFFLINE_PATHS, [],
+      POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED],
+  ]) {
+    for (const path of paths) {
+      const plan = classifyPostSyncRefresh([path]);
+      assert.equal(plan.classification, classification, path);
+      assert.deepEqual(plan.targetIds, targets, path);
+      assert.equal(plan.unknownPathCount, 0, path);
+      assert.equal(plan.noRuntimePathCount, targets.length ? 0 : 1, path);
+      assert.equal(plan.automaticExecutionAllowed, true, path);
+    }
+  }
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: PENDING_853343_KNOWN_PATHS,
+    adapters: pending853343Adapters(calls),
+  });
+  assert.equal(result.plan.changedPathCount, 35);
+  assert.equal(result.plan.noRuntimePathCount, 27);
+  assert.deepEqual(result.plan.internal.noRuntimePaths, PENDING_853343_OFFLINE_PATHS);
+  assert.deepEqual(result.plan.internal.unknownPaths, []);
+  assert.deepEqual(result.plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER, POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+  assert.equal(result.plan.pluginHostActivationRequired, false);
+  assert.equal(result.plan.sovereignRelayRefreshRequired, false);
+  assert.deepEqual(calls, ['restartMissionWorker', 'confirmNaturalReload']);
+  assert.equal(result.ok, true);
+  assert.equal(result.exactHeadProofOk, true);
+});
+
+test('audited pending 853343 estate retains Spatial debt and independent plugin/relay obligations', async () => {
+  const calls = [];
+  const targets = [
+    POST_SYNC_REFRESH_TARGETS.UI_4173,
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B,
+    changedPaths: [...PENDING_853343_UNKNOWN_ESTATE, ...PENDING_853343_EXISTING_OWNER_PATHS],
+    adapters: pending853343Adapters(calls),
+    // Even exact stored target receipts cannot waive unresolved ownership.
+    completedResults: targets.map(targetId => ({
+      targetId, ...pass(),
+      ...(targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER
+        ? { sovereignRelayProof: relayProof() } : {}),
+    })),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(result.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
+  assert.equal(result.plan.changedPathCount, 42);
+  assert.equal(result.plan.noRuntimePathCount, 27);
+  assert.equal(result.plan.unknownPathCount, 0);
+  assert.equal(result.plan.spatialAdoptionPathCount, 2);
+  assert.equal(result.plan.spatialAdoptionRequired, true);
+  assert.deepEqual(result.plan.internal.unknownPaths, []);
+  assert.deepEqual(result.plan.internal.spatialAdoptionPaths, PENDING_853343_UNRESOLVED_PATHS);
+  assert.deepEqual(result.plan.targetIds, targets);
+  assert.equal(result.plan.pluginHostActivationRequired, true);
+  assert.equal(result.plan.sovereignRelayRefreshRequired, true);
+  assert.equal(result.plan.automaticExecutionAllowed, true);
+  assert.equal(result.exactHeadProofOk, false);
+  assert.deepEqual(result.results.map(row => row.targetId), targets);
+  assert.ok(result.results.every(row => row.resumed === true));
+  assert.deepEqual(calls, ['verifySovereignPluginHost']);
+});
+
+test('audited pending 853343 offline sources do not invoke installers observers reviewers or refresh adapters', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: PENDING_853343_OFFLINE_PATHS,
+    adapters: pending853343Adapters(calls),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(result.plan.targetIds, []);
+  assert.deepEqual(result.results, []);
+  assert.deepEqual(calls, []);
+});
+
+test('audited pending 853343 worker and invocation owners reject stale proof without calling other owners', async () => {
+  for (const [paths, target, adapter] of [
+    [[PENDING_853343_WORKER_PATH], POST_SYNC_REFRESH_TARGETS.MISSION_WORKER, 'restartMissionWorker'],
+    [PENDING_853343_NATURAL_PATHS, POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD, 'confirmNaturalReload'],
+  ]) {
+    for (const sourceHead of [A, B]) {
+      const calls = [];
+      const result = await executePostSyncRefreshPlan({
+        beforeHead: A, afterHead: B, changedPaths: paths,
+        adapters: pending853343Adapters(calls, sourceHead),
+      });
+      assert.deepEqual(result.plan.targetIds, [target]);
+      assert.deepEqual(calls, [adapter]);
+      assert.equal(result.ok, sourceHead === B);
+      assert.equal(result.exactHeadProofOk, sourceHead === B);
+      assert.equal(result.blocker, sourceHead === B ? '' : 'REFRESH_PROOF_FAILED:' + target);
+    }
+  }
+});
+
+test('audited pending 853343 allowances refuse sibling and version lookalikes before any adapter runs', async () => {
+  const neighbors = [
+    ...PENDING_853343_KNOWN_PATHS.map(path => path.replace(/(\.[^/.]+)$/, '-unregistered$1')),
+    'scripts/sovereign-reviewer-v2.mjs',
+    'scripts/fixtures/sovereign-directory-package-fixture-v2.mjs',
+    'scripts/windows/SovereignDirectoryCreateV2.cs',
+    'src/windows/Stephanos.OriginalR7NativeQualificationV2/Client.c',
+    'src/windows/Stephanos.SpatialWindowV2/SpatialWindow.cpp',
+  ];
+  for (const path of neighbors) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [...PENDING_853343_KNOWN_PATHS, path],
+      adapters: pending853343Adapters(calls),
+    });
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.equal(result.plan.automaticExecutionAllowed, false, path);
+    assert.deepEqual(result.plan.internal.unknownPaths, [path], path);
+    assert.deepEqual(calls, [], path);
+  }
+});
+
+test('audited pending 853343 allowances preserve unrelated OpenClaw approval and unsafe-path gates', async () => {
+  const calls = [];
+  const openClawPath = 'integrations/openclaw/stephanos-ignite-command/index.mjs';
+  const gated = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: [...PENDING_853343_KNOWN_PATHS, openClawPath],
+    adapters: pending853343Adapters(calls),
+  });
+  assert.equal(gated.ok, false);
+  assert.equal(gated.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW);
+  assert.equal(gated.blocker, 'OPENCLAW_REFRESH_APPROVAL_REQUIRED');
+  assert.deepEqual(gated.plan.internal.openClawPaths, [openClawPath]);
+  assert.equal(gated.plan.openClawApprovalRequired, true);
+  assert.equal(gated.safeRefreshesCompleted, true);
+  assert.deepEqual(calls, ['restartMissionWorker', 'confirmNaturalReload']);
+
+  const unsafeCalls = [];
+  const unsafe = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: [...PENDING_853343_KNOWN_PATHS, '../outside.ps1'],
+    adapters: pending853343Adapters(unsafeCalls),
+  });
+  assert.equal(unsafe.ok, false);
+  assert.equal(unsafe.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH);
+  assert.equal(unsafe.plan.automaticExecutionAllowed, false);
+  assert.deepEqual(unsafe.plan.internal.unsafePaths, ['../outside.ps1']);
+  assert.deepEqual(unsafe.results, []);
+  assert.deepEqual(unsafeCalls, []);
+});
+
+test('hosted exact-head escalation stops blocking disjoint backend refresh but cannot discharge Spatial adoption',async()=>{
+  const hosted='scripts/exact-head-qualified-escalation-v1.mjs';
+  const backend='stephanos-server/services/submitGoalTool.js';
+  const spatial=['scripts/spatial-window-host.mjs','shared/vr/spatialDesktopSurfaceContractV1.mjs'];
+  const plan=classifyPostSyncRefresh([hosted,backend,...spatial]);
+  assert.equal(plan.unknownPathCount,0);
+  assert.equal(plan.noRuntimePathCount,1);
+  assert.equal(plan.spatialAdoptionRequired,true);
+  assert.equal(plan.classification,'BLOCKED_SPATIAL_ADOPTION_REQUIRED');
+  assert.ok(plan.targetIds.includes('stephanos-backend-8787'));
+  assert.deepEqual(plan.internal.spatialAdoptionPaths,spatial);
+  const unrelated=classifyPostSyncRefresh(['scripts/exact-head-qualified-escalation-v2.mjs',backend]);
+  assert.equal(unrelated.classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+  assert.equal(unrelated.unknownPathCount,1);
+  assert.equal(unrelated.automaticExecutionAllowed,false);
+});
+
+test('post-sync target proof denies contradictory nonempty blocker across normal target families', () => {
+  const paths = ['stephanos-server/services/submitGoalTool.js'];
+  const plan = classifyPostSyncRefresh(paths);
+  const targetId = POST_SYNC_REFRESH_TARGETS.BACKEND_8787;
+  for (const blocker of ['BACKEND_NOT_HEALTHY', 'REFRESH_TARGET_PROOF_FAILED', ' ']) {
+    assert.equal(postSyncRefreshTargetResultPass({ ...pass(), blocker }, { targetId, plan, expectedHead: B }), false);
+  }
+  assert.equal(postSyncRefreshTargetResultPass({ ...pass(), blocker: '' }, { targetId, plan, expectedHead: B }), true);
+  assert.equal(postSyncRefreshTargetResultPass(pass(), { targetId, plan, expectedHead: B }), true);
+});
+
+test('post-sync executor rejects fresh contradictory backend proof even when success flags match head', async () => {
+  const seen = [];
+  const path = 'stephanos-server/services/submitGoalTool.js';
+  const denied = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: [path],
+    adapters: { restartBackend: async () => ({ ...pass(), blocker: 'BACKEND_NOT_HEALTHY' }) },
+    onTargetComplete: async (_results, observation) => { seen.push(observation); },
+  });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(denied.blocker, 'BACKEND_NOT_HEALTHY');
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].failureKind, 'RESULT_UNPROVEN');
+});
+
+test('post-sync persisted contradictory success cannot resume; qualified new proof must execute', async () => {
+  const path = 'stephanos-server/services/submitGoalTool.js';
+  let invoked = 0;
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: [path],
+    completedResults: [{ targetId: POST_SYNC_REFRESH_TARGETS.BACKEND_8787, ...pass(), blocker: 'BACKEND_NOT_HEALTHY' }],
+    adapters: { restartBackend: async () => { invoked++; return { ...pass(), blocker: '' }; } },
+  });
+  assert.equal(invoked, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_COMPLETE);
+  assert.equal(result.results[0].resumed, undefined);
+});
+
+test('post-sync persisted contradictory proof plus absent handler remains blocked', async () => {
+  const path = 'stephanos-server/services/submitGoalTool.js';
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: [path],
+    completedResults: [{ targetId: POST_SYNC_REFRESH_TARGETS.BACKEND_8787, ...pass(), blocker: 'BACKEND_NOT_HEALTHY' }],
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+  assert.equal(result.blocker, `REFRESH_HANDLER_MISSING:${POST_SYNC_REFRESH_TARGETS.BACKEND_8787}`);
+});
+
+// Actual unknown members of d729d17c -> merged 56076f9. Each exact path was
+// traced to its loading owner; these source classifications confer no native
+// installation, fixed-runtime qualification, custody or Spatial acceptance.
+const MERGED_56076_NATURAL_PATHS = [
+  'scripts/sovereign-commander-spatial-workspace.mjs',
+  'scripts/windows/SovereignFileCopyV1.cs',
+  'scripts/windows/sovereign-copy-file-content.ps1',
+  'scripts/windows/SovereignFileMoveV1.cs',
+  'scripts/windows/sovereign-move-file.ps1',
+  'scripts/windows/SovereignPdfWriteV1.cs',
+  'scripts/windows/sovereign-write-pdf.ps1',
+  'scripts/windows/SovereignSearchV1.cs',
+  'scripts/windows/sovereign-search.ps1',
+];
+const MERGED_56076_OFFLINE_PATHS = [
+  'scripts/exact-head-qualified-escalation-v1.mjs',
+  'scripts/fixtures/sovereign-fixed-runtime-adoption-parent-fixture-v1.mjs',
+  'scripts/fixtures/sovereign-fixed-runtime-parent-protocol-fixture-v1.mjs',
+  'scripts/fixtures/sovereign-fixed-runtime-source-proof-fixture-v1.mjs',
+  'scripts/windows/SovereignFixedRuntimeJobV1.cs',
+  'scripts/windows/SovereignFixedRuntimeSourceV1.cs',
+  'scripts/windows/prepare-spatial-workspace.ps1',
+  'scripts/windows/spatial-window-install-lock.ps1',
+];
+const MERGED_56076_KNOWN_PATHS = [...MERGED_56076_NATURAL_PATHS, ...MERGED_56076_OFFLINE_PATHS];
+
+function ownedRefreshRecord(result, phase = result.ok ? 'complete' : 'blocked') {
+  return {
+    ...buildPostSyncRefreshProjection(result, { beforeHead: A, afterHead: B }),
+    schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.status',
+    statusId: 'post-sync-runtime-refresh-current', phase,
+  };
+}
+
+test('merged 56076 unknown partition admits only the 17 audited loading owners', () => {
+  assert.equal(new Set(MERGED_56076_KNOWN_PATHS).size, 17);
+  assert.equal(MERGED_56076_NATURAL_PATHS.length, 9);
+  assert.equal(MERGED_56076_OFFLINE_PATHS.length, 8);
+  for (const [paths, targets, classification] of [
+    [MERGED_56076_NATURAL_PATHS, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD], POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY],
+    [MERGED_56076_OFFLINE_PATHS, [], POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED],
+  ]) {
+    for (const path of paths) {
+      const plan = classifyPostSyncRefresh([path]);
+      assert.equal(plan.classification, classification, path);
+      assert.deepEqual(plan.targetIds, targets, path);
+      assert.equal(plan.unknownPathCount, 0, path);
+      assert.equal(plan.noRuntimePathCount, targets.length ? 0 : 1, path);
+      assert.equal(plan.spatialAdoptionRequired, false, path);
+    }
+  }
+});
+
+test('merged 56076 offline inputs invoke nothing and explicit command sources require current checkout proof', async () => {
+  const offlineCalls = [];
+  const offline = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: MERGED_56076_OFFLINE_PATHS,
+    adapters: pending853343Adapters(offlineCalls),
+  });
+  assert.equal(offline.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(offline.results, []);
+  assert.deepEqual(offlineCalls, []);
+  for (const sourceHead of [A, B]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: MERGED_56076_KNOWN_PATHS,
+      adapters: pending853343Adapters(calls, sourceHead),
+    });
+    assert.deepEqual(calls, ['confirmNaturalReload']);
+    assert.deepEqual(result.plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+    assert.equal(result.plan.noRuntimePathCount, 8);
+    assert.equal(result.ok, sourceHead === B);
+    assert.equal(result.exactHeadProofOk, sourceHead === B);
+  }
+});
+
+test('merged 56076 source adoption cannot qualify the actual fixed native preparation boundary', async () => {
+  const { executeFixedMaintenanceRuntimeV1, consumeFixedRuntimeTerminalProvenanceV1 } =
+    await import('../../scripts/sovereign-fixed-runtime-parent-v1.mjs');
+  const adopted = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: MERGED_56076_KNOWN_PATHS,
+    adapters: { confirmNaturalReload: async () => pass() },
+  });
+  assert.equal(adopted.ok, true);
+  const binding = {
+    requestId: 'fixture-source-adoption-only', sourceHead: B, custodyRecordSha256: 'c'.repeat(64),
+    nativeRecordId: 26, actionId: 'prepare-spatial-workspace',
+  };
+  let prepared = false;
+  const denied = await executeFixedMaintenanceRuntimeV1(adopted, binding, {
+    onPrepared: () => { prepared = true; return true; },
+  });
+  assert.equal(denied.reason, 'FIXED_RUNTIME_FRESH_QUALIFICATION_REQUIRED');
+  assert.equal(denied.taskRootCreated, false);
+  assert.equal(prepared, false);
+  assert.equal(consumeFixedRuntimeTerminalProvenanceV1(adopted, binding), false);
+});
+
+test('merged 56076 classifications retain both resident Spatial paths and durable adoption debt', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B,
+    changedPaths: [...MERGED_56076_KNOWN_PATHS, ...PENDING_853343_UNRESOLVED_PATHS],
+    adapters: pending853343Adapters(calls),
+  });
+  assert.deepEqual(calls, ['confirmNaturalReload']);
+  assert.equal(result.ok, false);
+  assert.equal(result.exactHeadProofOk, false);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED);
+  assert.equal(result.blocker, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN');
+  assert.equal(result.safeRefreshesCompleted, true);
+  assert.equal(result.plan.unknownPathCount, 0);
+  assert.equal(result.plan.spatialAdoptionPathCount, 2);
+  assert.deepEqual(result.plan.internal.spatialAdoptionPaths, PENDING_853343_UNRESOLVED_PATHS);
+  const debt = collectPostSyncRefreshDebt({ refreshRecord: JSON.parse(JSON.stringify(ownedRefreshRecord(result))) });
+  assert.equal(debt.ok, true);
+  assert.equal(debt.completion, null);
+  assert.equal(debt.spatialAdoptionRequired, true);
+  assert.deepEqual(debt.spans, [{ beforeHead: A, afterHead: B }]);
+});
+
+test('merged 56076 source classifications cannot waive independent relay or plugin-host proof', async () => {
+  const changedPaths = [
+    ...MERGED_56076_KNOWN_PATHS, ...PENDING_853343_UNRESOLVED_PATHS, ...PENDING_853343_EXISTING_OWNER_PATHS,
+  ];
+  for (const qualifiedRelay of [false, true]) {
+    const calls = [];
+    const adapters = pending853343Adapters(calls);
+    if (qualifiedRelay) adapters.refreshSovereignCommander = async () => {
+      calls.push('refreshSovereignCommander');
+      return { ...pass(), sovereignRelayProof: relayProof() };
+    };
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths, adapters });
+    assert.equal(result.ok, false);
+    assert.equal(result.exactHeadProofOk, false);
+    assert.equal(result.plan.sovereignRelayRefreshRequired, true);
+    assert.equal(result.plan.pluginHostActivationRequired, true);
+    assert.equal(result.plan.spatialAdoptionRequired, true);
+    assert.equal(result.plan.unknownPathCount, 0);
+    assert.equal(result.blocker, qualifiedRelay
+      ? 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN' : 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN');
+    assert.equal(calls.includes('confirmNaturalReload'), qualifiedRelay);
+    assert.equal(calls.includes('verifySovereignPluginHost'), qualifiedRelay);
+  }
+});
+
+test('merged 56076 exact allowances refuse neighboring files and unsafe paths before adapters', async () => {
+  const unknown = [
+    ...MERGED_56076_KNOWN_PATHS.map(path => path.replace(/(\.[^/.]+)$/, '-unregistered$1')),
+    'scripts/windows/SovereignFixedRuntimeJobV2.cs', 'scripts/windows/SovereignSearchV2.cs',
+    'scripts/fixtures/sovereign-fixed-runtime-source-proof-fixture-v2.mjs',
+    'scripts/windows/PREPARE-SPATIAL-WORKSPACE.ps1',
+  ];
+  for (const path of [...unknown, '../outside.ps1']) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [...MERGED_56076_KNOWN_PATHS, path],
+      adapters: pending853343Adapters(calls),
+    });
+    const unsafe = path === '../outside.ps1';
+    assert.equal(result.classification, unsafe ? POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH
+      : POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.equal(result.plan.automaticExecutionAllowed, false, path);
+    assert.deepEqual(unsafe ? result.plan.internal.unsafePaths : result.plan.internal.unknownPaths, [path], path);
+    assert.deepEqual(result.results, [], path);
+    assert.deepEqual(calls, [], path);
+  }
+});
+
+test('conflicting fresh target identity stays failed through canonical checkpoints projection and resume', async () => {
+  const targetId = POST_SYNC_REFRESH_TARGETS.BACKEND_8787;
+  const changedPaths = ['stephanos-server/services/submitGoalTool.js'];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  for (const suppliedId of [POST_SYNC_REFRESH_TARGETS.UI_4173, 'unknown-target', '', false, null, '__proto__',
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD, undefined, targetId]) {
+    const valid = suppliedId === undefined || suppliedId === targetId;
+    const response = { ...pass(), targetId: suppliedId, freshProcessLoaded: true };
+    assert.equal(postSyncRefreshTargetResultPass(response, { targetId, plan, expectedHead: B }), valid);
+    const checkpoints = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths,
+      adapters: { restartBackend: async () => response },
+      onTargetComplete: async (rows, observation) => {
+        assert.equal(rows[0], observation.result);
+        assert.equal(Object.isFrozen(observation.result), true);
+        checkpoints.push({ rows, observation });
+      },
+    });
+    assert.equal(result.ok, valid);
+    assert.equal(result.results[0].targetId, targetId);
+    assert.equal(result.results[0].ok, valid);
+    assert.equal(result.results[0].exactHeadProofOk, valid);
+    assert.equal(checkpoints.length, 1);
+    assert.equal(checkpoints[0].observation.targetId, targetId);
+    assert.equal(checkpoints[0].observation.failureKind, valid ? '' : 'RESULT_UNPROVEN');
+    const record = ownedRefreshRecord(result);
+    assert.equal(record.resultTargets[0].targetId, targetId);
+    assert.equal(record.resultTargets[0].ok, valid);
+    const debt = collectPostSyncRefreshDebt({ refreshRecord: JSON.parse(JSON.stringify(record)) });
+    assert.equal(debt.ok, true);
+    assert.equal(debt.completion !== null, valid);
+    if (!valid) {
+      assert.equal(result.blocker, 'REFRESH_TARGET_IDENTITY_UNPROVEN');
+      assert.equal(result.results[0].freshProcessLoaded, false);
+      let invoked = 0;
+      const retried = await executePostSyncRefreshPlan({
+        beforeHead: A, afterHead: B, changedPaths, completedResults: result.results,
+        adapters: { restartBackend: async () => { invoked++; return pass(); } },
+      });
+      assert.equal(invoked, 1);
+      assert.equal(retried.ok, true);
+      assert.equal(retried.results[0].resumed, undefined);
+    }
+  }
+});
+
+test('a backend response cannot duplicate a completed UI identity and preserves its original refusal', async () => {
+  const checkpoints = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B,
+    changedPaths: ['stephanos-ui/src/main.jsx', 'stephanos-server/services/submitGoalTool.js'],
+    adapters: {
+      refreshUi: async () => pass(),
+      restartBackend: async () => ({ ...pass(), targetId: POST_SYNC_REFRESH_TARGETS.UI_4173, blocker: 'BACKEND_NOT_HEALTHY' }),
+    },
+    onTargetComplete: async (rows, observation) => { checkpoints.push({ rows, observation }); },
+  });
+  const expected = [POST_SYNC_REFRESH_TARGETS.UI_4173, POST_SYNC_REFRESH_TARGETS.BACKEND_8787];
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'BACKEND_NOT_HEALTHY');
+  assert.deepEqual(result.plan.targetIds, expected);
+  assert.deepEqual(result.results.map(row => row.targetId), expected);
+  assert.deepEqual(checkpoints.at(-1).rows.map(row => row.targetId), expected);
+  assert.equal(checkpoints.at(-1).observation.result, result.results[1]);
+  const projection = ownedRefreshRecord(result);
+  assert.deepEqual(projection.resultTargets.map(row => row.targetId), expected);
+  assert.deepEqual(projection.resultTargets.map(row => row.ok), [true, false]);
+  assert.equal(collectPostSyncRefreshDebt({ refreshRecord: projection }).ok, true);
+});
+
+test('raw duplicate planned checkpoints refuse all status and head orderings before any side effect', async () => {
+  const targetId = POST_SYNC_REFRESH_TARGETS.BACKEND_8787;
+  const good = { targetId, ...pass() };
+  const bad = { ...good, ok: false, exactHeadProofOk: false, blocker: 'BACKEND_NOT_HEALTHY' };
+  const stale = { targetId, ...pass(A) };
+  const contradictory = { ...good, blocker: 'BACKEND_NOT_HEALTHY' };
+  for (const completedResults of [[good, good], [good, bad], [bad, good], [bad, bad],
+    [stale, good], [good, stale], [contradictory, good], [good, contradictory]]) {
+    let effects = 0;
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: ['stephanos-server/services/submitGoalTool.js'], completedResults,
+      adapters: { restartBackend: async () => { effects++; return pass(); } },
+      onTargetComplete: async () => { effects++; },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.exactHeadProofOk, false);
+    assert.equal(result.blocker, 'REFRESH_COMPLETED_RESULT_AMBIGUOUS:' + targetId);
+    assert.deepEqual(result.results, []);
+    assert.equal(effects, 0);
+  }
+  let invoked = 0;
+  const unique = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: ['stephanos-server/services/submitGoalTool.js'],
+    completedResults: [good, { targetId: 'unplanned' }, { targetId: 'unplanned', ok: false }, null],
+    adapters: { restartBackend: async () => { invoked++; return pass(); } },
+  });
+  assert.equal(unique.ok, true);
+  assert.equal(unique.results[0].resumed, true);
+  assert.equal(invoked, 0);
+});
+
+test('actual durable debt reader rejects duplicate raw rows before downstream resume filtering', async () => {
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: ['stephanos-server/services/submitGoalTool.js'],
+    adapters: { restartBackend: async () => pass() },
+  });
+  const complete = ownedRefreshRecord(result);
+  assert.equal(collectPostSyncRefreshDebt({ refreshRecord: complete }).completion.ok, true);
+  const good = complete.resultTargets[0];
+  const bad = { ...good, ok: false, exactHeadProofOk: false, blocker: 'BACKEND_NOT_HEALTHY' };
+  for (const phase of ['complete', 'checkpoint-1']) {
+    const record = phase === 'complete' ? complete : {
+      ...complete, phase, classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+      finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED', exactHeadProofOk: false, blocker: 'REFRESH_PENDING',
+    };
+    assert.equal(collectPostSyncRefreshDebt({ refreshRecord: record }).ok, true);
+    for (const rows of [[good, good], [good, bad], [bad, good]]) {
+      const denied = collectPostSyncRefreshDebt({
+        refreshRecord: JSON.parse(JSON.stringify({ ...record, resultTargets: rows })),
+      });
+      assert.equal(denied.ok, false);
+    }
+  }
+});
+
+test('projection rechecks every planned target and does not display contradictory proofs as successful', async () => {
+  for (const blocker of ['BACKEND_NOT_HEALTHY', ' ', false, null, 0]) {
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: ['stephanos-server/services/submitGoalTool.js'],
+      adapters: { restartBackend: async () => ({ ...pass(), blocker }) },
+    });
+    assert.equal(result.ok, false);
+    const record = ownedRefreshRecord(result);
+    assert.equal(record.resultTargets[0].ok, false);
+    assert.equal(record.resultTargets[0].exactHeadProofOk, false);
+    assert.equal(collectPostSyncRefreshDebt({ refreshRecord: record }).completion, null);
+  }
+  const plan = classifyPostSyncRefresh(['stephanos-server/services/submitGoalTool.js']);
+  const unexpected = buildPostSyncRefreshProjection({
+    ok: false, plan, results: [{ targetId: POST_SYNC_REFRESH_TARGETS.UI_4173, ...pass() }],
+  }, { beforeHead: A, afterHead: B });
+  assert.equal(unexpected.resultTargets[0].ok, false);
+  assert.equal(unexpected.resultTargets[0].exactHeadProofOk, false);
+  assert.equal(unexpected.resultTargets[0].blocker, 'REFRESH_TARGET_PROOF_FAILED');
+});
+
+// Exact 23 unknown members of the authenticated d729d17c -> ac5ee351 range.
+// The resident import chain is Commander HTTP -> Caravan HTTP -> page/native
+// bridge. The bridge captures its fixed probe contract, then rereads and checks
+// the PowerShell bytes on each bounded call. Offline enrollment and native
+// compilation retain the separate #1814 authority and installation boundary.
+const CARAVAN_RESIDENT_PATHS = [
+  'scripts/battle-bridge-caravan-http-v1.mjs',
+  'scripts/battle-bridge-caravan-page-v1.mjs',
+  'scripts/windows/battle-bridge-mobile-install-native-v1.mjs',
+];
+const CARAVAN_PROBE_PATH = 'scripts/windows/observe-battle-bridge-mobile-install-v1.ps1';
+const CARAVAN_OFFLINE_PATHS = [
+  'scripts/battle-bridge-mobile-install-enrollment-bootstrap-v1.mjs',
+  'scripts/battle-bridge-mobile-install-enrollment-review-v1.mjs',
+  'scripts/battle-bridge-mobile-partial-preservation-review-v1.mjs',
+  'scripts/fixtures/mobile-device-pairing-v1.mjs',
+  'scripts/fixtures/sovereign-mobile-installer-native-source-v1.mjs',
+  'scripts/windows/SovereignMobileInstallAnchorV1.cs',
+  'scripts/windows/SovereignMobileInstallAssertionV1.cs',
+  'scripts/windows/SovereignMobileInstallEnrollmentV1.cs',
+  'scripts/windows/SovereignMobileInstallEntryV1.cs',
+  'scripts/windows/SovereignMobileInstallExecutorV1.cs',
+  'scripts/windows/SovereignMobileInstallJournalV1.cs',
+  'scripts/windows/SovereignMobileInstallProvisioningV1.cs',
+  'scripts/windows/SovereignMobileInstallReceiptV1.cs',
+  'scripts/windows/SovereignMobileInstallReconciliationV1.cs',
+  'scripts/windows/SovereignMobileInstallReleaseV1.cs',
+  'scripts/windows/SovereignMobileInstallRequestsV1.cs',
+  'scripts/windows/install-battle-bridge-mobile-installer-v1.ps1',
+  'scripts/windows/preserve-battle-bridge-mobile-partial-v1.ps1',
+  'scripts/windows/test-sovereign-fixed-runtime-job-v1.ps1',
+];
+const CARAVAN_AUDITED_PATHS = [...CARAVAN_RESIDENT_PATHS, CARAVAN_PROBE_PATH, ...CARAVAN_OFFLINE_PATHS];
+
+test('Caravan unknown partition uses the existing resident, per-call and offline owners', () => {
+  assert.equal(new Set(CARAVAN_AUDITED_PATHS).size, 23);
+  for (const [paths, targets] of [
+    [CARAVAN_RESIDENT_PATHS, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]],
+    [[CARAVAN_PROBE_PATH], [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]],
+    [CARAVAN_OFFLINE_PATHS, []],
+  ]) {
+    for (const path of paths) {
+      const plan = classifyPostSyncRefresh([path]);
+      assert.deepEqual(plan.targetIds, targets, path);
+      assert.equal(plan.unknownPathCount, 0, path);
+      assert.equal(plan.noRuntimePathCount, targets.length ? 0 : 1, path);
+      assert.equal(plan.automaticExecutionAllowed, true, path);
+    }
+  }
+  const plan = classifyPostSyncRefresh(CARAVAN_AUDITED_PATHS);
+  assert.equal(plan.noRuntimePathCount, 19);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER, POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+});
+
+test('Caravan offline adoption invokes nothing and probe adoption checks only the current checkout', async () => {
+  const calls = [];
+  const offline = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+    changedPaths: CARAVAN_OFFLINE_PATHS, adapters: pending853343Adapters(calls) });
+  assert.equal(offline.ok, true);
+  assert.equal(offline.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(offline.results, []);
+  assert.deepEqual(calls, []);
+  for (const sourceHead of [A, B]) {
+    const probeCalls = [];
+    const probe = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: [CARAVAN_PROBE_PATH, ...CARAVAN_OFFLINE_PATHS],
+      adapters: pending853343Adapters(probeCalls, sourceHead) });
+    assert.deepEqual(probeCalls, ['confirmNaturalReload']);
+    assert.equal(probe.ok, sourceHead === B);
+    assert.equal(probe.exactHeadProofOk, sourceHead === B);
+  }
+});
+
+test('Caravan resident admission preserves native refusals and stops before later targets', async () => {
+  for (const refusal of [
+    { ...pass(), ok: false, blocker: 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED' },
+    { ...pass(), ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_BUSY' },
+    { ...pass(), ok: false, blocker: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD' },
+    pass(A), { ...pass(), exactHeadProofOk: false },
+  ]) {
+    const calls = [];
+    const checkpoints = [];
+    const adapters = pending853343Adapters(calls);
+    adapters.refreshSovereignCommander = async () => { calls.push('refreshSovereignCommander'); return refusal; };
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: CARAVAN_AUDITED_PATHS, adapters,
+      onTargetComplete: rows => checkpoints.push(rows) });
+    assert.equal(result.ok, false);
+    assert.equal(result.exactHeadProofOk, false);
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED);
+    assert.equal(result.blocker, refusal.blocker || 'REFRESH_PROOF_FAILED:sovereign-commander');
+    assert.deepEqual(calls, ['refreshSovereignCommander']);
+    assert.equal(checkpoints.length, 1);
+    assert.equal(ownedRefreshRecord(result).resultTargets[0].ok, false);
+  }
+});
+
+test('Caravan mixed refresh retains relay, plugin-host and durable Spatial obligations', async () => {
+  const targetCalls = ['refreshUi', 'restartBackend', 'restartMissionWorker', 'restartGitHubMailbox', 'refreshSovereignCommander'];
+  for (const [qualifiedRelay, pluginChanged, blocker] of [
+    [false, true, 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN'],
+    [true, true, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN'],
+    [true, false, 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN'],
+  ]) {
+    const calls = [];
+    const adapters = pending853343Adapters(calls);
+    adapters.refreshSovereignCommander = async () => {
+      calls.push('refreshSovereignCommander');
+      return { ...pass(), ...(qualifiedRelay ? { sovereignRelayProof: relayProof() } : {}) };
+    };
+    const changedPaths = [...CARAVAN_AUDITED_PATHS, ...PENDING_853343_UNRESOLVED_PATHS,
+      ...PENDING_853343_EXISTING_OWNER_PATHS.filter(path => pluginChanged || !path.endsWith('/plugin.json'))];
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B, changedPaths, adapters });
+    assert.equal(result.plan.unknownPathCount, 0);
+    assert.equal(result.plan.automaticExecutionAllowed, true);
+    assert.equal(result.plan.targetIds.length, 6);
+    assert.equal(result.plan.sovereignRelayRefreshRequired, true);
+    assert.equal(result.plan.pluginHostActivationRequired, pluginChanged);
+    assert.deepEqual(result.plan.internal.spatialAdoptionPaths, PENDING_853343_UNRESOLVED_PATHS);
+    assert.equal(result.ok, false);
+    assert.equal(result.exactHeadProofOk, false);
+    assert.equal(result.blocker, blocker);
+    assert.deepEqual(calls, [...targetCalls, ...(qualifiedRelay ? ['confirmNaturalReload'] : []),
+      ...(qualifiedRelay && pluginChanged ? ['verifySovereignPluginHost'] : [])]);
+    const debt = collectPostSyncRefreshDebt({ refreshRecord: JSON.parse(JSON.stringify(ownedRefreshRecord(result))) });
+    assert.equal(debt.ok, true);
+    assert.equal(debt.completion, null);
+    assert.equal(debt.spatialAdoptionRequired, true);
+    assert.deepEqual(debt.spans, [{ beforeHead: A, afterHead: B }]);
+  }
+});
+
+test('Caravan exact allowances refuse every unregistered neighbor and unsafe path before invocation', async () => {
+  const unknown = [
+    ...CARAVAN_AUDITED_PATHS.map(path => path.replace(/(\.[^/.]+)$/, '-unregistered$1')),
+    'scripts/battle-bridge-caravan-http-v2.mjs',
+    'scripts/windows/SovereignMobileInstallEntryV2.cs',
+    'scripts/windows/OBSERVE-BATTLE-BRIDGE-MOBILE-INSTALL-V1.ps1',
+    'scripts/fixtures/mobile-device-pairing-v2.mjs',
+    'scripts/windows/test-sovereign-fixed-runtime-job-v2.ps1',
+  ];
+  for (const path of [...unknown, '../outside.ps1']) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+      changedPaths: [...CARAVAN_AUDITED_PATHS, path], adapters: pending853343Adapters(calls) });
+    const unsafe = path === '../outside.ps1';
+    assert.equal(result.classification, unsafe ? POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNSAFE_CHANGED_PATH
+      : POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.equal(result.plan.automaticExecutionAllowed, false, path);
+    assert.deepEqual(unsafe ? result.plan.internal.unsafePaths : result.plan.internal.unknownPaths, [path], path);
+    assert.deepEqual(result.results, [], path);
+    assert.deepEqual(calls, [], path);
+  }
+});
+
+test('Caravan source classifications retain the separate OpenClaw approval gate', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({ beforeHead: A, afterHead: B,
+    changedPaths: [...CARAVAN_AUDITED_PATHS, 'integrations/openclaw/stephanos-ignite-command/index.mjs'],
+    adapters: pending853343Adapters(calls) });
+  assert.deepEqual(calls, ['refreshSovereignCommander', 'confirmNaturalReload']);
+  assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW);
+  assert.equal(result.blocker, 'OPENCLAW_REFRESH_APPROVAL_REQUIRED');
+  assert.equal(result.ok, false);
+  assert.equal(result.exactHeadProofOk, false);
+  assert.equal(result.plan.openClawPathCount, 1);
 });

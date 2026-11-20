@@ -224,3 +224,136 @@ test('escrow publication requires byte-exact canonical branch across escrow, rem
   });
   assert.equal(nonString.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.UNRECOVERABLE);
 });
+
+test('canonical owner identity rejects partial, padded and fractional number aliases', () => {
+  assert.equal(validateSourceArtifactEscrowV1(escrow, NOW).valid, true);
+  for (const canonicalPr of ['2090junk', ' 2090 ', '02090', '2090.0', '2.09e3', 2090.5, true, {}, '9007199254740992']) {
+    const malformed = { ...escrow, canonicalPr };
+    const validation = validateSourceArtifactEscrowV1(malformed, NOW);
+    assert.equal(validation.valid, false, JSON.stringify(canonicalPr));
+    assert.ok(validation.errors.includes('invalid-canonical-pr'));
+    const recovered = buildSourceArtifactPublicationRecoveryV1({
+      nowUtc: NOW, escrow: malformed, canonicalRemote: remote, workspace,
+      publicationEvidence: {
+        proven: true, repository: escrow.repository, canonicalPr: 2090,
+        canonicalBranch: escrow.canonicalBranch, previousHead: escrow.exactParentHead,
+        newHead: '2'.repeat(40), newTree: escrow.exactResultTree,
+        fastForward: true, route: SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP,
+      },
+    });
+    assert.equal(recovered.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.UNRECOVERABLE);
+    assert.notEqual(recovered.retireEscrowAllowed, true);
+  }
+  assert.equal(validateSourceArtifactEscrowV1({ ...escrow, canonicalPr: '2090' }, NOW).valid, true);
+  for (const canonicalPr of ['2090junk', ' 2090 ', 2090.5, '02090']) {
+    const mismatched = buildSourceArtifactPublicationRecoveryV1({
+      nowUtc: NOW, escrow, canonicalRemote: { ...remote, canonicalPr }, workspace,
+    });
+    assert.equal(mismatched.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED, JSON.stringify(canonicalPr));
+  }
+});
+
+test('escrow owner identity, optional issue and SHA evidence remain byte-exact and fail closed', () => {
+  const accepted = {
+    proven: true, repository: escrow.repository, canonicalPr: 2090,
+    canonicalBranch: escrow.canonicalBranch, previousHead: escrow.exactParentHead,
+    newHead: '2'.repeat(40), newTree: escrow.exactResultTree,
+    fastForward: true, route: SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP,
+  };
+  const base = { nowUtc: NOW, escrow, canonicalRemote: remote, workspace, publicationEvidence: accepted, capabilities: {} };
+  const recover = (overrides = {}) => buildSourceArtifactPublicationRecoveryV1({ ...base, ...overrides });
+  assert.equal(recover().finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.FAILOVER_PROVEN);
+  assert.equal(recover({ escrow: { ...escrow, canonicalPr: '2090' } }).finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.FAILOVER_PROVEN);
+  for (const canonicalIssue of ['2090junk', ' 2090 ', '02090', '2090.5', 0, -1, '', true]) {
+    assert.equal(recover({ escrow: { ...escrow, canonicalIssue } }).finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.UNRECOVERABLE);
+    assert.equal(recover({ canonicalRemote: { ...remote, canonicalIssue } }).finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED);
+    const unproved = recover({ publicationEvidence: { ...accepted, canonicalIssue } });
+    assert.notEqual(unproved.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.FAILOVER_PROVEN);
+    assert.notEqual(unproved.retireEscrowAllowed, true);
+  }
+  for (const field of ['exactParentHead', 'exactParentTree', 'exactResultTree']) {
+    for (const extra of [' ', '\t']) {
+      assert.equal(recover({ escrow: { ...escrow, [field]: extra + escrow[field] } }).finalVerdict,
+        SOURCE_ARTIFACT_RECOVERY_STATE.UNRECOVERABLE, field);
+    }
+  }
+  assert.equal(recover({ escrow: { ...escrow, localCommitSha: ' ' + '3'.repeat(40) } }).finalVerdict,
+    SOURCE_ARTIFACT_RECOVERY_STATE.UNRECOVERABLE);
+  for (const extra of [' ', '\t']) {
+    assert.equal(recover({ canonicalRemote: { ...remote, head: remote.head + extra } }).finalVerdict,
+      SOURCE_ARTIFACT_RECOVERY_STATE.BRANCH_DRIFTED);
+  }
+  for (const field of ['previousHead', 'newHead', 'newTree']) {
+    for (const extra of [' ', '\t']) {
+      const unproved = recover({ publicationEvidence: { ...accepted, [field]: extra + accepted[field] } });
+      assert.notEqual(unproved.finalVerdict, SOURCE_ARTIFACT_RECOVERY_STATE.FAILOVER_PROVEN, field);
+      assert.notEqual(unproved.retireEscrowAllowed, true);
+    }
+  }
+});
+
+
+test('artifact and per-file digest authority requires byte-exact raw strings', () => {
+  assert.equal(validateSourceArtifactEscrowV1(escrow, NOW).valid, true);
+  for (const extra of [' ', '\\t']) {
+    const alteredArtifact = validateSourceArtifactEscrowV1({ ...escrow, completeArtifactSha256: extra + escrow.completeArtifactSha256 }, NOW);
+    assert.equal(alteredArtifact.valid, false);
+    assert.ok(alteredArtifact.errors.includes('invalid-artifact-sha256'));
+    for (const field of ['beforeBlobSha', 'afterBlobSha', 'sha256']) {
+      const altered = validateSourceArtifactEscrowV1({ ...escrow, changedFiles: [{ ...escrow.changedFiles[0], [field]: extra + escrow.changedFiles[0][field] }] }, NOW);
+      assert.equal(altered.valid, false, field);
+      assert.ok(altered.errors.some((error) => error.startsWith(field === 'sha256' ? 'invalid-file-sha256' : 'invalid-blob-identity')), field);
+    }
+  }
+});
+
+test('escrow test-proof manifests preserve exact raw entries and fail closed for missing or forged tests', () => {
+  assert.equal(validateSourceArtifactEscrowV1(escrow, NOW).valid, true);
+  const altered = [
+    { testsRun: [...escrow.testsRun, ''], testVerdicts: [...escrow.testVerdicts] },
+    { testsRun: [...escrow.testsRun, '  '], testVerdicts: [...escrow.testVerdicts] },
+    { testsRun: [9], testVerdicts: ['PASS'] },
+    { testsRun: [' ' + escrow.testsRun[0]], testVerdicts: ['PASS'] },
+    { testsRun: [escrow.testsRun[0]], testVerdicts: [true] },
+    { testsRun: [escrow.testsRun[0]], testVerdicts: [' PASS '] },
+    { testsRun: [escrow.testsRun[0]], testVerdicts: ['UNPROVEN'] },
+    { testsRun: undefined, testVerdicts: ['PASS'] },
+    { testsRun: [escrow.testsRun[0]], testVerdicts: undefined },
+  ];
+  for (const fields of altered) {
+    const checked = validateSourceArtifactEscrowV1({ ...escrow, ...fields }, NOW);
+    assert.equal(checked.valid, false, JSON.stringify(fields));
+    assert.ok(checked.errors.includes('tests-not-proven'), JSON.stringify(fields));
+  }
+  assert.equal(validateSourceArtifactEscrowV1({
+    ...escrow, testsRun: [...escrow.testsRun], testVerdicts: ['pass'],
+  }, NOW).valid, true);
+});
+
+test('raw escrow path authority cannot be normalized to a different Git path', () => {
+  assert.equal(validateSourceArtifactEscrowV1(escrow, NOW).valid, true);
+  const original = escrow.changedFiles[0];
+  const paths = [
+    './' + original.path,
+    original.path.replaceAll('/', '\\\\'),
+    original.path.replace('scripts/', 'scripts/./'),
+    original.path + ' ',
+    'scripts /' + original.path.slice('scripts/'.length),
+    original.path.replace('/windows/', '/windows /'),
+  ];
+  for (const path of paths) {
+    const result = validateSourceArtifactEscrowV1({ ...escrow,
+      changedFiles: [{ ...original, path }] }, NOW);
+    assert.equal(result.valid, false, path);
+    assert.ok(result.errors.some((error) => error.startsWith('unsafe-path:')), path);
+  }
+});
+test('raw escrow diff-verdict authority rejects padded proof but retains exact lowercase PASS', () => {
+  assert.equal(validateSourceArtifactEscrowV1(escrow, NOW).valid, true);
+  assert.equal(validateSourceArtifactEscrowV1({ ...escrow, diffCheckVerdict: 'pass' }, NOW).valid, true);
+  for (const diffCheckVerdict of [' PASS ', 'PASS\\n', '\\tPASS', 'PASS\\t']) {
+    const result = validateSourceArtifactEscrowV1({ ...escrow, diffCheckVerdict }, NOW);
+    assert.equal(result.valid, false, JSON.stringify(diffCheckVerdict));
+    assert.ok(result.errors.includes('diff-check-not-proven'));
+  }
+});
