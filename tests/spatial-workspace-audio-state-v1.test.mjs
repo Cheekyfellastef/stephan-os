@@ -441,3 +441,51 @@ test('hot-plug cannot silently reuse the same physical route just because device
   assert.deepEqual([micRequests,speakerContexts],[0,0],'selection alone is not a media grant');
   audio.dispose();assert.equal(listeners.size,0);
 });
+
+test('duplicate Quest audio IDs revoke both routes and cannot silently restore saved device hints',async()=>{
+  let duplicates=false,micRequests=0,speakerContexts=0;
+  const saved=new Map(),storage={getItem:k=>saved.get(k)??null,setItem:(k,v)=>saved.set(k,v)};
+  const mediaDevices={
+    async enumerateDevices(){
+      const devices=[{kind:'audioinput',deviceId:'quest-mic',label:'Quest Mic'},
+        {kind:'audiooutput',deviceId:'quest-speaker',label:'Quest Speakers'}];
+      if(duplicates)devices.push(
+        {kind:'audioinput',deviceId:'quest-mic',label:'Second Mic'},
+        {kind:'audiooutput',deviceId:'quest-speaker',label:'Second Output'});
+      return devices;
+    },
+    getUserMedia(){micRequests++;throw Error('ambiguous microphone must never request permission');},
+  };
+  class SpeakerContext{constructor(){speakerContexts++;}}
+  const audio=createHolodeckAudioControls({navigatorRef:{mediaDevices},AudioContextCtor:SpeakerContext,storageRef:storage});
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.setInput('quest-mic'),true);
+  assert.equal(audio.setOutput('quest-speaker'),true);
+  const savedHints=readSpatialAudioPreferences(storage);
+  assert.deepEqual(savedHints,{inputId:'quest-mic',outputId:'quest-speaker'});
+
+  duplicates=true;
+  const ambiguous=await audio.listDevices();
+  assert.equal(ambiguous.ok,true,'a successful enumeration may still contain untrustworthy duplicate IDs');
+  assert.match(ambiguous.reason,/Ambiguous audio device identity/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['','']);
+  assert.equal(audio.setInput('quest-mic'),false,'even explicit selection cannot distinguish duplicate microphone IDs');
+  assert.equal(audio.setOutput('quest-speaker'),false,'even explicit selection cannot distinguish duplicate output IDs');
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.deepEqual([micRequests,speakerContexts],[0,0],'duplicate identity cannot acquire mic or sound a tone');
+  assert.deepEqual(readSpatialAudioPreferences(storage),savedHints,'saved hints stay inert');
+
+  duplicates=false;
+  const recovered=await audio.listDevices();
+  assert.equal(recovered.ok,true);
+  assert.match(recovered.reason,/Ambiguous audio device identity was observed/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['',''],
+    'a later unique enumeration alone cannot re-authorize previously ambiguous routes');
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.equal(audio.setInput('quest-mic'),true,'only fresh explicit selection can restore the microphone hint');
+  assert.equal(audio.setOutput('quest-speaker'),true,'only fresh explicit selection can restore the speaker hint');
+  assert.deepEqual([micRequests,speakerContexts],[0,0],'selection is never a media grant or ChatGPT Voice session');
+  audio.dispose();
+});
