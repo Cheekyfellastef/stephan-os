@@ -206,6 +206,26 @@ try {
         Assert-True (-not (Send-MonitorCommand -Command 'confirm')) 'Denied foreground still dispatched'
         Assert-True ($monitorState.RequestSequence -eq 0 -and $monitorState.ConfirmationToken -ceq ('2' * 32)) 'Rejected foreground consumed the confirmation'
     }
+    Invoke-Fixture 'broken transport stops foreground focus retry and retains provider custody' {
+        Reset-MonitorFixture
+        $monitorState.Mode = 'waiting'
+        $monitorState.RunId = '3' * 32
+        $monitorState.FocusAttemptedRunId = $monitorState.RunId
+        $monitorState.FocusAttemptCount = 1
+        $monitorState.GameProcess = [pscustomobject]@{ pid = 54321; createdFileTime = '134384678410182997' }
+        $monitorState.PrepareDispatched = $true
+        $monitorState.ProviderSlotReleased = $false
+        $monitorState.DurableCustodyReleased = $false
+        $monitorState.SafeToClose = $false
+        $focusRetryTimer.Start()
+        Stop-MonitorTransport -Reason 'fixture-transport-broken'
+        Assert-True ($monitorState.TransportFailed -and -not $monitorState.ProviderSlotReleased -and -not $monitorState.DurableCustodyReleased) 'Failure released provider custody'
+        Assert-True ($focusRetryTimer.StopCalls -eq 1 -and $monitorState.Pipe.CloseCalls -eq 1) 'Focus timer or input was not terminated'
+        Assert-True ($monitorState.FocusAttemptCount -eq 1) 'Failure retried focus'
+        Invoke-MonitorWaitingGameFocus
+        Assert-True ($monitorState.FocusAttemptCount -eq 1 -and $focusRetryTimer.StopCalls -eq 2) 'Failed transport still attempted native focus'
+        Assert-True ($monitorState.Process.StandardInput.ToString().Length -eq 0) 'Failed transport dispatched monitor input'
+    }
     Invoke-Fixture 'offline cleanup shows a safe reason without dispatching another operation' {
         Reset-MonitorFixture
         $frame = New-StateFrame 'cleanup'
