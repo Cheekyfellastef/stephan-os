@@ -2293,7 +2293,9 @@ test('maintenance receipt must contain exact completion proof', async () => {
   };
   for (const [maintenance, expectedFailure] of [
     [{ ...baseline, finalVerdict: 'SOMETHING_ELSE' }, 'COMMANDER_ACTION_COMPLETION_UNVERIFIED'],
-    [{ ...baseline, proofHash: 'bad' }, 'COMMANDER_ACTION_PROOF_HASH_MISSING'],
+    // Invalid proof hashes are rejected by sovereignCommanderCompletionEnvelope
+    // before a native completion is trusted, so do not infer a specific child failure.
+    [{ ...baseline, proofHash: 'bad' }, 'COMMANDER_ACTION_COMPLETION_UNVERIFIED'],
     [{ ...baseline, command: { plan: { processId: 'other-action' } } }, 'COMMANDER_ACTION_PROCESS_ID_MISMATCH'],
     [{ ...baseline, structuredContent: { ok: false, status: 1, errorCode: 'FAILED' } }, 'COMMANDER_ACTION_NATIVE_EXIT_NONZERO'],
     [{ ...baseline, structuredContent: { ok: true, status: null, errorCode: '' } }, 'COMMANDER_ACTION_EXIT_UNVERIFIED'],
