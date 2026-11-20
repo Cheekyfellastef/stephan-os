@@ -146,7 +146,12 @@ export async function persistStephanosConversationCanvasFromPersistedQaV1({
       handoffId: composition.canvasHandoff.handoffId,
       workspaceHandoffId: persistence.handoffId,
       continuity: Object.freeze({
-        roundId: composition.question.roundId,
+        ...(Object.hasOwn(composition.canvasHandoff.continuity, 'roundId')
+          ? { roundId: composition.canvasHandoff.continuity.roundId }
+          : {
+              conversationMode: composition.canvasHandoff.continuity.conversationMode,
+              correlationId: composition.canvasHandoff.continuity.correlationId,
+            }),
         questionId: composition.question.questionId,
         answerId: composition.answer.answerId,
       }),

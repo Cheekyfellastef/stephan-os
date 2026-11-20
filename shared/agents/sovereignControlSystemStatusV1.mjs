@@ -1,12 +1,49 @@
 // One public, observation-only projection for the existing Control Tower receipt.
 // This module has no native imports, credentials, persistence or execution path.
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from './sovereignMaintenanceAdmissionV1.mjs';
 export const SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1 = 'stephanos.sovereign-control-system-inspection.v1';
 export const SOVEREIGN_CONTROL_SYSTEM_STATUS_SCHEMA_V1 = 'stephanos.sovereign-control-system-status.v1';
 export const SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1 = 2048;
+export const SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1 = Object.freeze([
+  'HTTP_OK', 'HEALTH_OK', 'SERVICE', 'OBSERVATION_SCOPE', 'NO_ADMISSION', 'OWNER_VERSION',
+]);
 
 const SHA = /^[a-f0-9]{40}$/;
-const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1']);
+// Closed compiled inventory only; observing a name grants no action admission.
+const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1',
+  'SPATIAL_WORKSPACE_PREPARE_V1', 'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1']);
 const UNKNOWN = 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN';
+// This optional denial detail never joins the general blocker vocabulary or
+// supplies native qualification, execution custody or governor permission.
+const GOVERNOR_HOLD_CODES = new Set([
+  'FIXED_RUNTIME_GOVERNOR_WORKSPACE_UNPROVEN', 'FIXED_RUNTIME_GOVERNOR_WORKSPACE_MISMATCH',
+  'FIXED_RUNTIME_GOVERNOR_PREPARE_PENDING', 'FIXED_RUNTIME_GOVERNOR_OVERRIDE_UNPROVEN',
+  'FIXED_RUNTIME_GOVERNOR_STATE_INVALID', 'FIXED_RUNTIME_GOVERNOR_CLOCK_UNPROVEN',
+  'FIXED_RUNTIME_GOVERNOR_OBSERVATION_FUTURE', 'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE',
+  'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED', 'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',
+]);
+
+export function sovereignControlSystemGovernorHoldCodeV1(value) {
+  return typeof value === 'string' && GOVERNOR_HOLD_CODES.has(value)
+    ? value : 'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE';
+}
+
+// Fresh signal diagnostics are separate from the persisted governor permission
+// and native qualification above. Neither their success nor failure is admission.
+const GOVERNOR_OBSERVATION_CODES = new Set([
+  'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_SOURCE_UNPROVEN',
+  'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_TIMEOUT',
+  'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_INVALID',
+  'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_UNPROVEN',
+  'SOVEREIGN_CONTROL_SYSTEM_SOURCE_UNPROVEN',
+  'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED',
+]);
+
+export function sovereignControlSystemGovernorObservationCodeV1(value) {
+  return typeof value === 'string' && GOVERNOR_OBSERVATION_CODES.has(value)
+    ? value : 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_UNPROVEN';
+}
+
 // Deliberately closed: an uppercase exception message is not public telemetry.
 const CODES = new Set([
   UNKNOWN,
@@ -24,6 +61,8 @@ const CODES = new Set([
   'SOVEREIGN_CONTROL_SYSTEM_HEALTH_UNPROVEN',
   'SOVEREIGN_CONTROL_SYSTEM_HEALTH_BOUND_EXCEEDED',
   'SOVEREIGN_CONTROL_SYSTEM_HEALTH_IDENTITY_UNPROVEN',
+  'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN', 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_TIMEOUT',
+  'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_BOUND_EXCEEDED', 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED',
   'SOVEREIGN_CONTROL_SYSTEM_LEDGER_UNPROVEN',
   'SOVEREIGN_CONTROL_SYSTEM_REQUEST_NOT_OBSERVED',
   'SOVEREIGN_CONTROL_SYSTEM_STATUS_INVALID',
@@ -126,6 +165,69 @@ function base(value) {
     ...(utc(row.observedAtUtc) ? { observedAtUtc: utc(row.observedAtUtc) } : {}) } };
 }
 
+function projectProtocol(value, source, owner) {
+  const row = record(value), observedAtUtc = utc(row.observedAtUtc);
+  const unavailable = reason => frozen({ available: false, matches: false,
+    reason: sovereignControlSystemDiagnosticCodeV1(reason || 'SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_UNPROVEN') });
+  if (!source.available || !source.stable || source.expectedMainMatches === false)
+    return unavailable(source.reason || 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_UNPROVEN');
+  if (!owner.available || !owner.stable) return unavailable(owner.reason || 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN');
+  if (row.available !== true) return unavailable(row.reason);
+  const labels = row.failedPredicates;
+  if (!Array.isArray(labels) || Object.getPrototypeOf(labels) !== Array.prototype || labels.length > 6
+    || Reflect.ownKeys(labels).length !== labels.length + 1) return unavailable();
+  const failedPredicates = [];
+  for (let index = 0; index < labels.length; index++) {
+    const descriptor = Object.getOwnPropertyDescriptor(labels, String(index));
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string')
+      return unavailable();
+    failedPredicates.push(descriptor.value);
+  }
+  const canonical = SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1.filter(label => failedPredicates.includes(label));
+  const observedVersion = row.observedVersion;
+  if (canonical.length !== failedPredicates.length || canonical.some((label, index) => label !== failedPredicates[index])
+    || row.expectedVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION
+    || ![SOVEREIGN_MAINTENANCE_OWNER_VERSION, 'MISSING', 'OTHER', 'INVALID'].includes(observedVersion)
+    || failedPredicates.includes('OWNER_VERSION') !== (observedVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION)
+    || !observedAtUtc || Date.parse(observedAtUtc) > Date.parse(owner.observedAtUtc)
+    || Date.parse(owner.observedAtUtc) - Date.parse(observedAtUtc) > 15000
+    || row.reason !== (failedPredicates.length ? 'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED' : ''))
+    return unavailable();
+  return frozen({ available: true, matches: failedPredicates.length === 0,
+    failedPredicates: Object.freeze(failedPredicates), expectedVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+    observedVersion, observedAtUtc, reason: row.reason });
+}
+
+function projectGovernorObservation(value, source, inspectionStartedAtUtc) {
+  const row = record(value);
+  const unavailable = reason => frozen({ available: false,
+    reason: sovereignControlSystemGovernorObservationCodeV1(reason),
+    readOnly: true, diagnosticOnly: true, executionAuthority: false });
+  if (!source.available || !source.stable || source.reason !== '' || source.expectedMainMatches === false)
+    return unavailable(source.reason || 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_UNPROVEN');
+  const keys = Object.keys(row).sort().join(',');
+  if (row.readOnly !== true || row.diagnosticOnly !== true || row.executionAuthority !== false)
+    return unavailable('SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_INVALID');
+  if (row.available === false) {
+    return keys === 'available,diagnosticOnly,executionAuthority,readOnly,reason'
+      ? unavailable(row.reason) : unavailable('SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_INVALID');
+  }
+  const observedAtUtc = utc(row.observedAtUtc);
+  // The producer samples immediately after its initial source read and verifies
+  // the child's actual start/end window. This relative bound preserves original
+  // time during historical reprojection; it never refreshes permission or truth.
+  if (keys !== 'available,diagnosticOnly,executionAuthority,observedAtUtc,overrideMode,preparePending,readOnly,signalActive'
+    || row.available !== true || !observedAtUtc
+    || Date.parse(observedAtUtc) < Date.parse(inspectionStartedAtUtc)
+    || Date.parse(observedAtUtc) - Date.parse(inspectionStartedAtUtc) > 30000
+    || typeof row.signalActive !== 'boolean' || typeof row.preparePending !== 'boolean'
+    || !['AUTO', 'FORCE_ON', 'FORCE_OFF'].includes(row.overrideMode))
+    return unavailable('SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_INVALID');
+  return frozen({ available: true, observedAtUtc,
+    signalActive: row.signalActive, overrideMode: row.overrideMode, preparePending: row.preparePending,
+    readOnly: true, diagnosticOnly: true, executionAuthority: false });
+}
+
 // Accepts an inspection or an already-public receipt. Re-projecting a valid
 // public receipt is idempotent, so ledger/beacon/chat share this single boundary.
 export function projectSovereignControlSystemStatusV1(value) {
@@ -161,7 +263,7 @@ export function projectSovereignControlSystemStatusV1(value) {
       blocker: sovereignControlSystemDiagnosticCodeV1(g.row.blocker ?? g.result.reason),
       ...(typeof g.row.sourceHead === 'string' && SHA.test(g.row.sourceHead) ? { sourceHead: g.row.sourceHead } : {}),
       ...(g.result.observedAtUtc ? { observedAtUtc: g.result.observedAtUtc } : {}) };
-    const profilesValid = Array.isArray(n.row.profiles) && n.row.profiles.length <= 2
+    const profilesValid = Array.isArray(n.row.profiles) && n.row.profiles.length <= PROFILES.size
       && n.row.profiles.every(profile => typeof profile === 'string' && PROFILES.has(profile))
       && new Set(n.row.profiles).size === n.row.profiles.length;
     const nativeHead = typeof n.row.sourceHead === 'string' && SHA.test(n.row.sourceHead) ? n.row.sourceHead : '';
@@ -170,7 +272,13 @@ export function projectSovereignControlSystemStatusV1(value) {
       && source.available && profilesValid && n.result.reason === '';
     const nativeDenial = n.result.available && n.row.qualificationObserved === false
       && typeof n.row.reason === 'string' && CODES.has(n.row.reason) && Boolean(n.result.observedAtUtc);
+    // Keep historical receipts byte-identical when this optional leaf was absent.
+    const governorHoldCode = nativeDenial && n.row.reason === 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD'
+      && source.available && source.stable && source.reason === '' && (!expectedMain || expectedMain === sourceHead)
+      && Object.hasOwn(n.row, 'governorHoldCode')
+      ? sovereignControlSystemGovernorHoldCodeV1(n.row.governorHoldCode) : '';
     const nativeRuntime = { ...n.result, available: qualificationObserved || nativeDenial, qualificationObserved,
+      ...(governorHoldCode ? { governorHoldCode } : {}),
       ...(nativeHead ? { sourceHead: nativeHead } : {}),
       ...(qualificationObserved ? { profiles: Object.freeze([...n.row.profiles]) } : {}),
       ...(utc(n.row.bootStartedAtUtc) && n.result.observedAtUtc
@@ -193,7 +301,12 @@ export function projectSovereignControlSystemStatusV1(value) {
         && (nativeRuntime.available || guardian.available),
       blocker: sovereignControlSystemDiagnosticCodeV1(input.blocker ?? ''),
       source: frozen(source), caller: frozen(caller), owner: frozen(owner), guardian: frozen(guardian),
-      nativeRuntime: frozen(nativeRuntime), requestLedger: frozen(requestLedger) });
+      nativeRuntime: frozen(nativeRuntime), requestLedger: frozen(requestLedger),
+      // Historical receipt hashes remain unchanged when no protocol leaf existed.
+      ...(Object.hasOwn(input, 'protocol') ? { protocol: projectProtocol(input.protocol, source, owner) } : {}),
+      ...(Object.hasOwn(input, 'governorObservation') ? {
+        governorObservation: projectGovernorObservation(input.governorObservation, source, observedAtUtc),
+      } : {}) });
     if (new TextEncoder().encode(JSON.stringify(projected)).byteLength > SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1)
       return refusal('SOVEREIGN_CONTROL_SYSTEM_STATUS_BOUND_EXCEEDED', observedAtUtc);
     return projected;

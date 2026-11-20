@@ -9,6 +9,7 @@ import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleB
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
 import { projectElasticMissionExecutionObligation } from '../shared/agents/criticalBacklogConveyor.mjs';
+import { projectExternalMergeExecutionObligationV1 } from '../shared/agents/externalMergeObservationV1.mjs';
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { appendMissionEvent, listMissionRecords, readMissionRecord } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
@@ -37,6 +38,7 @@ const DURABLE_LIVENESS_ADAPTERS = new Set([
   'foundry-forge',
   'openclaw-local',
   'stephanos-native',
+  'verification',
 ]);
 
 function ownData(value, key) {
@@ -382,13 +384,16 @@ export function controllerRequiresMaterialProgress(controller) {
   const action = ownData(controller, 'actionResult');
   const admission = ownData(action, 'elasticAdmission');
   const critical = ownData(action, 'projection');
+  const acceptancePending = projectExternalMergeExecutionObligationV1(
+    ownData(critical, 'activeMission'),
+  ).acceptanceOnly;
   const occupied = ownData(critical, 'decision') === 'WAIT_EXTERNAL_ACTIVE_MISSION'
     && Boolean(ownData(critical, 'activeMission'))
     && projectElasticMissionExecutionObligation(admission, ownData(critical, 'activeMission')).state === 'OCCUPIED';
   return ownData(controller, 'allowWorkerTick') === true
     || ownData(ownData(projection, 'lane'), 'active') === true
     || (!occupied && (Boolean(ownData(admission, 'selectedMission'))
-      || Boolean(ownData(critical, 'activeMission'))));
+      || (Boolean(ownData(critical, 'activeMission')) && !acceptancePending)));
 }
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 
@@ -561,9 +566,29 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
     }
     let lastTickVerdict = carriedExecutionDefect || 'MISSION_WORKER_TICK_PASS'; let heartbeatWriteFailed = false; let heartbeatWrites = Promise.resolve(); let tickHadActivity = false; let materialProgressRequired = false;
     let emptyControllerCycle = false;
-    const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => { const heartbeatActionGrant = activeActionGrant; heartbeatWrites = heartbeatWrites.then(async () => { try { return await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue, activeActionGrant: heartbeatActionGrant }); } catch (error) { heartbeatWriteFailed = true; stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`); } }); return heartbeatWrites; };
-    const authoritativeHeartbeatVerdict = () => carriedExecutionDefect || 'MISSION_WORKER_TICK_RUNNING';
-    await queueHeartbeat(authoritativeHeartbeatVerdict(), checkedAt); const heartbeatTimer = setIntervalFn(() => { void queueHeartbeat(authoritativeHeartbeatVerdict()); }, heartbeatIntervalMs);
+    let matchesCurrentClaimPublication = () => false;
+    const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now(), publicationStillCurrent) => {
+      const heartbeatActionGrant = activeActionGrant;
+      heartbeatWrites = heartbeatWrites.then(async () => {
+        try {
+          // A timer queued during claim publication must resolve its current
+          // verdict after that write, without replaying an old failure over it.
+          const deferred = typeof lastTickVerdictValue === 'function';
+          if (deferred && heartbeatActionGrant !== activeActionGrant) return undefined;
+          if (publicationStillCurrent && !publicationStillCurrent(heartbeatActionGrant)) return undefined;
+          const verdict = deferred ? lastTickVerdictValue(heartbeatActionGrant) : lastTickVerdictValue;
+          return await writeHeartbeat({ env, timestampUtc, lastTickVerdict: verdict, activeActionGrant: heartbeatActionGrant });
+        } catch (error) {
+          heartbeatWriteFailed = true;
+          stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`);
+        }
+      });
+      return heartbeatWrites;
+    };
+    const authoritativeHeartbeatVerdict = grant => matchesCurrentClaimPublication(grant)
+      ? 'MISSION_WORKER_TICK_RUNNING'
+      : carriedExecutionDefect || 'MISSION_WORKER_TICK_RUNNING';
+    await queueHeartbeat(authoritativeHeartbeatVerdict, checkedAt); const heartbeatTimer = setIntervalFn(() => { void queueHeartbeat(authoritativeHeartbeatVerdict); }, heartbeatIntervalMs);
     try {
       if (mailboxBootstrapPending) { mailboxBootstrapPending = false; try { const mailboxBootstrap = await bootstrapMailbox({ env }); stdout.write(`${JSON.stringify({ checkedAt: now(), ...mailboxBootstrap })}\n`); } catch (error) { stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: 'MAILBOX_SELF_BOOTSTRAP_FAILED', error: error?.message || String(error), operatorNeeded: true })}\n`); if (once) exitCode = 1; } }
       const capacityRoutingOptions = { root: env.STEPHANOS_SHARED_AGENT_WORKSPACE, repoRoot: env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT, nowUtc: checkedAt };
@@ -680,6 +705,9 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
           && JSON.stringify(actionGrant) === originalGrantJson
           && JSON.stringify(heartbeatGrant) === heartbeatGrantJson
           && JSON.stringify(grant) === heartbeatGrantJson;
+        // Current claim execution and historical failed outcomes are separate.
+        // Settling or changing this exact grant invalidates this witness.
+        matchesCurrentClaimPublication = grant => activeClaimHeartbeatPublished && sameInFlightGrant(grant);
         const acceptPublishedActionGrant = grant => {
           // Locked publication may retain the original action's advisory pack.
           // Bind it once before pickup; preserve the independent controller
@@ -713,8 +741,9 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
             if (tickSettled) { finishClaimPublication(false); return; }
             if (observedGrant !== heartbeatGrant) continue;
             if (activeClaim) {
+              if (!sameInFlightGrant(observedGrant)) { finishClaimPublication(false); return; }
               activeClaimObserved = true;
-              const published = await queueHeartbeat(authoritativeHeartbeatVerdict());
+              const published = await queueHeartbeat('MISSION_WORKER_TICK_RUNNING', now(), sameInFlightGrant);
               const record = ownData(published, 'record');
               const exact = sameInFlightGrant(observedGrant) && ownData(published, 'ok') === true
                 && ownData(record, 'activeTaskId') === ownData(observedGrant, 'actionId')

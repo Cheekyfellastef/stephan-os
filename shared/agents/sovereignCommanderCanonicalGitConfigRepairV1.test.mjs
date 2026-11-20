@@ -1,6 +1,7 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -102,8 +103,12 @@ function portableMailboxGit(_command, args, options) {
   return spawnSync(resolveBattleBridgeGitExecutable(process.platform), args, options);
 }
 
+// Windows TEMP may use an 8.3 alias. Fixtures must meet the unchanged native
+// canonical-path contract before exercising Git inspection or repair.
+const fixtureTempDirectory = prefix => realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
+
 function realMailboxRepository(t) {
-  const home = mkdtempSync(join(tmpdir(), 'stephanos-mailbox-git-repair-home-'));
+  const home = fixtureTempDirectory('stephanos-mailbox-git-repair-home-');
   const repositoryRoot = join(home, 'Documents', 'GitHub', 'stephan-os');
   mkdirSync(repositoryRoot, { recursive: true });
   t.after(() => rmSync(home, { recursive: true, force: true }));
@@ -218,7 +223,7 @@ test('direct pre-admission Git config actions are excluded from remote plans', (
       requestId: 'git-config-direct-only-plan-test',
       operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 3149,
+      issueNumber: activeMailboxIssueForTest,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead: HEAD,
@@ -335,7 +340,7 @@ test('mailbox serves read-only Git worktree/config inspection before Commander h
     requestId: 'inspect-canonical-git-config-test-01',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: f.head,
@@ -423,7 +428,7 @@ test('mailbox executes fixed repair before Commander health', async t => {
     requestId: 'repair-canonical-git-config-test-01',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: f.head,
@@ -472,7 +477,7 @@ test('mailbox failure after completed mutation reports the mutation truthfully',
     requestId: 'repair-canonical-git-config-test-02',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: f.head,
@@ -491,7 +496,7 @@ test('mailbox failure after completed mutation reports the mutation truthfully',
 });
 
 test('real Git: absent config.worktree is treated as empty and repaired', t => {
-  const root = mkdtempSync(join(tmpdir(), 'stephanos-git-config-repair-'));
+  const root = fixtureTempDirectory('stephanos-git-config-repair-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const git = (...args) => {
     const out = spawnSync('git', args, { cwd: root, encoding: 'utf8', shell: false });
@@ -519,7 +524,7 @@ test('real Git: absent config.worktree is treated as empty and repaired', t => {
 });
 
 test('real Git: linked worktree is refused before repository-wide extension mutation', t => {
-  const root = mkdtempSync(join(tmpdir(), 'stephanos-git-config-linked-'));
+  const root = fixtureTempDirectory('stephanos-git-config-linked-');
   const linked = root + '-linked';
   t.after(() => {
     rmSync(linked, { recursive: true, force: true });

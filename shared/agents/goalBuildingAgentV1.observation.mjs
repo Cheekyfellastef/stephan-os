@@ -56,29 +56,85 @@ function explicitMovement(input, worker, activeMissions) {
   const observed = timestamp(candidate.observedAtUtc || candidate.timestampUtc);
   if (!observed) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_TIMESTAMP_INVALID' });
   const missionId = text(candidate.missionId);
-  const receiptId = text(candidate.receiptId);
+  const goalId = text(candidate.goalId);
   const taskId = text(candidate.taskId);
-  if (missionId && !activeMissions.some((mission) => mission.missionId === missionId)) {
-    return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_MISSION_MISMATCH' });
+  const receiptId = text(candidate.receiptId);
+
+  // A fresh timestamp is not material progress. Require the exact productive
+  // mission/goal and the active worker task/receipt before accepting movement.
+  if (!missionId) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_MISSION_UNPROVEN' });
+  if (!goalId) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_GOAL_UNPROVEN' });
+  if (!taskId) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_TASK_UNPROVEN' });
+  if (!receiptId) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_RECEIPT_UNPROVEN' });
+
+  const matches = activeMissions.filter((mission) => text(mission?.missionId) === missionId);
+  if (matches.length !== 1) return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_MISSION_MISMATCH' });
+  const mission = matches[0];
+  if (text(mission.goalId) !== goalId) {
+    return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_GOAL_MISMATCH' });
   }
-  if (receiptId && worker.activeReceiptId && receiptId !== worker.activeReceiptId) {
+  if (!PRODUCTIVE_MISSION_PHASES.has(text(mission.phase).toUpperCase())) {
+    return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_MISSION_NOT_PRODUCTIVE' });
+  }
+  if (!worker.activeReceiptId || receiptId !== worker.activeReceiptId) {
     return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_RECEIPT_MISMATCH' });
   }
-  if (taskId && worker.activeTaskId && taskId !== worker.activeTaskId) {
+  if (!worker.activeTaskId || taskId !== worker.activeTaskId) {
     return Object.freeze({ movement: null, blocker: 'MEANINGFUL_MOVEMENT_TASK_MISMATCH' });
   }
-  const mission = missionId ? activeMissions.find((item) => item.missionId === missionId) : null;
   return Object.freeze({
     movement: Object.freeze({
       observedAtUtc: observed.iso,
       observedAtMs: observed.ms,
-      missionId: missionId || text(mission?.missionId),
-      goalId: text(candidate.goalId || mission?.goalId),
+      missionId,
+      goalId,
       description: boundedText(candidate.description || candidate.stateMovement, 'Execution state advanced.', 240),
       source: 'execution-movement',
     }),
     blocker: '',
   });
+}
+
+// A fresh worker cannot turn any unresolved blocker on productive work green.
+// Every structured blocker, including review/proof holds, needs exact independent
+// mission AND goal lineage before disjoint work can proceed. The approval summary
+// must agree with structured approval blockers; unstructured titles are never grants.
+function programmeBlockerScopeProblem(certificate, activeMissions, productiveMissions) {
+  const blockers = list(certificate.blockers);
+  const approvals = blockers.filter(
+    (item) => item && typeof item === 'object' && text(item.route).toUpperCase() === 'REQUEST_EXACT_OPERATOR_APPROVAL',
+  );
+  const approvalRequired = certificate.operatorActionRequired === true;
+  if (approvalRequired !== (approvals.length > 0)) return 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN';
+
+  for (const item of blockers) {
+    const isApproval = text(item?.route).toUpperCase() === 'REQUEST_EXACT_OPERATOR_APPROVAL';
+    const problem = isApproval ? 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN' : 'PROGRAMME_BLOCKER_SCOPE_UNPROVEN';
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return problem;
+    const missionId = text(item.missionId);
+    const goalId = text(item.goalId);
+    // A partial identity is insufficient to assert that a blocker is disjoint.
+    if (!missionId || !goalId) return problem;
+    const matches = activeMissions.filter((mission) => mission.missionId === missionId && mission.goalId === goalId);
+    if (matches.length !== 1) return problem;
+    if (productiveMissions.some((mission) => mission.missionId === missionId || mission.goalId === goalId)) {
+      return problem;
+    }
+  }
+
+  if (approvalRequired) {
+    // Negative consistency check only: a title mentioning a productive identity
+    // disproves disjointness; it can NEVER establish operator scope or authority.
+    const target = text(certificate.operatorActionTarget);
+    const productiveIds = productiveMissions.flatMap((mission) => [text(mission.missionId), text(mission.goalId)]);
+    const targetMentionsProductiveWork = productiveIds.some((id) => {
+      if (!id) return false;
+      const escaped = id.replace(/[^a-z0-9_-]/gi, '\\$&');
+      return new RegExp('(^|[^a-z0-9._-])' + escaped + '($|[^a-z0-9._-])', 'i').test(target);
+    });
+    if (targetMentionsProductiveWork) return 'PROGRAMME_OPERATOR_GATE_SCOPE_UNPROVEN';
+  }
+  return '';
 }
 
 function firstProblem(certificate, worker, movementBlocker) {
@@ -126,6 +182,7 @@ export function projectGoalBuildingRuntimeTruth(input = {}) {
   const hasActiveProgrammeWork = activeMissions.length > 0 || nonNegativeInteger(certificate.activeMissionCount) > 0;
   const queuedWork = nonNegativeInteger(certificate.eligibleQueuedGoalCount);
   const certificateProblem = firstProblem(certificate, worker, explicit.blocker);
+  const structuredBlockerProblem = programmeBlockerScopeProblem(certificate, activeMissions, productiveMissions);
 
   let state = GOAL_BUILDING_RUNTIME_STATES.UNKNOWN;
   let stallReason = '';
@@ -143,12 +200,18 @@ export function projectGoalBuildingRuntimeTruth(input = {}) {
       stallReason = explicit.blocker
         || (movementFutureDated ? 'MEANINGFUL_MOVEMENT_FUTURE_DATED' : movement ? 'NO_RECENT_MEANINGFUL_MOVEMENT' : 'MEANINGFUL_MOVEMENT_UNPROVEN');
       blocker ||= stallReason;
+    } else if (list(certificate.blockingReasons).length > 0 || list(certificate.evidenceProblems).length > 0) {
+      // A fresh worker heartbeat and movement cannot erase contradictory programme
+      // or authority evidence. Never project BUILDING while hard proof is invalid.
+      state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
+      blocker ||= 'PROGRAMME_BUILDING_CONTRADICTION';
+    } else if (structuredBlockerProblem) {
+      state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
+      // A structured gate is hard proof; soft degradation cannot mask it.
+      blocker = structuredBlockerProblem;
     } else if (certificate.isActuallyBuilding === true && productiveMissions.length > 0) {
       state = GOAL_BUILDING_RUNTIME_STATES.BUILDING;
       blocker = '';
-    } else if (list(certificate.blockingReasons).length > 0 || list(certificate.evidenceProblems).length > 0) {
-      state = GOAL_BUILDING_RUNTIME_STATES.BLOCKED;
-      blocker ||= 'PROGRAMME_BUILDING_CONTRADICTION';
     } else {
       state = GOAL_BUILDING_RUNTIME_STATES.UNKNOWN;
       blocker ||= 'PRODUCTIVE_PROGRAMME_EXECUTION_UNPROVEN';
@@ -164,7 +227,8 @@ export function projectGoalBuildingRuntimeTruth(input = {}) {
     blocker ||= 'PROGRAMME_BLOCKED';
   }
 
-  const currentMission = mostRecentProductiveMission || latestMission(activeMissions);
+  const currentMission = (explicit.movement && productiveMissions.find((mission) => mission.missionId === explicit.movement.missionId))
+    || mostRecentProductiveMission || latestMission(activeMissions);
   const protectedMainHead = text(input.protectedMainHead || certificate.protectedMainHead).toLowerCase();
   const installedMainHead = text(input.installedMainHead || certificate.installedMainHead).toLowerCase();
   const servedHead = text(input.servedHead).toLowerCase();

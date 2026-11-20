@@ -13,6 +13,8 @@ on:
       - 'shared/agents/mailboxReceiptTruthIssue.test.mjs'
       - 'shared/agents/canonicalMailboxRolloverConsumerV1.mjs'
       - 'shared/agents/canonicalMailboxRolloverConsumerV1.test.mjs'
+      - 'shared/agents/canonicalMailboxAuthorityV1.test.mjs'
+      - 'shared/agents/canonicalMailboxRoutingPolicyV1.test.mjs'
       - 'shared/agents/canonicalMailboxRotation*.mjs'
       - 'scripts/canonical-mailbox-rotation*.mjs'
       - 'scripts/canonical-mailbox-action-evidence-v2*.mjs'

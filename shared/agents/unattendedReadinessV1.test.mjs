@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+// Original #2002 resume custody truth must be exercised by the existing
+// GitHub-hosted surface-ignition-tests job, not merely by an isolated fixture.
+import './goalBuildingAgentV1.resume.test.mjs';
 
 import {
   UNATTENDED_READINESS_STATE,

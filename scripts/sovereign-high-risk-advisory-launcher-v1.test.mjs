@@ -6,7 +6,7 @@ import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildHighRiskAdvisoryLaunchPlanV1, HIGH_RISK_ADVISORY_EXECUTION_FILES }
   from './sovereign-high-risk-advisory-launcher-v1.mjs';
-import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { resolveBattleBridgeGitExecution, resolveBattleBridgePhysicalPathV1 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 test('trusted launcher rejects missing exact source pair and strips preload injection', () => {
   assert.throws(()=>buildHighRiskAdvisoryLaunchPlanV1({env:{}}),/EXACT_PAIR/);
@@ -18,7 +18,7 @@ test('trusted launcher rejects missing exact source pair and strips preload inje
 
 test('real pre-launch entry/verifier/transitive substitutions never evaluate before immutable graph authentication',
   {timeout:60000},()=>{
-  const root=mkdtempSync(join(tmpdir(),'high-risk-preexec-'));
+  const root=mkdtempSync(join(resolveBattleBridgePhysicalPathV1(tmpdir()),'high-risk-preexec-'));
   const installed=resolve(import.meta.dirname,'..');
   const git=resolveBattleBridgeGitExecution();
   const trustedGit={...git,fixedConfigArgs:[...git.fixedConfigArgs,'-c','safe.directory='+root]};
@@ -29,6 +29,7 @@ test('real pre-launch entry/verifier/transitive substitutions never evaluate bef
   };
   try {
     invoke(['init','-b','main']);invoke(['config','user.name','Fixture']);
+    invoke(['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
     invoke(['config','user.email','fixture@example.invalid']);invoke(['config','core.autocrlf','false']);
     const files=[...HIGH_RISK_ADVISORY_EXECUTION_FILES,'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
       'scripts/sovereign-windows-review-calibration-v1.mjs','scripts/sovereign-review-coverage-v1.mjs',

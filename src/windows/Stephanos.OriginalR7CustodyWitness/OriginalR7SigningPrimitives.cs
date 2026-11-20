@@ -7,6 +7,8 @@ using BcEd25519 = Org.BouncyCastle.Math.EC.Rfc8032.Ed25519;
 namespace Stephanos.OriginalR7CustodyWitness;
 
 internal enum OriginalR7SignaturePurpose { Witness, Operator }
+// Separate type: current processing-claim purposes cannot enter the legacy seed session.
+internal enum ProspectiveProcessingClaimSignaturePurpose { Witness, Operator }
 
 // A software primitive, NOT a trust/custody provider. It never opens a host
 // key, creates/enrolls a root, consumes request authority, or issues a lease.
@@ -18,6 +20,8 @@ internal static class OriginalR7SigningPrimitives
     internal const string SourceCommit = "4007498b13582d90ee1eda5d9920c324428b98b3";
     internal const string WitnessDomain = "stephanos.legacy-orphan-os-witness.v1\0";
     internal const string OperatorDomain = "stephanos.legacy-orphan-operator-approval.v1\0";
+    internal const string ProspectiveWitnessDomain = "stephanos.original-source-prospective-os-witness.v1\0";
+    internal const string ProspectiveOperatorDomain = "stephanos.original-source-prospective-operator-approval.v1\0";
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
     internal static byte[] PublicKey(ReadOnlySpan<byte> seed)
@@ -87,6 +91,25 @@ internal static class OriginalR7SigningPrimitives
             OriginalR7SignaturePurpose.Operator => OperatorDomain,
             _ => throw Held("PURPOSE_INVALID")
         };
+        return FixedDomainMessage(domain, canonicalClaims);
+    }
+
+    // Encoding only. No native evidence, host-key access or production signer is
+    // supplied by selecting a purpose. Existing host admission remains unchanged.
+    internal static byte[] ProspectiveDomainMessage(ProspectiveProcessingClaimSignaturePurpose purpose,
+        ReadOnlySpan<byte> canonicalClaims)
+    {
+        string domain = purpose switch {
+            ProspectiveProcessingClaimSignaturePurpose.Witness => ProspectiveWitnessDomain,
+            ProspectiveProcessingClaimSignaturePurpose.Operator => ProspectiveOperatorDomain,
+            _ => throw Held("PROSPECTIVE_PURPOSE_INVALID")
+        };
+        return FixedDomainMessage(domain, canonicalClaims);
+    }
+
+    // Private callers above select only fixed purpose-separated domains.
+    private static byte[] FixedDomainMessage(string domain, ReadOnlySpan<byte> canonicalClaims)
+    {
         if (canonicalClaims.Length is < 2 or > MaxPayloadBytes) throw Held("CLAIMS_BOUND");
         byte[] claims = canonicalClaims.ToArray();
         try
@@ -145,6 +168,21 @@ internal static class OriginalR7SigningPrimitives
         ReadOnlySpan<byte> canonicalClaims, OriginalR7SoftwareSignature signature)
     {
         byte[] message = DomainMessage(purpose, canonicalClaims);
+        return EncodeValidatedSignaturePart(canonicalClaims.Length, signature, message);
+    }
+
+    internal static byte[] CanonicalProspectiveSignaturePart(ProspectiveProcessingClaimSignaturePurpose purpose,
+        ReadOnlySpan<byte> canonicalClaims, OriginalR7SoftwareSignature signature)
+    {
+        byte[] message = ProspectiveDomainMessage(purpose, canonicalClaims);
+        return EncodeValidatedSignaturePart(canonicalClaims.Length, signature, message);
+    }
+
+    // Envelope encoding validates shape, not signer trust. The canonical
+    // consumer still authenticates the signature, exact claim and pinned roots.
+    private static byte[] EncodeValidatedSignaturePart(int claimsLength,
+        OriginalR7SoftwareSignature signature, byte[] message)
+    {
         try
         {
             if (signature.Algorithm != "Ed25519"
@@ -157,7 +195,7 @@ internal static class OriginalR7SigningPrimitives
                 writer.WriteStartObject();
                 writer.WriteString("algorithm", "Ed25519");
                 writer.WritePropertyName("claims");
-                writer.WriteRawValue(canonicalClaims, skipInputValidation: false);
+                writer.WriteRawValue(message.AsSpan(message.Length - claimsLength), skipInputValidation: false);
                 writer.WriteString("signatureBase64", signature.SignatureBase64);
                 writer.WriteEndObject();
             }

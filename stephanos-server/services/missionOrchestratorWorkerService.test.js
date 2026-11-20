@@ -868,7 +868,7 @@ test('real producer handoff retains the admitted context when later controller m
   assert.deepEqual(admitted.publishedActionGrant, f.firstGrant);
   assert.deepEqual(await readFile(f.first.path), f.originalBytes);
   assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision);
-  await assert.rejects(f.claim(later), /NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED/);
+  await assert.rejects(f.claim(later), /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
   const claimed = await f.claim(admitted.publishedActionGrant);
   assert.equal(claimed.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
   assert.deepEqual(claimed.item.actionGrant, f.firstGrant);
@@ -890,8 +890,8 @@ test('a later observation cannot replace or drop the original nonnull engineerin
   assert.equal(retained.published, true, JSON.stringify(retained));
   assert.deepEqual(retained.publishedActionGrant, f.firstGrant);
   assert.deepEqual(await readFile(f.first.path), f.originalBytes);
-  await assert.rejects(f.claim(later), /NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED/);
-  await assert.rejects(f.claim(noLessons), /NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED/);
+  await assert.rejects(f.claim(later), /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
+  await assert.rejects(f.claim(noLessons), /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/);
   assert.deepEqual((await f.claim(retained.publishedActionGrant)).item.actionGrant.engineeringMemoryPack,
     f.firstGrant.engineeringMemoryPack);
 });
@@ -1349,4 +1349,118 @@ test('a source pickup holding the mission lock cannot be superseded by concurren
   assert.deepEqual(await readFile(claim.processingPath), f.originalBytes);
   await assert.rejects(readFile(f.first.path), { code: 'ENOENT' });
   assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision + 1);
+});
+
+
+test('first issued pending grant refuses a different controller or capacity identity before atomic pickup', async t => {
+  const f = await pendingCapacityFixture(t);
+  const originalPending = await readFile(f.first.path);
+  const originalState = (await readMissionRecord(f.state.missionId, f.options)).state;
+  const changed = [
+    { workerId: 'foreign-source-writer' },
+    { sourceRevision: 'b'.repeat(40) },
+    { providerRouteIntent: 'OPENCLAW_ONLY' },
+    { capacityReceiptId: 'foreign-capacity-receipt' },
+    { capacityProofRefs: ['foreign-capacity-proof'] },
+    { branch: 'openclaw/foreign-original-owner' },
+    { grantId: 'grant-foreign' },
+  ];
+  for (const alteration of changed) {
+    const foreignGrant = { ...f.firstGrant, ...alteration };
+    assert.equal(missionWorkerActionGrantsMatchV1(f.firstGrant, foreignGrant), false);
+    await assert.rejects(
+      claimNextMissionWorkerItem('foundry-forge', { ...f.options, actionGrant: foreignGrant }),
+      /MISSION_WORKER_PENDING_CAPACITY_GRANT_MISMATCH/,
+    );
+    assert.deepEqual(await readFile(f.first.path), originalPending);
+    assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, originalState);
+    assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
+  }
+  // No lease seizure, rewrite or fake progress. The original exact writer can
+  // still make the single real pending -> processing claim.
+  const exact = await claimNextMissionWorkerItem('foundry-forge', {
+    ...f.options, actionGrant: f.firstGrant,
+  });
+  assert.equal(exact.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.ok(missionWorkerActionGrantsMatchV1(exact.item.actionGrant, f.firstGrant));
+  const running = (await readMissionRecord(f.state.missionId, f.options)).state;
+  assert.equal(running.dispatch.status, 'running');
+});
+
+
+test('worker tick refuses a denied publication even when a same-action pending queue item exists', async t => {
+  const f = await pendingCapacityFixture(t);
+  const originalPending = await readFile(f.first.path);
+  const originalState = (await readMissionRecord(f.state.missionId, f.options)).state;
+  const forged = { ...f.firstGrant, workerId: 'other-worker-without-custody' };
+  assert.equal(missionWorkerActionGrantsMatchV1(f.firstGrant, forged), false);
+  const result = await runMissionWorkerTick({
+    ...f.options, actionGrant: forged,
+    runCommand: () => { throw new Error('DENIED_PUBLICATION_MUST_NOT_EXECUTE'); },
+  });
+  assert.equal(result.publish.published, false);
+  assert.equal(result.publish.reason, 'pending-capacity-reconciliation-blocked');
+  assert.deepEqual(result.publish.blockers, ['MISSION_WORKER_PENDING_CAPACITY_CONTRACT_CHANGED']);
+  assert.equal(result.processed.processed, false);
+  assert.equal(result.processed.reason, 'pending-capacity-reconciliation-blocked');
+  assert.deepEqual(await readFile(f.first.path), originalPending);
+  assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, originalState);
+  assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
+});
+
+
+test('initial canonical pickup verifies persisted grant, payload and execution binding even without controller callback', async t => {
+  const f = await pendingCapacityFixture(t);
+  const originalPending = await readFile(f.first.path);
+  const originalItem = JSON.parse(originalPending);
+  const originalState = (await readMissionRecord(f.state.missionId, f.options)).state;
+  const alterations = [
+    item => { item.actionGrant.capacityReceiptId = 'forged-receipt'; },
+    item => { item.actionGrant.workerId = 'another-worker'; },
+    item => { item.actionGrant.extraMutableAuthority = true; },
+    item => { item.payload.capacityReceiptId = 'forged-payload-receipt'; },
+    item => { item.payload.capacityProofRefs = ['forged-payload-proof']; },
+    item => { item.executionBinding.sourceRevision = 'b'.repeat(40); },
+    item => { item.executionBinding.leaseKey = 'different-execution-lease'; },
+  ];
+  for (const alter of alterations) {
+    const item = structuredClone(originalItem);
+    alter(item);
+    await writeFile(f.first.path, JSON.stringify(item));
+    await assert.rejects(
+      claimNextMissionWorkerItem('foundry-forge', f.options),
+      /MISSION_WORKER_PENDING_CAPACITY_MISSION_CHANGED/,
+    );
+    assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, originalState);
+    assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', 'processing')), []);
+    assert.deepEqual(JSON.parse(await readFile(f.first.path)), item);
+  }
+  await writeFile(f.first.path, originalPending);
+  const exact = await claimNextMissionWorkerItem('foundry-forge', {
+    ...f.options, actionGrant: f.firstGrant,
+  });
+  assert.equal(exact.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.deepEqual(exact.item.actionGrant, f.firstGrant);
+});
+
+
+test('foreign selected grant cannot quarantine an unrelated original pending queue owner', async t => {
+  const f = await pendingCapacityFixture(t);
+  const originalPending = await readFile(f.first.path);
+  const originalState = (await readMissionRecord(f.state.missionId, f.options)).state;
+  const foreign = { ...f.firstGrant, missionId: 'critical-9999-elastic-goal' };
+  const refused = await claimNextMissionWorkerItem('foundry-forge', {
+    ...f.options, actionGrant: foreign,
+  });
+  assert.equal(refused, null);
+  assert.deepEqual(await readFile(f.first.path), originalPending);
+  assert.deepEqual((await readMissionRecord(f.state.missionId, f.options)).state, originalState);
+  for (const folder of ['processing', 'failed', 'completed']) {
+    assert.deepEqual(await readdir(join(f.options.queueRoot, 'foundry-forge', folder)), []);
+  }
+  const exact = await claimNextMissionWorkerItem('foundry-forge', {
+    ...f.options, actionGrant: f.firstGrant,
+  });
+  assert.equal(exact.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.deepEqual(exact.item.actionGrant, f.firstGrant);
 });

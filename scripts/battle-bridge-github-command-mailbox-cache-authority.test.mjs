@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -5,13 +6,13 @@ import { verifyFreshSelectedMailboxCommand } from './battle-bridge-github-comman
 
 const selected = Object.freeze({
   commentId: 1234,
-  commentUrl: 'https://github.com/Cheekyfellastef/stephan-os/issues/3149#issuecomment-1234',
+  commentUrl: `https://github.com/Cheekyfellastef/stephan-os/issues/${activeMailboxIssueForTest}#issuecomment-1234`,
   command: Object.freeze({
     schemaVersion: 'stephanos.battle-bridge-github-command.v1',
     requestId: 'fresh-authority-test-0001',
     operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: 'a'.repeat(40),

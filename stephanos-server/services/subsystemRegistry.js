@@ -32,7 +32,13 @@ export function getSubsystemRegistry() {
     if (entry.id === 'roadmap_service') return { ...entry, health: roadmapService.getStatus() };
     if (entry.id === 'tool_registry') return { ...entry, health: { registered_tools: getToolRegistry().length } };
     if (entry.id === 'agent_registry') return { ...entry, health: { registered_agents: listRegisteredAgents().length } };
-    return { ...entry, health: { status: 'nominal' } };
+    // Registry availability is a declaration, not a live provider or worker
+    // execution receipt. AI Core must never become "nominal" by default.
+    return { ...entry, health: {
+      status: 'unverified',
+      evidenceScope: 'registry-declaration-only',
+      liveRuntimeProven: false,
+    } };
   });
 }
 

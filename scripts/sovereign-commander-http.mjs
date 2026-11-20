@@ -1,24 +1,32 @@
 #!/usr/bin/env node
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, open, lstat, realpath } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, dirname, isAbsolute } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { inspectFixedRuntimeQualificationV1, executeFixedMaintenanceRuntimeV1, consumeFixedRuntimeTerminalProvenanceV1, consumeFixedRuntimePrelaunchExclusionV1, fixedRuntimeMaintenanceActionQualifiedV1, FIXED_MAINTENANCE_RUNTIME_ROUTE_V1 } from './sovereign-fixed-runtime-parent-v1.mjs';
+import { inspectFixedRuntimeQualificationV1, executeFixedMaintenanceRuntimeV1, consumeFixedRuntimeCompletionV1, consumeFixedRuntimePrelaunchExclusionV1, fixedRuntimeMaintenanceActionQualifiedV1, FIXED_MAINTENANCE_RUNTIME_ROUTE_V1 } from './sovereign-fixed-runtime-parent-v1.mjs';
 import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mjs';
 import { createMaintenanceCustodyStoreV1, readMaintenanceRecoverySourceV1 } from './sovereign-maintenance-custody-store-v1.mjs';
 import { isProvenSovereignWindowsReviewerPreExecutionDenialV1, buildSovereignCommanderCommandV1, SOVEREIGN_COMMANDER_OPERATION } from '../shared/agents/sovereignCommanderV1.mjs';
 import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1, STEPHANOS_EXECUTION_SURFACE } from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
 import { publishSovereignCommanderRepairReport, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE } from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, sovereignMaintenanceCustodyUnprovenV1, readSovereignMaintenanceTerminalReceiptV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
+import { SPATIAL_PREPARE_ACTION, parseSpatialPreparationOutputV1 } from '../shared/agents/sovereignSpatialWorkspaceV1.mjs';
+import { projectGoalBuilderChildBlockerV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
+import { createBattleBridgeCaravanHttpHandlerV1, CARAVAN_PATH } from './battle-bridge-caravan-http-v1.mjs';
+import { captureCoreRepairContinuationV1, captureCoreRepairContinuationStatusV1,
+  captureCoreRepairStatusRequestV1, captureCoreRepairPrepareRequestV1,
+  sameCoreRepairContinuationV1, unknownCoreRepairRequestStatusV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
 export const SOVEREIGN_COMMANDER_HTTP_MAX_BODY_BYTES = 1024 * 1024;
+export const SOVEREIGN_COMMANDER_HTTP_MAX_MCP_SESSIONS = 16;
+export const SOVEREIGN_COMMANDER_HTTP_MCP_IDLE_TTL_MS = 30 * 60 * 1000;
 export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-18-island-action-contract-v6';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH = '/ignite';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
@@ -34,32 +42,17 @@ function text(value) {
   return String(value ?? '').trim();
 }
 
-const GOAL_BUILDER_REPAIR_RESULT_MARKER = 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=';
-const SAFE_GOAL_BUILDER_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
+export { projectGoalBuilderChildBlockerV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
-export function projectGoalBuilderChildBlockerV1(processId, stdout) {
-  if (processId !== FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId) return '';
-  const raw = String(stdout || '');
-  if (!raw || Buffer.byteLength(raw, 'utf8') > 16 * 1024) return '';
-  const lines = raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-  const marked = lines.filter(line => line.startsWith(GOAL_BUILDER_REPAIR_RESULT_MARKER));
-  if (marked.length !== 1) return '';
-  try {
-    const value = JSON.parse(marked[0].slice(GOAL_BUILDER_REPAIR_RESULT_MARKER.length));
-    const blocker = text(value?.blocker);
-    if (!value || Array.isArray(value)
-      || value.schemaVersion !== 'stephanos.sovereign-commander-goal-builder-repair.v1'
-      || value.ok !== false
-      || !['SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED', 'SOVEREIGN_GOAL_BUILDER_ORIGINAL_OWNER_RECOVERY_REQUIRED'].includes(value.finalVerdict)
-      || value.canonicalGoalFabricOnly !== true
-      || value.duplicateSchedulerAllowed !== false
-      || value.mergeAuthority !== false
-      || value.arbitraryShellAllowed !== false
-      || !SAFE_GOAL_BUILDER_BLOCKER.test(blocker)) return '';
-    return blocker;
-  } catch {
-    return '';
-  }
+export function classifySovereignMaintenanceExecutionRouteV1(
+  processId,
+  { nativeWindows = process.platform === 'win32' } = {},
+) {
+  const actionId = text(processId);
+  if (!nativeWindows) return 'DIRECT_CHILD';
+  if (fixedRuntimeMaintenanceActionQualifiedV1(actionId)) return 'FIXED_RUNTIME';
+  if (actionId === 'sovereign-windows-reviewer-calibration') return 'DIRECT_CHILD_REVIEWER';
+  return 'BLOCKED_UNQUALIFIED';
 }
 
 function loopbackHost(value) {
@@ -140,8 +133,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
 
   const status = () => Object.freeze({ ...state, running: state.running || state.maintenanceInFlight,
     ...(custodyStore ? { persistentCustody: custodyStore.status() } : {}) });
-  const reserve = (reservationId, operation) => {
-    if (!custodyStore || custodyStore.reserve({ reservationId, operation }).ok) return true;
+  const reserve = (reservationId, operation, coreContinuation = null) => {
+    if (!custodyStore || custodyStore.reserve({ reservationId, operation, ...(coreContinuation ? { coreContinuation } : {}) }).ok) return true;
     state.timeoutCustodyHeld = true;
     state.lastOk = false;
     state.lastBlocker = REPAIR_TIMEOUT_CUSTODY_BLOCKER;
@@ -177,28 +170,93 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     scheduledTimer?.unref?.();
   };
 
+  const continuationSource = () => {
+    try {
+      const head = options.readContinuationSourceHead?.();
+      return typeof head === 'string' && /^[a-f0-9]{40}$/.test(head) ? head : '';
+    } catch { return ''; }
+  };
+  const readMaintenanceRequestStatus = raw => {
+    const request = captureCoreRepairStatusRequestV1(raw), observerSourceHead = continuationSource();
+    const unknown = blocker => unknownCoreRepairRequestStatusV1({ continuation: request?.continuation,
+      observedAtUtc: now(), observerSourceHead, blocker });
+    if (!request) return unknown('CORE_REPAIR_REQUEST_INVALID');
+    if (!custodyStore?.readCoreRepairRequestStatus) return unknown('CORE_REPAIR_OWNER_HISTORY_UNAVAILABLE');
+    try {
+      const proof = captureCoreRepairContinuationStatusV1(custodyStore.readCoreRepairRequestStatus(request, { observerSourceHead }));
+      if (!proof || (request.continuation && !sameCoreRepairContinuationV1(request.continuation, proof.continuation)))
+        return unknown('CORE_REPAIR_OWNER_STATUS_UNBOUND');
+      if (!stopped && !state.timeoutCustodyHeld && !child && !state.running && !state.maintenanceInFlight) return proof;
+      return captureCoreRepairContinuationStatusV1({ ...proof, currentAdmissionAvailable: false,
+        sameRequestPreparationAllowed: false, sameRequestDeliveryAllowed: false, nextSequence: null,
+        blocker: stopped ? 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE' : 'SOVEREIGN_MAINTENANCE_OWNER_BUSY' })
+        || unknown('CORE_REPAIR_OWNER_STATUS_UNBOUND');
+    } catch { return unknown('CORE_REPAIR_OWNER_HISTORY_UNAVAILABLE'); }
+  };
+  const prepareMaintenanceRequest = raw => {
+    const request = captureCoreRepairPrepareRequestV1(raw), observerSourceHead = continuationSource();
+    if (!request) return unknownCoreRepairRequestStatusV1({ observedAtUtc: now(), observerSourceHead, blocker: 'CORE_REPAIR_REQUEST_INVALID' });
+    if (stopped || state.timeoutCustodyHeld || child || state.running || state.maintenanceInFlight
+        || !custodyStore?.prepareCoreRepairRequest || !observerSourceHead)
+      return readMaintenanceRequestStatus(request);
+    try {
+      custodyStore.prepareCoreRepairRequest(request, { observerSourceHead });
+      return readMaintenanceRequestStatus(request);
+    } catch { return unknownCoreRepairRequestStatusV1({ continuation: request.continuation,
+      observedAtUtc: now(), observerSourceHead, blocker: 'CORE_REPAIR_PREPARATION_UNPROVEN' }); }
+  };
+
   const withMaintenanceOwner = async (command, run, executionOptions = {}) => {
-    const blocked = blocker => Object.freeze({ ok: false, command,
-      blocker, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+    const coreContinuation = captureCoreRepairContinuationV1(executionOptions.coreContinuation);
+    const correlated = result => coreContinuation ? Object.freeze({ ...result, coreContinuation,
+      coreRequestStatus: readMaintenanceRequestStatus({ continuation: coreContinuation }) }) : result;
+    const blocked = blocker => correlated(Object.freeze({ ok: false, command,
+      blocker, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' }));
+    const prelaunchBlocked = (blocker, fixedRefusal = blocker) => {
+      if (coreContinuation) custodyStore?.prepareCoreRepairRequest?.({ continuation: coreContinuation }, {
+        observerSourceHead: continuationSource(), prelaunchRefusal: fixedRefusal,
+      });
+      return blocked(blocker);
+    };
+    if (executionOptions.coreContinuation !== undefined && (!coreContinuation
+        || command?.commandId !== coreContinuation.requestId || command?.missionId !== coreContinuation.missionId
+        || command?.relatedIssue !== coreContinuation.relatedIssue
+        || command?.operation !== SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION
+        || command?.plan?.kind !== 'fixed-process' || command?.plan?.processId !== coreContinuation.actionId
+        || command?.dispatchAllowed !== true))
+      return blocked('CORE_REPAIR_COMMAND_IDENTITY_MISMATCH');
+    if (coreContinuation) {
+      const proof = readMaintenanceRequestStatus({ continuation: coreContinuation });
+      if (proof.state !== 'PREPARED' || proof.sameRequestDeliveryAllowed !== true)
+        return blocked(proof.blocker || 'CORE_REPAIR_ORIGINAL_REQUEST_ALREADY_ADMITTED');
+    }
     // Reserve synchronously BEFORE the first await. This is the existing
     // guardian owner, shared by all authenticated HTTP sessions and its timer.
     if (state.timeoutCustodyHeld) return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
     if (stopped) return blocked('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE');
     if (child || state.running || state.maintenanceInFlight) return blocked('SOVEREIGN_MAINTENANCE_OWNER_BUSY');
     const nativeWindows = process.platform === 'win32' && !options.spawnImpl;
-    if (nativeWindows && !fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId))
-      return blocked('FIXED_RUNTIME_PROFILE_NOT_QUALIFIED');
-    const nativeGoal = nativeWindows
-      && fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId);
+    if (coreContinuation && !nativeWindows) return prelaunchBlocked('CORE_REPAIR_NATIVE_WINDOWS_QUALIFICATION_REQUIRED');
+    const maintenanceRoute = classifySovereignMaintenanceExecutionRouteV1(
+      command?.plan?.processId, { nativeWindows },
+    );
+    if (maintenanceRoute === 'BLOCKED_UNQUALIFIED')
+      return prelaunchBlocked('FIXED_RUNTIME_PROFILE_NOT_QUALIFIED');
+    const nativeGoal = maintenanceRoute === 'FIXED_RUNTIME';
     const qualification = nativeGoal ? inspectFixedRuntimeQualificationV1() : null;
     if (nativeGoal && (!custodyStore || qualification?.ok !== true))
-      return blocked(qualification?.reason || 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+      return prelaunchBlocked(qualification?.reason || 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN', 'CORE_REPAIR_NATIVE_QUALIFICATION_UNPROVEN');
+    if (coreContinuation && (qualification?.sourceHead !== coreContinuation.sourceHead
+        || continuationSource() !== coreContinuation.sourceHead)) return blocked('CORE_REPAIR_SOURCE_ADVANCED');
+    if (nativeGoal && command.plan.processId === SPATIAL_PREPARE_ACTION
+        && command.plan.expectedMain !== qualification.sourceHead)
+      return blocked('FIXED_RUNTIME_EXPECTED_MAIN_MISMATCH');
     const resumeDelayMs = state.nextDelayMs ?? intervalMs;
     if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
     scheduledTimer = null;
     state.scheduled = false;
     state.nextDelayMs = null;
-    if (!reserve(command?.commandId || randomUUID(), command?.plan?.processId || 'fixed-maintenance'))
+    if (!reserve(command?.commandId || randomUUID(), command?.plan?.processId || 'fixed-maintenance', coreContinuation))
       return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
     state.maintenanceInFlight = true;
     const controller = nativeGoal ? new AbortController() : null;
@@ -212,19 +270,24 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       if (nativeGoal) {
         const active = custodyStore.status();
         const binding = { requestId: command.commandId, sourceHead: qualification.sourceHead,
-          custodyRecordSha256: active.digest, nativeRecordId: active.anchorRecordId };
+          custodyRecordSha256: active.digest, nativeRecordId: active.anchorRecordId,
+          actionId: command.plan.processId };
         const native = await executeFixedMaintenanceRuntimeV1(qualification, binding, {
           signal: controller.signal,
           onPrepared: root => custodyStore.recordNativeRoot(root).ok === true,
         });
         const excluded = consumeFixedRuntimePrelaunchExclusionV1(native, binding);
-        const zero = !excluded && consumeFixedRuntimeTerminalProvenanceV1(native, binding);
-        const released = excluded ? custodyStore.release()
-          : zero ? custodyStore.releaseNativeTerminal(native.nativeReceipt) : { ok: false };
+        const completion = !excluded ? consumeFixedRuntimeCompletionV1(native, binding) : null;
+        const zero = completion !== null;
+        const released = excluded ? coreContinuation ? custodyStore.releaseCoreRepairPrelaunch() : custodyStore.release()
+          : zero ? custodyStore.releaseNativeTerminal(native.nativeReceipt, coreContinuation
+            ? { coreDisposition: completion.operationDisposition } : {}) : { ok: false };
         state.timeoutCustodyHeld = released.ok !== true;
         state.lastOk = native.ok === true && released.ok === true;
         const childBlocker = native.ok === true
           ? ''
+          : command.plan.processId === SPATIAL_PREPARE_ACTION
+            ? parseSpatialPreparationOutputV1(native.stdout, qualification.sourceHead)?.blocker || ''
           : projectGoalBuilderChildBlockerV1(command.plan.processId, native.stdout);
         state.lastBlocker = state.timeoutCustodyHeld ? SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
           : native.ok === true ? '' : childBlocker || native.reason;
@@ -245,7 +308,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
           terminalProven: zero === true && released.ok === true,
           prelaunchProven: excluded === true && released.ok === true,
         }));
-        return owned;
+        return correlated(owned);
       }
       const result = await run();
       // A direct-child timeout/unknown result cannot release Windows
@@ -605,6 +668,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       }
     },
     withMaintenanceOwner,
+    readMaintenanceRequestStatus,
+    prepareMaintenanceRequest,
     stop: () => {
       stopped = true;
       state.enabled = false;
@@ -629,6 +694,83 @@ function tokenFile(env = process.env) {
   if (configured) return resolve(configured);
   const profile = text(env.USERPROFILE || env.HOME) || homedir();
   return resolve(profile, 'Documents', 'OpenClaw-Standalone', 'mission-runner', 'keys', 'sovereign-commander-token.txt');
+}
+
+/** Origin configuration is an observation of the existing private route only. */
+export function normalizeSovereignCommanderCaravanOriginV1(value) {
+  if (typeof value !== 'string' || value.length > 512) return '';
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password
+      && !url.search && !url.hash && url.pathname === '/' && value === url.origin ? value : '';
+  } catch { return ''; }
+}
+
+function privateTailnetOrigin(value) {
+  const normalized = normalizeSovereignCommanderCaravanOriginV1(value);
+  if (!normalized) return '';
+  const url = new URL(normalized);
+  const labels = url.hostname.split('.');
+  return url.port === '18791' && labels.length >= 4 && labels.slice(-2).join('.') === 'ts.net'
+    && labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ? normalized : '';
+}
+
+const sameLocalPath = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+const sameOriginFile = (a, b) => a.dev === b.dev && a.ino === b.ino && a.size === b.size
+  && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
+async function unredirectedOriginParents(path) {
+  const parents = [];
+  for (let parent = dirname(path);;) {
+    parents.unshift(parent);
+    const next = dirname(parent); if (next === parent) break; parent = next;
+  }
+  for (const parent of parents) {
+    const observed = await lstat(parent);
+    if (!observed.isDirectory() || observed.isSymbolicLink()
+        || !sameLocalPath(await realpath(parent), parent)) throw Error('ORIGIN_PARENT_REDIRECTED');
+  }
+}
+
+// No caller path or URL environment variable is admitted. The scheduled runner
+// and approved Tailscale configurator share this existing normal-user estate.
+export async function loadSovereignCommanderTailnetOriginV1(env = process.env) {
+  const profile = text(env.USERPROFILE || env.HOME) || homedir();
+  if (!isAbsolute(profile)) return '';
+  const path = resolve(profile, 'Documents', 'OpenClaw-Standalone', 'mission-runner',
+    'sovereign-commander-tailnet-origin.v1.json');
+  let handle;
+  try {
+    await unredirectedOriginParents(path);
+    const before = await lstat(path);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size < 2 || before.size > 2048
+        || !sameLocalPath(await realpath(path), path)) return '';
+    handle = await open(path, 'r');
+    if (!sameOriginFile(before, await handle.stat())) return '';
+    const bytes = Buffer.alloc(2049); let length = 0;
+    while (length < bytes.length) {
+      const read = await handle.read(bytes, length, bytes.length - length, length);
+      if (!read.bytesRead) break; length += read.bytesRead;
+    }
+    const after = await lstat(path);
+    if (length !== before.size || length > 2048 || !after.isFile() || after.isSymbolicLink()
+        || !sameOriginFile(before, after) || !sameOriginFile(before, await handle.stat())
+        || !sameLocalPath(await realpath(path), path)) return '';
+    await unredirectedOriginParents(path);
+    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, length)));
+    const keys = ['schemaVersion', 'origin', 'localTarget', 'tailnetOnly', 'observedAtUtc', 'source',
+      'executionAuthorityGranted', 'enrollmentQualified'];
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.keys(value).sort().join(',') !== keys.sort().join(',')
+        || value.schemaVersion !== 'stephanos.sovereign-commander-tailnet-origin.v1'
+        || value.localTarget !== 'http://127.0.0.1:18791' || value.tailnetOnly !== true
+        || value.source !== 'TAILSCALE_SERVE_STATUS' || value.executionAuthorityGranted !== false
+        || value.enrollmentQualified !== false || typeof value.observedAtUtc !== 'string'
+        || !Number.isFinite(Date.parse(value.observedAtUtc))
+        || new Date(value.observedAtUtc).toISOString() !== value.observedAtUtc
+        || Date.parse(value.observedAtUtc) > Date.now() + 300_000) return '';
+    return privateTailnetOrigin(value.origin);
+  } catch { return ''; }
+  finally { await handle?.close().catch(() => {}); }
 }
 
 export async function loadSovereignCommanderToken(options = {}) {
@@ -714,6 +856,7 @@ small{display:block;margin-top:28px;opacity:.5}
 <p>Private Battle Bridge control over your Tailscale network.</p>
 <button id="ignite" type="button">Ignite Stephanos</button>
 <div id="status" role="status" aria-live="polite"></div>
+<p><a href="/caravan" style="color:#72e8d6">Open caravan controls</a></p>
 <small>Fixed action only. No arbitrary shell or PC restart authority.</small>
 </main>
 <script>
@@ -793,6 +936,9 @@ function validRpcMessage(message) {
 
 export async function createSovereignCommanderHttpServer(options = {}) {
   const env = options.env || process.env;
+  const mobileInstallationPublicOrigin = options.mobileInstallationPublicOrigin === undefined
+    ? await loadSovereignCommanderTailnetOriginV1(env)
+    : normalizeSovereignCommanderCaravanOriginV1(options.mobileInstallationPublicOrigin);
   const host = text(options.host || env.STEPHANOS_SOVEREIGN_COMMANDER_HOST) || SOVEREIGN_COMMANDER_HTTP_HOST;
   const port = Number.isSafeInteger(Number(options.port ?? env.STEPHANOS_SOVEREIGN_COMMANDER_PORT))
     ? Number(options.port ?? env.STEPHANOS_SOVEREIGN_COMMANDER_PORT)
@@ -805,18 +951,43 @@ export async function createSovereignCommanderHttpServer(options = {}) {
   if (!token) throw new Error('SOVEREIGN_COMMANDER_BEARER_TOKEN_REQUIRED');
 
   const sessions = new Map();
+  const sessionActivity = new Map();
+  let initializingSessions = 0;
   const ignitionNonces = new Map();
   const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({
     repoRoot: options.repoRoot, executor: options.commandExecutor,
     // HTTP sessions reserve the actual existing owner directly. External local
     // callers delegate here; owned fixed mutation leaves health responsive.
     withMaintenanceOwner: (command, run, context) => continuousRepairGuardian.withMaintenanceOwner(command, run, context),
+    readMaintenanceRequestStatus: request => continuousRepairGuardian.readMaintenanceRequestStatus(request),
+    prepareMaintenanceRequest: request => continuousRepairGuardian.prepareMaintenanceRequest(request),
   }));
   const now = options.now || (() => new Date().toISOString());
   const nowMs = options.nowMs || (() => {
     const value = Date.parse(now());
     return Number.isFinite(value) ? value : Date.now();
   });
+  let lastSessionClock = 0;
+  const sessionClock = () => {
+    const observed = nowMs();
+    lastSessionClock = Math.max(lastSessionClock,
+      Number.isFinite(observed) && observed >= 0 ? observed : Date.now());
+    return lastSessionClock;
+  };
+  const closeSession = async sessionId => {
+    const handler = sessions.get(sessionId);
+    sessions.delete(sessionId);
+    sessionActivity.delete(sessionId);
+    await handler?.close?.();
+  };
+  const reapIdleSessions = async () => {
+    const current = sessionClock();
+    for (const [sessionId, activity] of sessionActivity) {
+      if (activity.activeRequests === 0
+        && current - activity.lastSeen >= SOVEREIGN_COMMANDER_HTTP_MCP_IDLE_TTL_MS)
+        await closeSession(sessionId);
+    }
+  };
   const continuousRepairGuardian = startSovereignCommanderContinuousRepairGuardian({
       enabled: options.continuousRepairEnabled === true,
       repoRoot: options.repoRoot,
@@ -828,12 +999,35 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       intervalMs: options.continuousRepairIntervalMs,
       maxRuntimeMs: options.continuousRepairMaxRuntimeMs,
       custodyStore: options.custodyStore,
+      readContinuationSourceHead: options.readContinuationSourceHead,
     });
+
+  const caravanHandler = createBattleBridgeCaravanHttpHandlerV1({
+    provider: options.mobileInstallationProvider,
+    expectedMain: options.mobileInstallationExpectedMain,
+    publicOrigin: mobileInstallationPublicOrigin,
+    privateOwnerAuthorized: req => safeTokenEqual(bearerToken(req), token),
+    nowMs,
+  });
 
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://localhost');
+      if (await caravanHandler(req, res, url)) return;
       if (req.method === 'GET' && url.pathname === '/health') {
+        // Delegation needs protocol identity, not a native journal read. The
+        // latter can exceed the transport's preflight deadline and block the
+        // HTTP event loop. This projection conveys no custody or admission;
+        // the authenticated tool still enters the existing maintenance owner.
+        if (url.searchParams.get('view') === 'protocol') {
+          return sendJson(res, 200, {
+            ok: true,
+            service: 'stephanos-sovereign-commander',
+            maintenanceOwnerAdmissionVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+            observationScope: 'TRANSPORT_PROTOCOL_ONLY',
+            maintenanceAdmissionProven: false,
+          });
+        }
         return sendJson(res, 200, {
           ok: true,
           service: 'stephanos-sovereign-commander',
@@ -843,6 +1037,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
           transport: 'authenticated-http-jsonrpc',
           observedAtUtc: now(),
           remoteIgnitionPath: SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH,
+          caravanPath: CARAVAN_PATH,
           remoteIgnitionAction: 'ignite-stephanos',
           remoteIgnitionTailnetOnlyExpected: true,
           remoteIgnitionCsrfProtected: true,
@@ -933,7 +1128,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       if (req.method === 'DELETE') {
         const sessionId = text(req.headers['mcp-session-id']);
         if (!sessionId || !sessions.has(sessionId)) return sendJson(res, 404, { ok: false, blocker: 'MCP_SESSION_NOT_FOUND' });
-        sessions.delete(sessionId);
+        await closeSession(sessionId);
         res.writeHead(204, { 'cache-control': 'no-store' });
         return res.end();
       }
@@ -948,11 +1143,19 @@ export async function createSovereignCommanderHttpServer(options = {}) {
 
       if (initializing) {
         if (handler || sessionId) return sendJson(res, 409, rpcError(message.id, -32000, 'Session already supplied for initialize'));
+        await reapIdleSessions();
+        if (sessions.size + initializingSessions >= SOVEREIGN_COMMANDER_HTTP_MAX_MCP_SESSIONS)
+          return sendJson(res, 429, rpcError(message.id, -32000, 'MCP_SESSION_CAPACITY_REACHED'));
+        initializingSessions++;
         sessionId = randomUUID();
-        handler = handlerFactory();
+        try { handler = handlerFactory(); }
+        catch (error) { initializingSessions--; throw error; }
       } else if (!handler) {
         return sendJson(res, 400, rpcError(message.id, -32001, 'MCP session required'));
       }
+
+      const activity = initializing ? null : sessionActivity.get(sessionId);
+      if (activity) { activity.activeRequests++; activity.lastSeen = sessionClock(); }
 
       const hasId = Object.prototype.hasOwnProperty.call(message, 'id');
       const isRequest = hasId;
@@ -968,8 +1171,19 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         transportKind: 'authenticated-http-jsonrpc',
         transportAuthenticated: true,
         signal: requestController.signal,
-      }); } finally { res.removeListener('close', cancelDisconnected); }
-      if (initializing) sessions.set(sessionId, handler);
+      }); } catch (error) {
+        if (initializing) await handler.close?.();
+        throw error;
+      } finally {
+        if (initializing) initializingSessions--;
+        if (activity) { activity.activeRequests--; activity.lastSeen = sessionClock(); }
+        res.removeListener('close', cancelDisconnected);
+      }
+      if (initializing) {
+        if (requestController.signal.aborted) { await handler.close?.(); return; }
+        sessions.set(sessionId, handler);
+        sessionActivity.set(sessionId, { activeRequests: 0, lastSeen: sessionClock() });
+      }
       const headers = { 'mcp-session-id': sessionId };
 
       if (isNotification || result === undefined) {
@@ -983,7 +1197,12 @@ export async function createSovereignCommanderHttpServer(options = {}) {
     }
   });
 
-  server.once('close', () => continuousRepairGuardian?.stop());
+  server.once('close', () => {
+    continuousRepairGuardian?.stop();
+    for (const handler of sessions.values()) void handler.close?.();
+    sessions.clear();
+    sessionActivity.clear();
+  });
 
   return Object.freeze({
     server,
@@ -1034,6 +1253,11 @@ export async function runSovereignCommanderHttpServer(options = {}) {
       release: refusal,
       recordNativeRoot: refusal,
       releaseNativeTerminal: refusal,
+      releaseCoreRepairPrelaunch: refusal,
+      readCoreRepairRequestStatus: request => unknownCoreRepairRequestStatusV1({ continuation: request?.continuation,
+        blocker: 'CORE_REPAIR_OBSERVER_SOURCE_UNPROVEN' }),
+      prepareCoreRepairRequest: request => unknownCoreRepairRequestStatusV1({ continuation: request?.continuation,
+        blocker: 'CORE_REPAIR_OBSERVER_SOURCE_UNPROVEN' }),
       recoverAfterBoot: refusal,
       prepareAfterAuditLoss: refusal,
       prepareRetainedMigration: refusal,
@@ -1052,6 +1276,11 @@ export async function runSovereignCommanderHttpServer(options = {}) {
     ...options,
     token,
     custodyStore,
+    mobileInstallationExpectedMain: installedSourceHead,
+    readContinuationSourceHead: () => {
+      if (!installedSourceHead) return '';
+      try { return readRecoverySource() === installedSourceHead ? installedSourceHead : ''; } catch { return ''; }
+    },
     recoverySourceAdmission: expectedMain => {
       if (!installedSourceHead || expectedMain !== installedSourceHead) return false;
       try { return readRecoverySource() === installedSourceHead; } catch { return false; }

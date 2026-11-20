@@ -54,13 +54,16 @@ export function projectOnionContinuationV1(input = {}) {
   const depth = Number.isSafeInteger(Number(input.blockerDepth)) && Number(input.blockerDepth) >= 0
     ? Number(input.blockerDepth)
     : 0;
+  const boundaryId = !originalOutcomeProven && hardBoundary ? text(input.boundaryId) : '';
+  const noSafeRepairId = !originalOutcomeProven && !hardBoundary && !safeRepairAvailable
+    ? text(input.noSafeRepairId) : '';
 
   const requestedIdentity = originalOutcomeProven
     ? originalOutcomeId
     : hardBoundary
-      ? text(input.boundaryId) || blocker
+      ? boundaryId || blocker
       : !safeRepairAvailable
-        ? text(input.noSafeRepairId) || blocker
+        ? noSafeRepairId || blocker
         : '';
   const packet = terminalPacket(input, requestedIdentity);
   const terminalRequested = originalOutcomeProven || hardBoundary || !safeRepairAvailable;
@@ -81,7 +84,9 @@ export function projectOnionContinuationV1(input = {}) {
     blockerDepth: depth,
     originalOutcomeProven,
     hardBoundary,
+    boundaryId,
     safeRepairAvailable,
+    noSafeRepairId,
     terminalState,
     terminalRequested,
     terminalPacketValid: packet.valid,

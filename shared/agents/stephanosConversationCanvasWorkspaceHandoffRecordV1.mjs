@@ -12,6 +12,7 @@ import {
   STEPHANOS_CONVERSATION_CANVAS_TARGET_PRESENTER_SCHEMA_VERSION,
 } from './stephanosConversationCanvasHandoffV1.mjs';
 import { STEPHANOS_RICH_CONVERSATIONAL_RESPONSE_SCHEMA_VERSION } from './stephanosRichConversationalResponseV1.mjs';
+import { resolveStephanosConversationLineage } from './stephanosConversationLineageV1.mjs';
 
 export const STEPHANOS_CONVERSATION_CANVAS_WORKSPACE_HANDOFF_RECORD_SCHEMA_VERSION =
   'stephanos.conversation-canvas-workspace-handoff-record.v1';
@@ -32,6 +33,7 @@ function plainObject(value) {
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) return null;
     if (Object.getOwnPropertySymbols(value).length > 0) return null;
+    if (Object.values(Object.getOwnPropertyDescriptors(value)).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return null;
     return value;
   } catch {
     return null;
@@ -153,15 +155,27 @@ export function buildStephanosConversationCanvasWorkspaceHandoffRecordV1(input =
       return invalid(['rich-response-not-valid-for-private-workspace']);
     }
 
-    const roundId = text(continuity.roundId);
+    const lineage = resolveStephanosConversationLineage({
+      ...(Object.hasOwn(continuity, 'roundId') ? { roundId: continuity.roundId } : {}),
+      correlationId: continuity.correlationId === undefined ? continuity.roundId : continuity.correlationId,
+    });
     const questionId = text(continuity.questionId);
     const responseId = text(continuity.responseId);
-    if (!SAFE_ID.test(roundId) || !SAFE_ID.test(questionId) || !SAFE_ID.test(responseId)) {
+    if (!lineage.valid || !SAFE_ID.test(questionId) || !SAFE_ID.test(responseId)
+      || (continuity.conversationMode !== undefined && continuity.conversationMode !== lineage.kind)) {
       return invalid(['canvas-continuity-identity-invalid']);
     }
+    const richContinuity = plainObject(richResponse.continuity);
+    const richLineage = resolveStephanosConversationLineage({
+      ...(richContinuity && Object.hasOwn(richContinuity, 'roundId') ? { roundId: richContinuity.roundId } : {}),
+      correlationId: richContinuity?.correlationId === undefined ? richContinuity?.roundId : richContinuity.correlationId,
+    });
     if (
-      text(richResponse.continuity?.roundId) !== roundId
-      || text(richResponse.continuity?.questionId) !== questionId
+      !richLineage.valid
+      || richLineage.kind !== lineage.kind
+      || richLineage.correlationId !== lineage.correlationId
+      || (richContinuity?.conversationMode !== undefined && richContinuity.conversationMode !== richLineage.kind)
+      || text(richContinuity?.questionId) !== questionId
       || text(richResponse.responseId) !== responseId
     ) {
       return invalid(['rich-response-continuity-mismatch']);
@@ -177,8 +191,10 @@ export function buildStephanosConversationCanvasWorkspaceHandoffRecordV1(input =
       return invalid(['partial-rich-response-cannot-be-promoted-to-ready']);
     }
 
-    const correlationId = text(packet.correlationId || roundId);
-    if (correlationId !== roundId) return invalid(['workspace-correlation-must-match-round']);
+    const correlationId = text(packet.correlationId === undefined ? lineage.correlationId : packet.correlationId);
+    if (correlationId !== lineage.correlationId) return invalid([
+      lineage.kind === 'FORMAL_ROUND' ? 'workspace-correlation-must-match-round' : 'workspace-correlation-must-match-lineage',
+    ]);
     const proofRefs = uniqueStrings(packet.proofRefs);
     if (proofRefs.length === 0) return invalid(['workspace-proofRefs-required']);
 
@@ -193,7 +209,9 @@ export function buildStephanosConversationCanvasWorkspaceHandoffRecordV1(input =
       targetPresenterSchemaVersion: handoff.targetPresenterSchemaVersion,
       targetPayloadField: handoff.targetPayloadField,
       surface,
-      continuity: Object.freeze({ roundId, questionId, responseId }),
+      continuity: Object.freeze(lineage.kind === 'FORMAL_ROUND'
+        ? { roundId: lineage.roundId, questionId, responseId }
+        : { conversationMode: lineage.kind, correlationId: lineage.correlationId, questionId, responseId }),
       presenterInput,
       privacy: Object.freeze({
         sharedWorkspacePrivateHandoffRequired: true,

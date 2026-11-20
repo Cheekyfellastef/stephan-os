@@ -590,6 +590,9 @@ export const workspace = {
 
       const iframe = document.createElement("iframe");
       iframe.src = effectiveProject.entry;
+      // Immutable per-mount tile identity survives redirects and query loss in
+      // the embedded runtime without creating a second workspace state store.
+      iframe.setAttribute("data-stephanos-workspace-id", launch.projectKey);
       if (isMusicTileProject(effectiveProject)) {
         console.info('[music-tile][sequence] iframe src assigned', { src: iframe.src });
       }

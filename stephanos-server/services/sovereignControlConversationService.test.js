@@ -294,6 +294,67 @@ test('actual AI handler sends complete SSE answer and durable metadata without s
   assert.equal(h.calls.forbidden.length, 0);
 });
 
+test('actual AI handler keeps continuation and blocked-repair requests off metered provider routes', async t => {
+  const f = await fixture(t);
+  const h = await routeHarness(f);
+  for (const [prompt, participantTarget] of [
+    ['Control Tower keep going', 'everyone'],
+    ['Control Tower, can we keep building?', 'everyone'],
+    ['Sovereign keep going', 'everyone'],
+    ['continue', 'control-tower'],
+    ['get Stephanos working properly', 'control-tower'],
+    ['Control Tower can you fix the blocked build', 'everyone'],
+    ['repair the status projection', 'control-tower'],
+    ['keep building the next eligible goal', 'control-tower'],
+    ['Control Tower, please keep building Stephanos', 'everyone'],
+  ]) {
+    const response = await h.call({ prompt, provider: 'openai', fallbackEnabled: true,
+      providerConfigs: { openai: { apiKey: 'caller-metered-key' } },
+      runtimeContext: { participantTarget, surface: 'ipad', authenticated: true, ownerToken: 'caller-owner-claim' },
+    });
+    assert.equal(response.statusCode, 200, prompt);
+    assert.equal(response.payload.type, 'control_result', prompt);
+    const control = response.payload.data.sovereign_control_conversation;
+    assert.equal(control.intent, 'BUILD_NEXT_ELIGIBLE_GOAL', prompt);
+    assert.equal(control.handoff.state, 'NOT_SUBMITTED', prompt);
+    assert.equal(control.handoff.requestSubmitted, false, prompt);
+    assert.equal(control.handoff.executionAuthority, false, prompt);
+    assert.equal(control.nativeActionSubmitted, false, prompt);
+    assert.equal(response.payload.data.execution_metadata.model_invoked, false, prompt);
+    assert.equal(response.payload.data.execution_metadata.actual_provider_used, null, prompt);
+    assert.equal(h.calls.prepare.at(-1).operatorText, prompt);
+    assert.doesNotMatch(JSON.stringify(response.payload), /caller-metered-key|caller-owner-claim/);
+  }
+  assert.equal(h.calls.forbidden.length, 0);
+  assert.equal(f.requests.length, 9);
+  assert.equal(f.requests.every(request => request.url === HEALTH_URL && request.init.method === 'GET'), true);
+});
+
+test('actual AI handler keeps non-action control language deterministic without submitting a request', async t => {
+  const f = await fixture(t);
+  const h = await routeHarness(f);
+  for (const prompt of [
+    'Control Tower, don’t keep building',
+    'Control Tower, can’t you keep going?',
+    'Control Tower, continue explaining the repair',
+    'Control Tower, keep building when there is capacity',
+    'Control Tower, build when the worker is ready',
+    'Control Tower, build only when I ask',
+    'Control Tower, get Stephanos working when there is capacity',
+    'Control Tower, get Stephanos working after the current task finishes',
+    'Control Tower, get Stephanos working once there is capacity',
+    'Control Tower, please repair status',
+    'Control Tower reboot',
+  ]) {
+    const response = await h.call({ prompt, provider: 'openai', runtimeContext: { participantTarget: 'everyone' } });
+    assert.equal(response.payload.type, 'control_result', prompt);
+    assert.equal(response.payload.data.sovereign_control_conversation.handoff, null, prompt);
+    assert.equal(response.payload.data.sovereign_control_conversation.nativeActionSubmitted, false, prompt);
+    assert.equal(response.payload.data.execution_metadata.model_invoked, false, prompt);
+  }
+  assert.equal(h.calls.forbidden.length, 0);
+});
+
 test('actual AI handler reports unavailable persistence truth while still answering safely', async t => {
   const f = await fixture(t);
   const h = await routeHarness(f, { continuityOk: false });

@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -18,7 +19,7 @@ function deploymentReceipt() {
     requestId: 'truth-proof-0001',
     operation: 'READ_DEPLOYMENT_STATUS',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     expectedHead: HEAD,
     state: 'DONE',
