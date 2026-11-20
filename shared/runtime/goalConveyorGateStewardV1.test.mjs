@@ -107,12 +107,15 @@ test('externally pinned Ed25519 signer makes individual evidence visible, never 
   assert.equal(authenticated.gates[7].status, 'FAIL');
   assert.equal(authenticated.gates[8].status, 'FAIL');
   assert.equal(authenticated.gates[12].status, 'FAIL');
-  assert.equal(authenticated.gates[2].status, 'PASS');
+  // A valid signed gate-3 fact remains visible, but gate 1/2 lack proof.
+  // The causal observatory must not turn it into operational permission.
+  assert.equal(authenticated.gates[2].status, 'WAITING_FOR_PREREQUISITE');
+  assert.equal(authenticated.gates[2].reportedSignedStatus, 'PASS');
   const publicView = projectPublicGoalGateObservatoryV1(null, {
     sourceHead: head, nowMs, verifiedObservatory: authenticated,
   });
   assert.equal(publicView.counts.FAIL, 4);
-  assert.equal(publicView.counts.PASS, 1);
+  assert.equal(publicView.counts.PASS, 0);
   assert.equal(publicView.approvalAuthority, false);
   assert.equal(publicView.mergeAuthority, false);
   assert.equal(publicView.gates[7].proofRef, 'workspace:proof/goal-gate-8');
