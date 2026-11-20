@@ -173,6 +173,13 @@ export function buildGitHubOperatorBriefing(input={}){
    }
    continue;
   }
+  // Agreeing malformed GitHub HEAD aliases must not promote review-readiness.
+  // Only supplied aliases are checked, retaining legacy absent-field handling.
+  if([pr.headSha,pr.headRefOid].some(sha=>sha!=null&&
+    (typeof sha!=='string'||!/^[a-f0-9]{40}$/i.test(sha)))){
+   blocked.push(item('pr-head-invalid',pr,'Declared GitHub HEAD is not an exact 40-hex commit SHA.'));
+   continue;
+  }
   const pubOk=pr.publicationVerified===true || hasProof(evidence,n,'PR_PUBLICATION_VERIFIER_PASS');
   if(!pubOk){ missing=true; waitingForProof.push(item('pr-missing-publication-proof',pr,'Missing PR publication proof from PRPublicationVerifier.')); }
   if(text(pr.headSha)&&text(pr.headRefOid)&&text(pr.headSha)!==text(pr.headRefOid)){ blocked.push(item('pr-head-evidence-conflict',pr,'Conflicting GitHub HEAD identities require reconciliation.')); continue; }

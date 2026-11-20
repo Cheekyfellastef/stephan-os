@@ -528,3 +528,20 @@ test('immutable handoff receipt identities cannot be recycled across evidence st
  const distinct=run([p,p2,a,{...a2,ref:'stage-ack-2'},v,{...v2,receiverAckRef:'stage-ack-2'}]);
  assert.equal(distinct.status,'PASS');
 });
+
+test('explicit malformed GitHub HEAD identities cannot inherit green review-ready status',()=>{
+ const valid='a'.repeat(40);
+ const classify=pr=>buildGitHubOperatorBriefing({pullRequests:[{
+  number:1449,publicationVerified:true,checksStatus:'pass',...pr
+ }]});
+ assert.equal(classify({headSha:valid,headRefOid:valid}).status,'PASS');
+ for(const bad of ['not-a-sha','z'.repeat(40),valid+'  ','',42]){
+  const result=classify({headSha:bad,headRefOid:bad,claimedHeadSha:bad});
+  assert.equal(result.status,'BLOCKED',JSON.stringify(bad));
+  assert.equal(result.readyForReview.length,0);
+  assert.equal(result.blocked[0].kind,'pr-head-invalid',JSON.stringify(bad));
+ }
+ const inconsistent=classify({headSha:valid,headRefOid:'bad-sha',claimedHeadSha:valid});
+ assert.equal(inconsistent.status,'BLOCKED');
+ assert.equal(inconsistent.blocked[0].kind,'pr-head-invalid');
+});
