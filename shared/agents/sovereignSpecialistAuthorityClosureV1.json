@@ -24,6 +24,7 @@
     "shared/agents/codexDispatchQueue.mjs",
     "shared/agents/engineeringIncidentMethodMemoryV1.mjs",
     "shared/agents/executionReceiptV1.mjs",
+    "shared/agents/githubReadResilienceV1.mjs",
     "shared/agents/independentReviewExecutionContextV1.mjs",
     "shared/agents/independentReviewHandoffIdentityV1.mjs",
     "shared/agents/independentReviewHandoffProvenanceV1.mjs",
@@ -81,6 +82,7 @@
     "shared/agents/windowsAuthorityRecoveryMeshGuardianReviewV1.mjs",
     "shared/agents/windowsAuthorityRecoveryMeshLaunchLivenessReviewV1.mjs",
     "shared/agents/windowsAuthoritySovereignFixedRuntimeReviewV1.mjs",
+    "shared/agents/windowsAuthoritySovereignReviewerProfileReviewV1.mjs",
     "shared/agents/windowsAuthoritySpecialistReviewCoreV1.mjs",
     "shared/agents/windowsAuthoritySpecialistReviewV1.mjs",
     "shared/agents/windowsAuthoritySpecialistReviewV1Base.mjs",
@@ -138,7 +140,7 @@
     },
     {
       "path": "shared/agents/windowsAuthoritySpecialistReviewV1.mjs",
-      "sourceSha256": "f36098876e580281b05adef5fc5d8c9023497c4a806e5cf7bc01b52c5b2d3555",
+      "sourceSha256": "0effd70411d9dd7b8bf5132f6270912fe17eaea579a397b285b40cec045e1539",
       "kind": "pinned-local-switchboard",
       "targets": [
         "shared/agents/windowsAuthorityCanonicalMailboxNativeEvidenceReviewV1.mjs",
@@ -148,6 +150,7 @@
         "shared/agents/windowsAuthorityMailboxCadenceReviewV1.mjs",
         "shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs",
         "shared/agents/windowsAuthoritySovereignFixedRuntimeReviewV1.mjs",
+        "shared/agents/windowsAuthoritySovereignReviewerProfileReviewV1.mjs",
         "shared/agents/windowsAuthoritySpecialistReviewV1Base.mjs",
         "shared/agents/windowsAuthoritySpecialistReviewV1LegacyRouter.mjs",
         "shared/agents/windowsAuthorityStarfieldVrAerObserveReviewV1.mjs",

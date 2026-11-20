@@ -42,10 +42,29 @@ for (const path of protectedPaths) test('each authority-closure path alone requi
   assert.equal(result.valid, false); assert.deepEqual(result.blockers, ['SOVEREIGN_SPECIALIST_OUT_OF_BAND_ROOT_REQUIRED']);
 });
 
+for (const path of [
+  'shared/agents/githubReadResilienceV1.mjs',
+  'shared/agents/windowsAuthoritySovereignReviewerProfileReviewV1.mjs',
+]) test('integrated authority retains a fourth-root requirement independent of manifest enumeration: ' + path, async () => {
+  const f = makeFixture([path]);
+  const result = (await isolatedModules(f)).verifier.validateSovereignQualifiedSpecialistArtifactV1(f.artifact, f.expected);
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.blockers, ['SOVEREIGN_SPECIALIST_OUT_OF_BAND_ROOT_REQUIRED']);
+});
+
 test('Windows case alias retains the same fourth-root requirement', async () => {
   const f = makeFixture(['shared/agents/ExecutionReceiptV1.mjs']);
   const result = (await isolatedModules(f)).verifier.validateSovereignQualifiedSpecialistArtifactV1(f.artifact, f.expected);
   assert.equal(result.valid, false); assert.deepEqual(result.blockers, ['SOVEREIGN_SPECIALIST_OUT_OF_BAND_ROOT_REQUIRED']);
+});
+
+test('current Windows router keeps its installed reviewer specialist inside the parsed authority closure', () => {
+  const result = probe(root);
+  const router = 'shared/agents/windowsAuthoritySpecialistReviewV1.mjs';
+  const specialist = 'shared/agents/windowsAuthoritySovereignReviewerProfileReviewV1.mjs';
+  assert.equal(result.valid, true, result.errors.join('\n'));
+  assert.ok(result.edges.some(edge => edge.file === router && edge.target === specialist && edge.role === 'fixed'));
+  assert.ok(result.protectedPaths.includes(specialist));
 });
 
 for (const [label, mutate] of [

@@ -189,7 +189,12 @@ async function routeHarness(f, { continuityOk = true, allowLegacyHealthTool = fa
   const forbidden = name => () => { calls.forbidden.push(name); throw new Error('UNEXPECTED_' + name); };
   const logger = { info() {}, warn() {}, error() {} };
   const bindings = {
-    express: { Router: () => ({ post: (path, handler) => routes.set(path, handler) }) },
+    // Production now also registers a read-only shared-thread GET endpoint.
+    // The isolated harness must register it without granting network or write access.
+    express: { Router: () => ({
+      post: (path, handler) => routes.set(path, handler),
+      get: (path, handler) => routes.set('GET ' + path, handler),
+    }) },
     createLogger: () => logger, console: { log() {} }, AbortController, process,
     DEFAULT_PROVIDER_KEY: 'ollama',
     classifySovereignControlConversationV1, routeStephanosConversationV1, parseCommand, resolveRoute,
