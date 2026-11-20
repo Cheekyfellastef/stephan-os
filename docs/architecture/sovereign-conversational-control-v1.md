@@ -121,6 +121,56 @@ admit a repair. Core census and writer-custody requirements remain unchanged.
 This governor diagnostic extension does not commission a different native
 owner or process-identity path.
 
+### Preserve the actual refusal detail
+
+The optional `owner.diagnosticCode` preserves the existing observer's closed
+`OWNER_*` failure code only when owner identity remains unproven and the source
+is stable. It carries no process identity, raw error text or recovery authority.
+The underlying `MAINTENANCE_MIGRATION_OWNER_UNPROVEN` refusal remains in force.
+
+For `FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED`, the optional
+`nativeRuntime.governorPermission` identifies the failed permission predicates
+and the original governor state's timestamp. It is derived from the same state
+that already passed the canonical workspace, file, schema, preparation, override
+and freshness checks. It does not read another file, resample the state or change
+any admission decision. The closed labels cover phase, override, load mode,
+cooldown, the six activity flags and the two model permissions; values such as
+paths, process IDs and model names are never projected.
+
+Both details are removed on source drift. Unknown owner diagnostic values become
+`OWNER_OBSERVER_INVALID_RECEIPT`; malformed governor details are omitted.
+Historical receipts without these details retain their existing bytes, and the complete
+public status remains subject to its 2048-byte bound. A failed permission label
+explains the observed refusal; it cannot grant qualification, clear a hold or
+prove that a repair subsequently ran.
+
+The optional `nativeRuntime.qualificationDiagnosticCode` preserves a closed
+qualification failure that the existing public reason maps to
+`FIXED_RUNTIME_QUALIFICATION_UNPROVEN`. It is captured from the same failed
+inspection, before that mapping, and retained only for an available denial with
+an original observation timestamp and a stable, matching source. Successful
+qualification, another refusal type, source drift, conflicting native source
+identity and unknown values omit the field. The generic reason, qualification
+flag and general blocker vocabulary remain unchanged.
+
+The compiled catalog covers source-proof, installed-version discovery,
+canonical-source and Git-probe failures, including two defensive source labels.
+A cross-module regression checks every source-declared qualification failure
+against the existing public reasons and this catalog. Adding a typed producer
+failure therefore requires an explicit public classification. Arbitrary error
+text, prefix lookalikes, paths and objects are never accepted as diagnostic
+codes. Historical receipts without the field keep their bytes and hashes, and
+the complete status still has the same 2048-byte limit.
+
+This projection changes neither the fixed-runtime parent nor its protected
+package closure, and performs no additional native read. The parent may already
+have reduced an unstructured filesystem or parsing error to the generic
+qualification refusal; the public projector cannot recover that lost detail.
+For `MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN`, only the existing umbrella
+code is retained. Its private source-step and configuration metadata remain
+outside this bounded public receipt. A fresh native observation is required to
+establish which diagnostic actually applies.
+
 Exit zero and `observationCompleted:true` mean the observation completed. An
 authentic installation or normal-operator refusal is a completed observation,
 not a healthy runtime. Exit two means a bounded inspection could not complete.
