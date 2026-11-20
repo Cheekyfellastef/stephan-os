@@ -540,10 +540,13 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
     );
   }
 
+  // Record only attempted writes, including writes that may have failed after changing bytes.
+  const attemptedWrites = [];
   try {
     for (const path of targetPaths) {
       const saved = rollbackSnapshot.find((entry) => entry.path === path);
       if (beforeEffect) await beforeEffect();
+      attemptedWrites.push(saved);
       await writeFileImpl(
         resolve(worktreePath, path),
         nextByPath.get(path),
@@ -551,7 +554,9 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
       );
     }
   } catch (error) {
-    for (const saved of rollbackSnapshot) {
+    for (const saved of [...attemptedWrites].reverse()) {
+      // Losing original authority forbids cleanup writes too. Preserve source for recovery.
+      if (beforeEffect) await beforeEffect();
       if (saved.existed === true) {
         await writeFile(resolve(worktreePath, saved.path), saved.bytes);
       } else {
