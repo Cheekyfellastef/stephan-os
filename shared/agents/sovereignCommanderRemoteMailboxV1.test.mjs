@@ -31,6 +31,7 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
   safeCpuPressureSnapshotProjection,
+  strictNativeFailureExitStatusV1,
   diagnoseRescueIslandNativeReceiptInvalidV1,
   sovereignCommanderRemoteNetworkTimeoutMs,
   sovereignCommanderRemotePlanStepTimeoutMs,
@@ -5513,4 +5514,20 @@ test('CPU pressure native process fields reject coerced zeros, missing PID and n
   assert.equal(safeCpuPressureSnapshotProjection({
     structuredContent: { stdout: JSON.stringify(baseline) },
   }, 'other-operation'), null);
+});
+
+test('bounded native failure evidence rejects coerced exit statuses for Starfield preflight and Air Link (#2573)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
+  const wired = source.match(/strictNativeFailureExitStatusV1\(failureEnvelope\?\.structuredContent\?\.status\)/g) || [];
+  assert.equal(wired.length, 2, 'both original bounded-failure paths must use strict integer evidence');
+  assert.doesNotMatch(source, /Number\(failureEnvelope\?\.structuredContent\?\.status\)/);
+  for (const invalid of [undefined, null, false, true, '', '0', '2', [], {}, NaN, Infinity, -Infinity, 2.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(strictNativeFailureExitStatusV1(invalid), null,
+      'coerced or malformed native failure status must not produce a bounded receipt');
+  }
+  for (const nativeExit of [0, 1, 2, 75, -1]) {
+    assert.equal(strictNativeFailureExitStatusV1(nativeExit), nativeExit,
+      'valid numeric native exit status must be retained exactly');
+  }
 });
