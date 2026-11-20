@@ -375,6 +375,29 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
       finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_PROXY',
     });
   }
+  // Child specialists are allowed to inspect root review fields. An own or
+  // inherited accessor at that boundary is executable evidence, not data.
+  // Inspect the ordinary root's descriptors before dispatching ANY child.
+  // The previous Proxy guard must stay first so no Proxy traps are invoked.
+  const rootPrototype = input && typeof input === 'object' ? Object.getPrototypeOf(input) : undefined;
+  const literalRoot = input && typeof input === 'object' && !Array.isArray(input)
+    && (rootPrototype === Object.prototype || rootPrototype === null)
+    && Reflect.ownKeys(input).every((key) => {
+      const field = Object.getOwnPropertyDescriptor(input, key);
+      return field && Object.hasOwn(field, 'value');
+    });
+  if (!literalRoot) {
+    return Object.freeze({
+      schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
+      eligible: false,
+      clean: false,
+      reviewedPaths: Object.freeze([]),
+      findings: Object.freeze([]),
+      proofRefs: Object.freeze([]),
+      ...REVIEW_AUTHORITY_BOUNDARY,
+      finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_EVIDENCE',
+    });
+  }
   // Original #2315 source-only review, never an installed native-signer qualification.
   const mailboxNative = canonicalMailboxNative.analyzeWindowsAuthorityCanonicalMailboxNativeEvidenceReviewV1(input);
   if (mailboxNative.eligible) return mailboxNative;

@@ -750,3 +750,44 @@ test('specialist entry refuses a hostile or revoked root Proxy before child disp
   assert.deepEqual(revokedResult.proofRefs, []);
   assert.equal(revokedResult.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_PROXY');
 });
+
+test('specialist entry refuses accessor-backed or inherited root review evidence without executing it', () => {
+  for (const field of ['analysis', 'repository', 'sources', 'sourceHead', 'prNumber']) {
+    let getterCalls = 0;
+    const candidate = input();
+    Object.defineProperty(candidate, field, {
+      enumerable: true,
+      configurable: true,
+      get() { getterCalls++; throw new Error('hostile root getter ' + field); },
+    });
+    const result = analyzeWindowsAuthoritySpecialistReview(candidate);
+    assert.equal(getterCalls, 0, field + ': getter cannot execute');
+    assert.equal(result.eligible, false, field);
+    assert.equal(result.clean, false, field);
+    assert.deepEqual(result.proofRefs, [], field);
+    assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_EVIDENCE', field);
+    for (const authority of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(result[authority], false, field + ': ' + authority);
+    }
+  }
+  let inheritedCalls = 0;
+  const inherited = Object.create(Object.defineProperty({}, 'analysis', {
+    get() { inheritedCalls++; throw new Error('hostile inherited analysis'); },
+  }));
+  Object.assign(inherited, input());
+  delete inherited.analysis;
+  const rejected = analyzeWindowsAuthoritySpecialistReview(inherited);
+  assert.equal(inheritedCalls, 0, 'inherited analysis must never be read');
+  assert.equal(rejected.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_EVIDENCE');
+  assert.deepEqual(rejected.proofRefs, []);
+  let symbolCalls = 0;
+  const symbolInput = input();
+  Object.defineProperty(symbolInput, Symbol('untrusted'), {
+    get() { symbolCalls++; throw new Error('hostile symbol getter'); },
+  });
+  const rejectedSymbol = analyzeWindowsAuthoritySpecialistReview(symbolInput);
+  assert.equal(symbolCalls, 0, 'symbol accessor must never execute');
+  assert.equal(rejectedSymbol.clean, false);
+  assert.deepEqual(rejectedSymbol.proofRefs, []);
+});
