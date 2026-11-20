@@ -1,13 +1,9 @@
 name: Source Integrity Guard
 
-# The pull_request check is a smoke test: a PR controls its own checkout and
-# must not be treated as an independent security approval. Once this workflow
-# is merged to protected main, pull_request_target runs the protected-base
-# workflow and validator, using untrusted PR files only as syntax-check data.
+# This pull_request workflow is an untrusted, informational syntax smoke.
+# It never runs or registers the protected-base attestation job.
 on:
   pull_request:
-  pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -41,53 +37,3 @@ jobs:
       - name: Guard regression (informational PR-controlled tests)
         run: node --test scripts/changed-source-integrity-guard.test.mjs
 
-  trusted-source-integrity:
-    name: Protected-base source integrity (independent from PR code)
-    if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout immutable protected base as trusted validator
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: trusted
-          persist-credentials: false
-
-      - name: Checkout exact PR head as untrusted inspection data
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
-          path: candidate
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Setup trusted Node.js runner
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Fetch exact protected base commit into candidate history
-        working-directory: candidate
-        shell: bash
-        env:
-          SOURCE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          [[ "$SOURCE_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
-          git fetch --no-tags "https://github.com/${GITHUB_REPOSITORY}.git" "$SOURCE_BASE_SHA"
-
-      - name: Run protected-base validator against PR data only
-        working-directory: candidate
-        env:
-          SOURCE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          node --input-type=module -e '
-            import { runChangedSourceIntegrityGuard } from "../trusted/scripts/changed-source-integrity-guard.mjs";
-            const base = process.env.SOURCE_BASE_SHA;
-            if (!/^[0-9a-f]{40}$/.test(base || "")) process.exit(1);
-            const result = runChangedSourceIntegrityGuard({ cwd: process.cwd(), baseRef: base });
-            console.log(JSON.stringify(result, null, 2));
-            if (!result.ok) process.exitCode = 1;
-          '

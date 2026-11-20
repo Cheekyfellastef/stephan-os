@@ -1,0 +1,66 @@
+name: Protected Base Source Integrity
+
+# This separately triggered workflow is installed on protected main before it
+# can attest future pull requests. It does not run for the introducing PR.
+# Never execute scripts or actions from untrusted pull request code.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protected-base-source-integrity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trusted-source-integrity:
+    name: Protected-base source integrity (independent from PR code)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable protected base as trusted validator
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Checkout exact PR head as untrusted inspection data
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup trusted Node.js runner
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch exact protected base commit into candidate history
+        working-directory: candidate
+        shell: bash
+        env:
+          SOURCE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          [[ "$SOURCE_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          git fetch --no-tags "https://github.com/${GITHUB_REPOSITORY}.git" "$SOURCE_BASE_SHA"
+
+      - name: Run protected-base validator against PR data only
+        working-directory: candidate
+        env:
+          SOURCE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          node --input-type=module -e '
+            import { runChangedSourceIntegrityGuard } from "../trusted/scripts/changed-source-integrity-guard.mjs";
+            const base = process.env.SOURCE_BASE_SHA;
+            if (!/^[0-9a-f]{40}$/.test(base || "")) process.exit(1);
+            const result = runChangedSourceIntegrityGuard({ cwd: process.cwd(), baseRef: base });
+            console.log(JSON.stringify(result, null, 2));
+            if (!result.ok) process.exitCode = 1;
+          '
