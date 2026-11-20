@@ -40,8 +40,8 @@ import {
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
-  decodeStephanosWorkspaceAnswerRecord,
-  decodeStephanosWorkspaceQuestionRecord,
+  decodeStephanosWorkspaceAnswerRecordByLineage,
+  decodeStephanosWorkspaceQuestionRecordByLineage,
 } from '../shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import {
   answerStephanosWorkspaceQuestionRecord,
@@ -231,7 +231,7 @@ function staleQaQuestion(record = {}, nowMs = Date.now()) {
 
 function staleQaReplayEligible(record = {}, nowMs = Date.now()) {
   if (!staleQaQuestion(record, nowMs)) return false;
-  const decoded = decodeStephanosWorkspaceQuestionRecord(record, {
+  const decoded = decodeStephanosWorkspaceQuestionRecordByLineage(record, {
     workspaceValidationOptions: { nowMs },
   });
   return decoded.valid === false
@@ -299,9 +299,9 @@ function compactConversationRecord(record = null) {
   }) : null;
 }
 
-function sanitizedConversationAnswerProjection(answerRecord = null, nowMs = Date.now()) {
+function sanitizedConversationAnswerProjection(answerRecord = null, questionRecord = null, nowMs = Date.now()) {
   if (!answerRecord) return null;
-  const decoded = decodeStephanosWorkspaceAnswerRecord(answerRecord, {
+  const decoded = decodeStephanosWorkspaceAnswerRecordByLineage(answerRecord, questionRecord, {
     expectedRecipientParticipantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
     workspaceValidationOptions: { nowMs },
   });
@@ -324,7 +324,9 @@ function sanitizedConversationAnswerProjection(answerRecord = null, nowMs = Date
   return Object.freeze({
     answerId: safeId(answer.answerId),
     questionId: safeId(answer.questionId),
-    roundId: safeId(answer.roundId),
+    ...(decoded.lineage.formalRound
+      ? { roundId: safeId(answer.roundId) }
+      : { conversationMode: decoded.lineage.kind, correlationId: safeId(decoded.lineage.correlationId) }),
     responderParticipantId: safeId(answer.responderParticipantId),
     answerText: redacted ? '[REDACTED]' : bounded(rawAnswerText, 1000),
     epistemicState: safeId(answer.epistemicState),
@@ -724,13 +726,13 @@ async function recoverPersistedQaPublication({ request, observed, nowMs, readRec
   const question = await readRecord(qaQuestionSegments(suppliedQuestion));
   if (!question?.ok || !sameJson(question.record, suppliedQuestion)
     || !qaRequestLineageMatches(request, question.record)
-    || !decodeStephanosWorkspaceQuestionRecord(question.record, { workspaceValidationOptions: { nowMs: atMs } }).valid) {
+    || !decodeStephanosWorkspaceQuestionRecordByLineage(question.record, { workspaceValidationOptions: { nowMs: atMs } }).valid) {
     return blocked('WORKSPACE_QA_RECOVERY_QUESTION_REJECTED');
   }
   const answer = await readRecord(qaAnswerSegments(question.record));
   if (!answer?.ok || text(answer.record?.timestampUtc) !== receipt.timestampUtc
     || !qaAnswerLineageMatches(question.record, answer.record)
-    || !decodeStephanosWorkspaceAnswerRecord(answer.record, {
+    || !decodeStephanosWorkspaceAnswerRecordByLineage(answer.record, question.record, {
       expectedRecipientParticipantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
       workspaceValidationOptions: { nowMs: atMs },
     }).valid) return blocked('WORKSPACE_QA_RECOVERY_ANSWER_REJECTED');
@@ -1035,7 +1037,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     }
   } else if (verification.accepted && request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) {
     const questionRecord = request.boundedPayload?.questionRecord;
-    const decodedQuestion = decodeStephanosWorkspaceQuestionRecord(questionRecord, {
+    const decodedQuestion = decodeStephanosWorkspaceQuestionRecordByLineage(questionRecord, {
       workspaceValidationOptions: { nowMs },
     });
     if (!decodedQuestion.valid) {
@@ -1087,7 +1089,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
           readFileFn,
         });
         if (existingAnswer.ok) {
-          const decodedAnswer = decodeStephanosWorkspaceAnswerRecord(existingAnswer.record, {
+          const decodedAnswer = decodeStephanosWorkspaceAnswerRecordByLineage(existingAnswer.record, questionRecord, {
             expectedRecipientParticipantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
             workspaceValidationOptions: { nowMs },
           });
@@ -1254,10 +1256,10 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     } : null),
     correlatedAnswerRecord: compactConversationRecord(answerRecord),
     sanitizedAnswer: publicationRecovery?.ok ? {
-      ...sanitizedConversationAnswerProjection(answerRecord, publicationRecovery.atMs),
+      ...sanitizedConversationAnswerProjection(answerRecord, workspaceRecord, publicationRecovery.atMs),
       answeredAtUtc: answerRecord.timestampUtc,
       freshness: staleQaQuestion(answerRecord, nowMs) ? 'STALE' : 'RECENT',
-    } : sanitizedConversationAnswerProjection(answerRecord, nowMs),
+    } : sanitizedConversationAnswerProjection(answerRecord, workspaceRecord, nowMs),
     ...(publicationRecovery?.ok ? { publicationRecovery: {
       classification: 'EXACT_PERSISTED_QA_PUBLICATION_RECOVERED',
       acceptedAtUtc: new Date(publicationRecovery.atMs).toISOString(),
