@@ -102,6 +102,7 @@ def write_new(path, raw):
 
 class Store:
     def __init__(self, directory):
+        self.dll_hash = DLL_HASH
         self.path = Path(directory) / SESSION_NAME
         self.lock = self.path.with_suffix(".lock")
         self.version = None
@@ -129,6 +130,9 @@ class Store:
                     raise Blocked("Operation lock identity changed; preserving it")
                 self.lock.unlink()
 
+    def new_fields(self):
+        return {}
+
     def exists(self):
         plain_path(self.path)
         return self.path.exists()
@@ -137,7 +141,7 @@ class Store:
         state = read_json(self.path)
         if (state.get("schema") != SCHEMA or state.get("workspace") != str(WORKSPACE)
                 or state.get("handoffSha256") != HANDOFF_HASH
-                or state.get("reviewedDllSha256") != DLL_HASH
+                or state.get("reviewedDllSha256") != self.dll_hash
                 or not re.fullmatch(r"[0-9a-f]{32}", state.get("sessionId", ""))):
             raise Blocked("Existing session identity differs")
         self.version = digest(self.path)
@@ -195,11 +199,12 @@ def start(store, host):
             raise Blocked("Session or running game appeared during admission")
         state = {"schema": SCHEMA, "sessionId": uuid.uuid4().hex, "workspace": str(WORKSPACE),
                  "stage": "RESERVED_ONE_ATTEMPT", "createdUtc": utc(), "events": [],
-                 "handoffSha256": HANDOFF_HASH, "reviewedDllSha256": DLL_HASH,
+                 "handoffSha256": HANDOFF_HASH, "reviewedDllSha256": store.dll_hash,
                  "sourceArchiveSha256": ARCHIVE_HASH, "verification": proof,
                  "launchRequested": False, "process": None, "injected": False,
                  "captureAttempted": False, "saveLoadedConfirmed": False,
                  "headsetNeeded": False, "priorProxyReceipt": host.previous_proxy_receipt()}
+        state.update(store.new_fields())
         store.save(state, new=True)
         try:
             advance(store, state, "PROXY_ISOLATION_INTENT")
@@ -358,6 +363,12 @@ $rows=@(); foreach($p in @(Get-Process -ErrorAction Stop | Where-Object {$_.Proc
         return bool(saved and saved.get("record", {}).get("stage") == "isolated"
                     and self.proxy_receipt() == saved)
 
+    def verify_attempt_history(self):
+        for entry in SOURCE.iterdir():
+            name = entry.name.lower()
+            if (name.startswith("native-eye-output-") and name.endswith(".jsonl")) or ("eye-output" in name and "session" in name and entry.is_file()):
+                raise Blocked("Existing native-eye-output attempt/session found: " + entry.name)
+
     def preflight(self):
         handoff_path = OUTPUTS / "Starfield-VR-HANDOFF.json"
         if digest(handoff_path) != HANDOFF_HASH:
@@ -375,10 +386,7 @@ $rows=@(); foreach($p in @(Get-Process -ErrorAction Stop | Where-Object {$_.Proc
                     "handoff": str(handoff_path), "archive": handoff["archive"]}
         if json.dumps(read_json(checkpoint_path), sort_keys=True) != json.dumps(expected, sort_keys=True):
             raise Blocked("Current native-eye-output checkpoint is not the saved unrun experiment")
-        for entry in SOURCE.iterdir():
-            name = entry.name.lower()
-            if (name.startswith("native-eye-output-") and name.endswith(".jsonl")) or ("eye-output" in name and "session" in name and entry.is_file()):
-                raise Blocked("Existing native-eye-output attempt/session found: " + entry.name)
+        self.verify_attempt_history()
         if digest(GAME) != GAME_HASH or self.proxy_state() != "restored" or self.games():
             raise Blocked("Expected idle game and restored proxy were not verified")
         plain_path(STEAM)
@@ -417,10 +425,29 @@ $rows=@(); foreach($p in @(Get-Process -ErrorAction Stop | Where-Object {$_.Proc
         # Only validated integer/decimal values enter this fixed command; path is fixed.
         code = r"""
 $p=Get-Process -Id PID_VALUE -ErrorAction Stop;
-if($p.Path -ine 'C:\Program Files (x86)\Steam\steamapps\common\Starfield\Starfield.exe' -or
-  $p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture) -cne 'TIME_VALUE') {throw 'Close target identity changed'}
-$requested=$p.CloseMainWindow();$exited=$p.WaitForExit(60000);$exitCode=$null;
-if($exited){$exitCode=$p.ExitCode};[ordered]@{requested=$requested;exited=$exited;exitCode=$exitCode} | ConvertTo-Json -Compress
+try {
+  # Get-Process attaches by PID. Retain its handle before closing: the .NET
+  # Framework ExitCode getter requires it even after WaitForExit succeeds.
+  # Direct getter calls expose exceptions that PowerShell property access hides.
+  $retainedHandle=$p.get_Handle();
+  if($retainedHandle -eq [IntPtr]::Zero){throw 'Close target handle unavailable'}
+  if($p.Path -ine 'C:\Program Files (x86)\Steam\steamapps\common\Starfield\Starfield.exe' -or
+    $p.StartTime.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture) -cne 'TIME_VALUE') {throw 'Close target identity changed'}
+  $requested=$p.CloseMainWindow();$exited=$p.WaitForExit(60000);$exitCode=$null;$exitCodeError=$null;
+  if($exited){
+    try {
+      $observedExitCode=$p.get_ExitCode();
+      if($observedExitCode -isnot [int]){throw 'Exit code was not an integer'}
+      $exitCode=$observedExitCode;
+    } catch {
+      # Keep unknown exit evidence unknown while allowing verified safe restore.
+      $exitCodeError='EXIT_CODE_READ_FAILED';
+    }
+  }
+  [ordered]@{requested=$requested;exited=$exited;exitCode=$exitCode;exitCodeError=$exitCodeError} | ConvertTo-Json -Compress
+} finally {
+  $p.Dispose();
+}
 """.replace("PID_VALUE", str(process["pid"])).replace("TIME_VALUE", process["createdFileTime"])
         return self.ps(code, timeout=70)
 
@@ -436,7 +463,7 @@ def summary(state, store):
     keys = ("sessionId", "stage", "createdUtc", "updatedUtc", "launchRequested",
             "handoffSha256", "reviewedDllSha256", "sourceArchiveSha256", "verification",
             "injected", "captureAttempted", "saveLoadedConfirmed", "headsetNeeded",
-            "gameExitObserved", "normalExitProven", "proxyRestored", "error", "cleanupError", "nextAction")
+            "sessionProfile", "gameExitObserved", "normalExitProven", "proxyRestored", "closeResult", "error", "cleanupError", "nextAction")
     result = {key: state[key] for key in keys if key in state}
     result["statePath"] = str(store.path)
     result["process"] = state.get("process")

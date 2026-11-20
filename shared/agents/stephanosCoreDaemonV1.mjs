@@ -1,3 +1,5 @@
+import { projectVrGovernorExecutionPermissionsV1 } from '../ai/ollamaLoadGovernor.mjs';
+
 export const STEPHANOS_CORE_DAEMON_SCHEMA = 'stephanos.core-daemon.v1';
 
 const SHA = /^[0-9a-f]{40}$/i;
@@ -25,6 +27,7 @@ export function coreWorkerDependentWorkAllowed(state = {}) {
 // Missing, corrupt, or contradictory state must never authorise a local CPU
 // build. External GitHub runners are independent of this Core admission gate.
 export function coreGamingProtectionFromGovernor(state, nowMs = Date.now()) {
+  if (!projectVrGovernorExecutionPermissionsV1(state, nowMs).localCpuAllowed) return true;
   if (!state || typeof state !== 'object' || Array.isArray(state)
     || state.schemaVersion !== 'stephanos.vr-resource-governor.v1'
     || state.governorVersion !== 3 || !Number.isFinite(nowMs)) return true;

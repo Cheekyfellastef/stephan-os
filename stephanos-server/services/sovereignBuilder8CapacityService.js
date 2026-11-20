@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile, unlink } from 'node:fs/promises';
 import { freemem, homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { projectVrGovernorExecutionPermissionsV1 } from '../../shared/ai/ollamaLoadGovernor.mjs';
 
 import {
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
@@ -76,8 +77,7 @@ async function defaultProbeEnvironment(options = {}) {
   let governor;
   try { governor = JSON.parse(await readFile(GOVERNOR_STATE, 'utf8')); }
   catch { return { ok: false, reason: 'SOVEREIGN_BUILDER8_GAMING_GOVERNOR_UNPROVEN' }; }
-  if (governor?.schemaVersion !== 'stephanos.vr-resource-governor.v1'
-    || governor.active !== false || governor.localModelAllowed === false) {
+  if (!projectVrGovernorExecutionPermissionsV1(governor).localCpuAllowed) {
     return { ok: false, reason: 'SOVEREIGN_BUILDER8_GAMING_ACTIVE_OR_UNKNOWN' };
   }
   const gameProbe = run(POWERSHELL, [

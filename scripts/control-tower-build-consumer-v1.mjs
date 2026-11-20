@@ -149,22 +149,37 @@ export async function consumeControlTowerBuildRequestV1({
     latestBuild = restore(latestBuildRequestId, CONTROL_TOWER_BUILD_OPERATION)
       || controlTowerMissingLedgerObservationV1(latestBuildRequestId);
     latestObserve = restore(latestObserveRequestId, CONTROL_TOWER_OBSERVE_OPERATION);
-    // A validated original BUILD reservation or missing retained record is
-    // already enough to refuse new BUILD. Do not spend an expensive exhaustive
-    // scan on that known HOLD. A later admitted BUILD still requires the
-    // original complete read-set scan; this never retires or replays custody.
     const knownBuildUnresolved = controlTowerBuildObservationUnresolvedV1(
       latestBuild, { nowMs: now().getTime() });
+    const auth = await deps.resolveAuth();
+    const acquireRequest = observationOnly => deps.readRequest({ token: auth?.token,
+      now: () => now().toISOString(), observationOnly,
+      isRequestRecorded: id => ledger.has(id),
+      isRecorded: runId => ledger.has('control-tower-build-' + runId + '-1') });
+    const retainedBuildLocator = Boolean(requestId(latestBuildRequestId)
+      && latestBuild?.requestId === latestBuildRequestId);
+    let observed = retainedBuildLocator ? await acquireRequest(knownBuildUnresolved) : null;
+    // A retained locator is read through the original ledger above. An
+    // authenticated read-only request can inspect that exact history without
+    // scanning every unrelated lifetime mailbox record first. This does not
+    // assert that another reservation is absent or establish BUILD readiness.
+    // A cold start without a retained BUILD locator still recovers its history.
+    const retainedObservation = observed?.ok === true && deps.isAuthenticated(observed.request)
+      && observed.request.operation === CONTROL_TOWER_OBSERVE_OPERATION
+      && retainedBuildLocator;
+    // A validated original BUILD reservation or missing retained record is
+    // already enough to refuse new BUILD. A later admitted BUILD still requires
+    // the original complete read-set scan; this never retires or replays custody.
     discovery = knownBuildUnresolved
       ? { ok: false, blocker: 'CONTROL_TOWER_PREVIOUS_BUILD_UNRESOLVED' }
+      : retainedObservation ? null
       : typeof ledger.discoverControlTower === 'function'
         ? await ledger.discoverControlTower({ nowMs: now().getTime() }) : null;
     if (discovery?.ok) {
       if (latestBuild?.detailState !== 'MISSING') latestBuild = discovery.latestBuildRequestObservation || latestBuild;
       latestObserve = discovery.latestControlSystemObservation || latestObserve;
     }
-    const auth = await deps.resolveAuth();
-    if (latestBuild?.ledgerPhase === 'RESERVED' && latestBuild.state === 'RESERVED') {
+    if (!retainedObservation && latestBuild?.ledgerPhase === 'RESERVED' && latestBuild.state === 'RESERVED') {
       const historical = await deps.readHistoricalRequest({
         token: auth?.token, runId: latestBuild.runId, now: () => now().toISOString(),
       });
@@ -235,10 +250,15 @@ export async function consumeControlTowerBuildRequestV1({
         }
       }
     }
-    const observed = await deps.readRequest({ token: auth?.token, now: () => now().toISOString(),
-      observationOnly: discovery?.ok !== true || controlTowerBuildObservationUnresolvedV1(latestBuild, { nowMs: now().getTime() }),
-      isRequestRecorded: id => ledger.has(id),
-      isRecorded: runId => ledger.has('control-tower-build-' + runId + '-1') });
+    const observationOnly = discovery?.ok !== true
+      || controlTowerBuildObservationUnresolvedV1(latestBuild, { nowMs: now().getTime() });
+    // Discovery may reveal an older reservation after acquisition, or the
+    // original recovery may close a proved obsolete reservation. Reacquire
+    // only when that changes which operation is permitted. An already selected
+    // OBSERVE never acquires mutation authority from a skipped or failed scan.
+    if (!observed || (!retainedObservation && observationOnly !== knownBuildUnresolved
+      && (!observationOnly || (observed.ok && observed.request.operation !== CONTROL_TOWER_OBSERVE_OPERATION))))
+      observed = await acquireRequest(observationOnly);
     if (!observed.ok) return discovery?.ok !== true
       ? finish('HELD', discovery?.blocker || 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN')
       : controlTowerBuildObservationUnresolvedV1(latestBuild, { nowMs: now().getTime() })

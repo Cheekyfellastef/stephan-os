@@ -101,3 +101,23 @@ export function readSovereignMaintenanceTerminalReceiptV1(stdout = '', processId
   } catch {}
   return hold();
 }
+
+// Keep the established admission API while the pure continuation contract also
+// remains inside the existing maintenance installer source closure.
+export {
+  CORE_REPAIR_CONTINUATION_SCHEMA_V1,
+  CORE_REPAIR_REQUEST_STATUS_SCHEMA_V1,
+  CORE_REPAIR_OWNER_PROTOCOL_V1,
+  CORE_REPAIR_REQUEST_ID_V1,
+  CORE_REPAIR_ACTIONS_V1,
+  CORE_REPAIR_MISSIONS_V1,
+  CORE_REPAIR_REQUEST_STATES_V1,
+  CORE_REPAIR_CONTINUATION_INPUT_SCHEMA_V1,
+  captureCoreRepairContinuationV1,
+  captureCoreRepairStatusRequestV1,
+  captureCoreRepairPrepareRequestV1,
+  sameCoreRepairContinuationV1,
+  captureCoreRepairContinuationStatusV1,
+  unknownCoreRepairRequestStatusV1,
+  projectGoalBuilderChildBlockerV1
+} from './sovereignMaintenanceSourceDiagnosticV1.mjs';

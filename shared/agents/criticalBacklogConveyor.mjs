@@ -1,3 +1,5 @@
+import { projectExternalMergeExecutionObligationV1 } from './externalMergeObservationV1.mjs';
+
 export const CRITICAL_BACKLOG_CONVEYOR_SCHEMA = 'stephanos.critical-backlog-conveyor.v1';
 export const CRITICAL_BACKLOG_CONVEYOR_VERSION = '1.2.0';
 
@@ -7,6 +9,7 @@ export const CRITICAL_BACKLOG_DECISION = Object.freeze({
   WAIT_EXTERNAL_ACTIVE_MISSION: 'WAIT_EXTERNAL_ACTIVE_MISSION',
   PARKED_APPROVALS_ONLY: 'PARKED_APPROVALS_ONLY',
   PARKED_BLOCKERS_ONLY: 'PARKED_BLOCKERS_ONLY',
+  PARKED_ACCEPTANCE_ONLY: 'PARKED_ACCEPTANCE_ONLY',
   BLOCKED_BY_TERMINAL_MISSION: 'BLOCKED_BY_TERMINAL_MISSION',
   BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS: 'BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS',
   BLOCKED_BY_INVALID_BACKLOG: 'BLOCKED_BY_INVALID_BACKLOG',
@@ -90,7 +93,8 @@ function blockerCapacityParked(record = {}) {
   return missionPhase(record) === 'BLOCKED' && BLOCKER_PARKING_STATUSES.has(continuityParkingStatus(record));
 }
 function capacityParked(record = {}) {
-  return APPROVAL_PARKED_PHASES.has(missionPhase(record)) || blockerCapacityParked(record);
+  return APPROVAL_PARKED_PHASES.has(missionPhase(record)) || blockerCapacityParked(record)
+    || projectExternalMergeExecutionObligationV1(record).acceptanceOnly;
 }
 function isSafeSourceScope(value) {
   const normalized = text(value).replace(/\\/g, '/');
@@ -286,7 +290,7 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
   const validation = validateCriticalBacklog(backlog);
   if (!validation.valid) return projectionBase(validation, {
     decision: CRITICAL_BACKLOG_DECISION.BLOCKED_BY_INVALID_BACKLOG,
-    selectedItem: null, activeMission: null, completedItemIds: Object.freeze([]), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), parkedApprovalMissionIds: Object.freeze([]), parkedBlockedMissionIds: Object.freeze([]), remainingItemIds: Object.freeze([]),
+    selectedItem: null, activeMission: null, completedItemIds: Object.freeze([]), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), parkedApprovalMissionIds: Object.freeze([]), parkedBlockedMissionIds: Object.freeze([]), parkedAcceptanceMissionIds: Object.freeze([]), parkedAcceptanceCount: 0, remainingItemIds: Object.freeze([]),
     exactNextAction: 'Repair the source-controlled critical backlog definition.',
     finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_BLOCKED',
   });
@@ -303,7 +307,13 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
     .filter((record) => !isElasticGoalMission(record) && blockerCapacityParked(record))
     .map((record) => text(record.missionId))
     .sort();
-  const parkedMissionIds = [...new Set([...parkedApprovalMissionIds, ...parkedBlockedMissionIds])].sort();
+  const parkedAcceptanceMissionIds = records
+    .filter((record) => !isElasticGoalMission(record)
+      && projectExternalMergeExecutionObligationV1(record).acceptanceOnly)
+    .map((record) => text(record.missionId)).sort();
+  const parkedMissionIds = [...new Set([
+    ...parkedApprovalMissionIds, ...parkedBlockedMissionIds, ...parkedAcceptanceMissionIds,
+  ])].sort();
   const active = records.filter((record) => !isElasticGoalMission(record)
     && !TERMINAL_PHASES.has(missionPhase(record))
     && !capacityParked(record));
@@ -316,8 +326,10 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
     parkedMissionIds: Object.freeze(parkedMissionIds),
     parkedApprovalMissionIds: Object.freeze(parkedApprovalMissionIds),
     parkedBlockedMissionIds: Object.freeze(parkedBlockedMissionIds),
+    parkedAcceptanceMissionIds: Object.freeze(parkedAcceptanceMissionIds),
     parkedApprovalCount: parkedApprovalMissionIds.length,
     parkedBlockedCount: parkedBlockedMissionIds.length,
+    parkedAcceptanceCount: parkedAcceptanceMissionIds.length,
     remainingItemIds: Object.freeze(remainingItemIds),
     elasticMissionIds: Object.freeze(elasticMissionIds),
   };
@@ -369,13 +381,17 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
     const blockersRemain = parkedBlockedMissionIds.length > 0;
     return projectionBase(validation, {
       ...common,
-      decision: blockersRemain ? CRITICAL_BACKLOG_DECISION.PARKED_BLOCKERS_ONLY : CRITICAL_BACKLOG_DECISION.PARKED_APPROVALS_ONLY,
+      decision: blockersRemain ? CRITICAL_BACKLOG_DECISION.PARKED_BLOCKERS_ONLY
+        : parkedAcceptanceMissionIds.length ? CRITICAL_BACKLOG_DECISION.PARKED_ACCEPTANCE_ONLY
+          : CRITICAL_BACKLOG_DECISION.PARKED_APPROVALS_ONLY,
       selectedItem: null,
       activeMission: null,
       remainingItemIds: Object.freeze([]),
       exactNextAction: blockersRemain
         ? 'Keep each proof-parked blocked mission repair-owned and periodically re-evaluate its blocker; re-admit the same mission identity only after repair proof clears the blocker and scheduler capacity is free.'
-        : 'Preserve the parked approval packets and keep scheduler/elastic capacity refilled; no construction slot is consumed by approval waiting.',
+        : parkedAcceptanceMissionIds.length
+          ? 'Retain the existing goal-acceptance reconciliation and unfinished proof; refill only independently admitted construction work without releasing any source lease or claim.'
+          : 'Preserve the parked approval packets and keep scheduler/elastic capacity refilled; no construction slot is consumed by approval waiting.',
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
     });
   }
@@ -383,7 +399,7 @@ export function buildCriticalBacklogProjection({ backlog = DEFAULT_CRITICAL_BACK
   return projectionBase(validation, {
     decision: CRITICAL_BACKLOG_DECISION.BACKLOG_COMPLETE,
     selectedItem: null, activeMission: null,
-    completedItemIds: Object.freeze(completedItemIds), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), parkedApprovalMissionIds: Object.freeze([]), parkedBlockedMissionIds: Object.freeze([]), remainingItemIds: Object.freeze([]),
+    completedItemIds: Object.freeze(completedItemIds), parkedItemIds: Object.freeze([]), parkedMissionIds: Object.freeze([]), parkedApprovalMissionIds: Object.freeze([]), parkedBlockedMissionIds: Object.freeze([]), parkedAcceptanceMissionIds: Object.freeze([]), parkedAcceptanceCount: 0, remainingItemIds: Object.freeze([]),
     elasticMissionIds: Object.freeze(elasticMissionIds),
     exactNextAction: 'No legacy critical backlog mission remains.',
     finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE',
