@@ -83,7 +83,7 @@ function Reset-MonitorFixture {
         ClosedReceived = $false; TransportFailed = $false; ProviderSlotReleased = $true; SafeToClose = $true
         DurableCustodyReleased = $true; DurableCustodyReason = 'fixture-no-custody'
         Busy = $false; Mode = 'ready'; AllowedActions = @('prepare', 'close'); ConfirmationToken = $null
-        RunId = $null; GameProcess = $null; Result = $null; DetailText = ''; FocusAttemptedRunId = ''; FocusAttemptCount = 0
+        RunId = $null; GameProcess = $null; GameProcessIdentity = $null; Result = $null; DetailText = ''; FocusAttemptedRunId = ''; FocusAttemptCount = 0
         LastCleanupDiagnosticKey = ''; StartedAtUtc = $null; ExitedAtUtc = $null
     }
     $script:focusRetryTimer = [pscustomobject]@{ StartCalls = 0; StopCalls = 0 }
@@ -245,6 +245,32 @@ try {
         $monitorState.Pipe.Permit = $false
         Assert-True (-not (Send-MonitorCommand -Command 'confirm')) 'Denied foreground still dispatched'
         Assert-True ($monitorState.RequestSequence -eq 0 -and $monitorState.ConfirmationToken -ceq ('2' * 32)) 'Rejected foreground consumed the confirmation'
+    }
+    Invoke-Fixture 'explicit cancel or close revokes queued foreground focus before monitor input closes' {
+        foreach ($terminal in @('cancel', 'close')) {
+            Reset-MonitorFixture
+            $monitorState.Mode = 'waiting'
+            $monitorState.RunId = '3' * 32
+            $monitorState.FocusAttemptedRunId = $monitorState.RunId
+            $monitorState.FocusAttemptCount = 1
+            $monitorState.GameProcess = [pscustomobject]@{ pid = 54321; createdFileTime = '134384678410182997' }
+            $monitorState.PrepareDispatched = $true
+            $monitorState.ProviderSlotReleased = $false
+            $monitorState.DurableCustodyReleased = $false
+            $monitorState.SafeToClose = $false
+            $focusRetryTimer.Start()
+            Assert-True (Send-MonitorCommand -Command $terminal) ('Terminal monitor request failed: ' + $terminal)
+            Assert-True ($monitorState.CloseSent -and $focusRetryTimer.StopCalls -eq 1 -and
+                $monitorState.Pipe.CloseCalls -eq 1) ('Terminal request retained focus timer or open input: ' + $terminal)
+            Assert-True (($monitorState.Pipe.InputAtClose | ConvertFrom-Json).command -ceq $terminal) 'Wrong flushed terminal command'
+            Invoke-MonitorWaitingGameFocus
+            Assert-True ($monitorState.FocusAttemptCount -eq 1 -and $focusRetryTimer.StopCalls -eq 2) 'Explicit stop retried game focus'
+            $lateFrame = New-StateFrame 'waiting'
+            Send-FixtureFrame $lateFrame
+            Assert-True ($monitorState.FocusAttemptCount -eq 1 -and $monitorState.FocusAttemptedRunId -ceq ('3' * 32)) 'Late waiting frame rearmed focus after terminal command'
+            Assert-True ($monitorState.Process.StandardInput.ToString().Length -gt 0 -and
+                $monitorState.Pipe.CloseCalls -eq 1) 'Late waiting frame dispatched or reopened input'
+        }
     }
     Invoke-Fixture 'broken transport stops foreground focus retry and retains provider custody' {
         Reset-MonitorFixture
