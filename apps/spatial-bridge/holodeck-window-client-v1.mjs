@@ -371,6 +371,16 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   function input(value){
     if(capture?.phase==='live'){publish({inputStatus:'View-only capture: connect the native Windows helper to type or click.'});return false;}
     if(!active||!generation||state.status!=='live'||queue.length>=16){publish({inputStatus:'Input paused. Wait for a live connection.'});return false;}
+    // Never serialize malformed 3D pointer or wheel geometry into the native
+    // consented-window helper. A rejected retarget also discards queued text
+    // or Send: it cannot leave an older editor destination actionable.
+    if((value?.kind==='click'||value?.kind==='scroll')&&
+      (![value.x,value.y].every(point=>Number.isFinite(point)&&point>=0&&point<=1)||
+        (value.kind==='scroll'&&(!Number.isFinite(value.delta)||Math.abs(value.delta)>120)))){
+      queue=[];editorClickConfirmed=false;
+      publish({inputStatus:'Input paused. Invalid pointer or scroll geometry; no native action was sent.'});
+      return false;
+    }
     // A native bind and picture do not select the app composer. Text can wait
     // behind an explicit click, but poll forwards it only after a real editor
     // selection acknowledgement. Never send unsolicited drafts to an app.
