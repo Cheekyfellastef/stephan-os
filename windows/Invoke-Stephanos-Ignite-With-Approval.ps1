@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$RepositoryRoot = ''
+  [string]$RepositoryRoot = '',
+  [switch]$Unattended
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,14 +29,142 @@ function Resolve-IgniteRepositoryRoot([string]$RequestedRoot) {
 }
 
 $repoRoot = Resolve-IgniteRepositoryRoot -RequestedRoot $RepositoryRoot
+
+function Get-IgniteRepositoryHead {
+  $head = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim()
+  if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
+    throw 'Unable to resolve the requested Stephanos repository HEAD for exact-head ignition proof.'
+  }
+  return $head
+}
+
+$requestedHead = Get-IgniteRepositoryHead
+$canonicalNodeExe = 'C:\Program Files\nodejs\node.exe'
+$sovereignCommanderIgnitionAutohealScript = Join-Path $repoRoot 'scripts\sovereign-commander-ignition-autoheal.mjs'
 $normalIgniteCommand = 'npm run stephanos:ignite'
 $approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'
 $approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-openclaw-service-restart'
+$openClawStartGatewayApprovalEnvFlag = 'STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY'
 $sourceMergeCheckCommand = 'git merge --no-commit --no-ff origin/main'
 $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stephanos-ignite-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+$ignitionMutexName = 'Global\Stephanos-Battle-Bridge-Ignition'
+$ignitionMutex = New-Object System.Threading.Mutex($false, $ignitionMutexName)
+$ignitionLeaseOwned = $false
+$canonicalSharedWorkspaceRoot = if ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
+$battleBridgeSupervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'status/battle-bridge-ignition-supervisor-current.json'
 
 function Write-IgniteApprovalLog([string]$Message) {
   Write-Host "[IGNITION APPROVAL] $Message"
+}
+
+function Test-IgnitionAttendedActionAvailable([string]$RequiredAction) {
+  if (-not [bool]$Unattended) { return $true }
+  if ($RequiredAction -cnotin @('OPENCLAW_SERVICE_RESTART','SOURCE_DIVERGENCE_RECOVERY','SOURCE_MERGE_COMPLETION')) {
+    throw 'IGNITION_ATTENDED_ACTION_KIND_UNPROVEN'
+  }
+  $packet = [ordered]@{ schemaVersion = 'stephanos.ignition-attended-action-required.v1'; blocker = 'ATTENDED_ACTION_REQUIRED';
+    requiredAction = $RequiredAction; sourceHead = $requestedHead }
+  Write-Host ('STEPHANOS_IGNITION_ATTENDED_ACTION_REQUIRED=' + ($packet | ConvertTo-Json -Compress))
+  return $false
+}
+
+function Get-FreshCanonicalIgnitionOutcome([DateTime]$FreshAfterUtc, [string]$ExpectedHead) {
+  if (-not (Test-Path -LiteralPath $battleBridgeSupervisorCurrentPath -PathType Leaf)) {
+    return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'missing-terminal-supervisor-proof' }
+  }
+  try {
+    $statusFile = Get-Item -LiteralPath $battleBridgeSupervisorCurrentPath -ErrorAction Stop
+    $freshnessBoundaryUtc = $FreshAfterUtc.AddSeconds(-2)
+    if ($statusFile.LastWriteTimeUtc -lt $freshnessBoundaryUtc) {
+      return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'stale-terminal-supervisor-proof' }
+    }
+    # The file write time is the canonical terminal-persistence timestamp.
+    # record.generatedAt is creation-time metadata and must not be used for terminal freshness.
+    $record = Get-Content -LiteralPath $battleBridgeSupervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($record.trafficLight -eq 'green') {
+      $sourceExpectedHead = if ($record.sourceTruthVerdict -and $record.sourceTruthVerdict.expectedHead) { [string]$record.sourceTruthVerdict.expectedHead } else { '' }
+      $servedRuntimeCurrentHead = if ($record.services -and $record.services.stephanosUi4173 -and $record.services.stephanosUi4173.servedRuntimeProof) { [string]$record.services.stephanosUi4173.servedRuntimeProof.currentHead } else { '' }
+      $servedRuntimeReady = if ($record.services -and $record.services.stephanosUi4173 -and $record.services.stephanosUi4173.servedRuntimeProof) { $record.services.stephanosUi4173.servedRuntimeProof.ready } else { $false }
+      if ($ExpectedHead -notmatch '^[0-9a-f]{40}$' -or $sourceExpectedHead -ne $ExpectedHead -or $servedRuntimeCurrentHead -ne $ExpectedHead -or $servedRuntimeReady -ne $true) {
+        return [pscustomobject]@{ terminal = $true; success = $false; blocker = 'terminal-supervisor-exact-head-mismatch' }
+      }
+      return [pscustomobject]@{ terminal = $true; success = $true; blocker = '' }
+    }
+    if ($record.blockerId) {
+      return [pscustomobject]@{ terminal = $true; success = $false; blocker = [string]$record.blockerId }
+    }
+    return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'nonterminal-supervisor-proof' }
+  }
+  catch {
+    return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'unreadable-terminal-supervisor-proof' }
+  }
+}
+
+function Invoke-IgniteWithOpenClawStartGatewayApproval([string]$Command) {
+  $previousApproval = [Environment]::GetEnvironmentVariable($openClawStartGatewayApprovalEnvFlag, 'Process')
+  try {
+    Write-IgniteApprovalLog "passing OpenClaw start-gateway approval to Battle Bridge supervisor child process via $openClawStartGatewayApprovalEnvFlag=1"
+    [Environment]::SetEnvironmentVariable($openClawStartGatewayApprovalEnvFlag, '1', 'Process')
+    & cmd.exe /d /c "$Command 2>&1"
+  }
+  finally {
+    [Environment]::SetEnvironmentVariable($openClawStartGatewayApprovalEnvFlag, $previousApproval, 'Process')
+  }
+}
+
+function ConvertFrom-IgnitionSyncPreflightResult([string[]]$Lines) {
+  $prefix = 'BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT='
+  $line = @($Lines | Where-Object { [string]$_ -like "$prefix*" } | Select-Object -Last 1)
+  if (-not $line -or -not $line[0]) { return $null }
+  $json = ([string]$line[0]).Substring($prefix.Length)
+  try { return $json | ConvertFrom-Json }
+  catch {
+    Write-IgniteApprovalLog "failed to parse ignition sync preflight result: $($_.Exception.Message)"
+    return $null
+  }
+}
+
+function Test-CanonicalBattleBridgeAutohealCheckout {
+  if (-not $env:USERPROFILE) { return $false }
+  try {
+    $canonical = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
+    $selected = [System.IO.Path]::GetFullPath($repoRoot)
+    if (-not [string]::Equals($canonical, $selected, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    $branch = (& git -C $repoRoot branch --show-current 2>$null | Out-String).Trim()
+    return ($LASTEXITCODE -eq 0 -and $branch -eq 'main')
+  }
+  catch { return $false }
+}
+
+function Test-SovereignCommanderControlPlaneAutohealEligible($Preflight) {
+  if ($null -eq $Preflight -or -not (Test-CanonicalBattleBridgeAutohealCheckout)) { return $false }
+  $allowedBlockers = @(
+    'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+    'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID',
+    'CONTROL_PLANE_REPAIR_BLOCKED'
+  )
+  return ([string]$Preflight.classification -eq 'IGNITION_SYNC_PREFLIGHT_BLOCKED' -and $allowedBlockers -contains [string]$Preflight.blocker)
+}
+
+function Invoke-SovereignCommanderIgnitionAutoheal {
+  if (-not (Test-Path -LiteralPath $canonicalNodeExe -PathType Leaf)) {
+    Write-IgniteApprovalLog 'Sovereign Commander auto-heal blocked: canonical Node executable missing.'
+    return $false
+  }
+  if (-not (Test-Path -LiteralPath $sovereignCommanderIgnitionAutohealScript -PathType Leaf)) {
+    Write-IgniteApprovalLog 'Sovereign Commander auto-heal blocked: fixed auto-heal client missing.'
+    return $false
+  }
+  Write-IgniteApprovalLog 'control-plane preflight blocker is eligible for one bounded Sovereign Commander repair attempt.'
+  $output = @(& $canonicalNodeExe $sovereignCommanderIgnitionAutohealScript 2>&1)
+  $exitCode = $LASTEXITCODE
+  foreach ($line in $output) { Write-Host $line }
+  if ($exitCode -eq 0) {
+    Write-IgniteApprovalLog 'Sovereign Commander reported control-plane repair green.'
+    return $true
+  }
+  Write-IgniteApprovalLog "Sovereign Commander control-plane repair blocked (exit=$exitCode). No second repair attempt will be made."
+  return $false
 }
 
 function ConvertFrom-RepairPacketLine([string[]]$Lines) {
@@ -67,6 +196,7 @@ function Test-OpenClawRestartAvailable($Packet) {
 }
 
 function Show-OpenClawRestartPopup($Packet) {
+  if (-not (Test-IgnitionAttendedActionAvailable -RequiredAction 'OPENCLAW_SERVICE_RESTART')) { return 'attended-action-required' }
   $approvalAvailable = Test-OpenClawRestartAvailable $Packet
   $approvedCaseText = if ($approvalAvailable) { 'Approved safe case:
 - Restart OpenClaw service' } else { 'Approved safe case:
@@ -254,6 +384,7 @@ It will not push, unlock OpenClaw, dispatch Codex, or mark merge readiness.
 }
 
 function Invoke-ApprovedSourceMergeCheck($Packet) {
+  if (-not (Test-IgnitionAttendedActionAvailable -RequiredAction 'SOURCE_MERGE_COMPLETION')) { return 2 }
   Write-IgniteApprovalLog "operator approved source merge check; running trial merge: $sourceMergeCheckCommand"
   & git merge --no-commit --no-ff origin/main
   $mergeExitCode = $LASTEXITCODE
@@ -281,6 +412,7 @@ function Invoke-ApprovedSourceMergeCheck($Packet) {
 }
 
 function Show-IgniteRecoveryPopup($Packet) {
+  if (-not (Test-IgnitionAttendedActionAvailable -RequiredAction 'SOURCE_DIVERGENCE_RECOVERY')) { return 'attended-action-required' }
   $approvalAvailable = Test-GeneratedDistRecoveryAvailable $Packet
   $sourceDivergence = -not $approvalAvailable -and $Packet.localOnlyDistOnly -ne $true
   $message = Format-ApprovalPacketText -Packet $Packet -ApprovalAvailable $approvalAvailable
@@ -362,19 +494,66 @@ function Show-IgniteRecoveryPopup($Packet) {
   }
 }
 
+try {
+  try {
+    $ignitionLeaseOwned = $ignitionMutex.WaitOne(0)
+  }
+  catch [System.Threading.AbandonedMutexException] {
+    $ignitionLeaseOwned = $true
+  }
+  if (-not $ignitionLeaseOwned) {
+    $coalescedWaitStartedAtUtc = (Get-Date).ToUniversalTime()
+    Write-IgniteApprovalLog 'canonical ignition already in progress; coalescing this request without starting a second mutation run.'
+    try {
+      $ignitionLeaseOwned = $ignitionMutex.WaitOne([TimeSpan]::FromSeconds(305))
+    }
+    catch [System.Threading.AbandonedMutexException] {
+      $ignitionLeaseOwned = $true
+    }
+    if (-not $ignitionLeaseOwned) {
+      Write-IgniteApprovalLog 'coalesced ignition timed out waiting for the canonical owner to terminate.'
+      exit 1
+    }
+    $ownerOutcome = Get-FreshCanonicalIgnitionOutcome -FreshAfterUtc $coalescedWaitStartedAtUtc -ExpectedHead $requestedHead
+    if ($ownerOutcome.terminal -eq $true -and $ownerOutcome.success -eq $true) {
+      Write-IgniteApprovalLog 'coalesced ignition observed a fresh terminal green supervisor receipt from the canonical owner.'
+      exit 0
+    }
+    if ($ownerOutcome.blocker -eq 'terminal-supervisor-exact-head-mismatch') {
+      Write-IgniteApprovalLog 'coalesced-exact-head-proof-mismatch: canonical owner terminal proof did not match the requesting repository HEAD.'
+    }
+    Write-IgniteApprovalLog "coalesced ignition observed no fresh terminal success from the canonical owner: $($ownerOutcome.blocker)"
+    exit 1
+  }
+
 Set-Location -LiteralPath $repoRoot
 Write-IgniteApprovalLog "selected repository root: $repoRoot"
 Write-IgniteApprovalLog "running safe default ignition: $normalIgniteCommand"
-& cmd.exe /d /c "$normalIgniteCommand 2>&1" | Tee-Object -FilePath $transcriptPath
+Invoke-IgniteWithOpenClawStartGatewayApproval -Command $normalIgniteCommand 2>&1 | Tee-Object -FilePath $transcriptPath
 $normalExitCode = $LASTEXITCODE
 if ($normalExitCode -eq 0) {
   exit 0
 }
 
-$lines = Get-Content -Path $transcriptPath -ErrorAction SilentlyContinue
+$lines = @(Get-Content -Path $transcriptPath -ErrorAction SilentlyContinue)
+$preflight = ConvertFrom-IgnitionSyncPreflightResult -Lines $lines
+if (Test-SovereignCommanderControlPlaneAutohealEligible -Preflight $preflight) {
+  if (Invoke-SovereignCommanderIgnitionAutoheal) {
+    Write-IgniteApprovalLog 'retrying safe default ignition once after Sovereign Commander repair.'
+    Invoke-IgniteWithOpenClawStartGatewayApproval -Command $normalIgniteCommand 2>&1 | Tee-Object -FilePath $transcriptPath
+    $normalExitCode = $LASTEXITCODE
+    if ($normalExitCode -eq 0) {
+      Write-IgniteApprovalLog 'post-repair ignition completed successfully.'
+      exit 0
+    }
+    $lines = @(Get-Content -Path $transcriptPath -ErrorAction SilentlyContinue)
+    Write-IgniteApprovalLog 'post-repair ignition still blocked; continuing through the existing bounded recovery classification without another Commander retry.'
+  }
+}
 $packet = ConvertFrom-RepairPacketLine -Lines $lines
 if ($null -ne $packet -and $packet.packetType -eq 'openclaw-startup-connect-recovery-v1') {
   $approvalAction = Show-OpenClawRestartPopup -Packet $packet
+  if ($approvalAction -ceq 'attended-action-required') { exit 2 }
   if ($approvalAction -eq 'openclaw-service-restart') {
     Write-IgniteApprovalLog "operator approved OpenClaw service restart; running: $approvedOpenClawRestartCommand"
     & cmd.exe /d /c $approvedOpenClawRestartCommand
@@ -390,16 +569,23 @@ if ($null -eq $packet -or $packet.reason -ne 'ff-only-divergence') {
 }
 
 $approvalAction = Show-IgniteRecoveryPopup -Packet $packet
+if ($approvalAction -ceq 'attended-action-required') { exit 2 }
 if ($approvalAction -eq 'source-merge-check') {
   exit (Invoke-ApprovedSourceMergeCheck -Packet $packet)
 }
 if ($approvalAction -ne 'generated-dist-recovery') {
   Write-IgniteApprovalLog 'operator cancelled or approval unavailable; no generated-dist recovery or source merge completion was run.'
-  Write-Host 'Repair packet remains above for review. Press Enter to keep this window open and stop.'
-  Read-Host | Out-Null
+  Write-IgniteApprovalLog 'returning immediately; the canonical ignition lease is never held open for console input.'
   exit $normalExitCode
 }
 
 Write-IgniteApprovalLog "operator approved generated-dist recovery; running: $approvedIgniteCommand"
 & cmd.exe /d /c $approvedIgniteCommand
 exit $LASTEXITCODE
+}
+finally {
+  if ($ignitionLeaseOwned) {
+    try { $ignitionMutex.ReleaseMutex() } catch {}
+  }
+  $ignitionMutex.Dispose()
+}

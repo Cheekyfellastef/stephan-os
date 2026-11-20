@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, open as fsOpen, readFile, readdir, rename as fsRename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -11,9 +11,15 @@ import {
   createAgentCapabilityRecord,
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceGoalRecord,
+  createSharedWorkspaceHandoffRecord,
+  createSharedWorkspaceMessageRecord,
+  createSharedWorkspaceParticipantStatusRecord,
   createSharedWorkspaceProofRecord,
+  createSharedWorkspaceReceiptRecord,
   createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
+  listLatestSharedWorkspaceParticipantStatuses,
+  readCommandInboxInert,
   resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
   writeAtomicJson,
@@ -39,10 +45,13 @@ test('directory layout creation creates only allowed workspace tree', async () =
 
 test('valid message/status/proof/capability records pass deterministic validators', () => {
   const message = createSharedWorkspaceMessage({ messageId: 'msg-1', sender: 'codex', recipient: 'operator', kind: 'status', summary: 'Ready.', status: 'READY' });
+  const status = createSharedWorkspaceStatusRecord({ statusId: 'status-1', timestampUtc: '2026-07-07T00:00:00Z', relatedIssue: '#1290', relatedPr: '#2011', status: 'READY' });
+  assert.equal(status.relatedIssue, '#1290');
+  assert.equal(status.relatedPr, '#2011');
   assert.equal(validateSharedWorkspaceMessage(message).valid, true);
   for (const record of [
-    createSharedWorkspaceStatusRecord({ statusId: 'status-1', timestampUtc: '2026-07-07T00:00:00Z', status: 'READY' }),
-    createSharedWorkspaceProofRecord({ proofId: 'proof-1', timestampUtc: '2026-07-07T00:00:01Z', status: 'PASS' }),
+    status,
+    createSharedWorkspaceProofRecord({ proofId: 'proof-1', timestampUtc: '2026-07-07T00:00:01Z', status: 'PASS', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1'] }),
     createAgentCapabilityRecord({ agentId: 'codex', timestampUtc: '2026-07-07T00:00:02Z', mode: 'source_writer', trustedBuilder: true }),
   ]) {
     assert.equal(validateSharedWorkspaceRecord(record, { nowMs: Date.parse('2026-07-07T00:10:00Z') }).valid, true);
@@ -78,6 +87,243 @@ test('atomic JSON write behavior writes complete replacement without temp residu
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('atomic JSON write refuses linked output ancestors before publication', async (t) => {
+  const root = await tempWorkspace();
+  const outside = await tempWorkspace();
+  try {
+    try {
+      await symlink(outside, join(root, 'proof'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if (['EPERM', 'EACCES'].includes(error?.code)) {
+        t.skip('symlink/junction creation is unavailable on this test host');
+        return;
+      }
+      throw error;
+    }
+    const record = createSharedWorkspaceProofRecord({
+      proofId: 'proof-linked-ancestor',
+      timestampUtc: '2026-09-27T15:20:00.000Z',
+      participantId: 'completion-guardian',
+      correlationId: 'completion-guardian-current',
+      relatedIssue: '#1284',
+      proofRefs: ['proof/completion-guardian-current.json'],
+      status: 'PASS',
+    });
+    const result = await writeAtomicJson(
+      root,
+      ['proof', 'completion-guardian-current.json'],
+      record,
+      { repoRoot: REPO_ROOT, nowMs: Date.parse('2026-09-27T15:20:00.000Z') },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'WORKSPACE_ANCESTOR_LINKED_OR_NOT_DIRECTORY');
+    assert.deepEqual(await readdir(outside), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('atomic JSON write retries transient Windows-style rename contention without leaving temp residue', async () => {
+  const root = await tempWorkspace();
+  try {
+    const record = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic-retry',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'READY',
+    });
+    let attempts = 0;
+    const delays = [];
+    const result = await writeAtomicJson(
+      root,
+      ['status', 'status-atomic-retry.json'],
+      record,
+      {
+        repoRoot: REPO_ROOT,
+        atomicRenameRetryDelaysMs: [1, 2, 3],
+        sleepFn: async (delayMs) => { delays.push(delayMs); },
+        renameFn: async (sourcePath, targetPath) => {
+          attempts += 1;
+          if (attempts < 3) {
+            const error = new Error('simulated transient destination lock');
+            error.code = 'EPERM';
+            throw error;
+          }
+          await fsRename(sourcePath, targetPath);
+        },
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(attempts, 3);
+    assert.deepEqual(delays, [1, 2]);
+    const parsed = JSON.parse(await readFile(join(root, 'status', 'status-atomic-retry.json'), 'utf8'));
+    assert.equal(parsed.status, 'READY');
+    assert.deepEqual(await readdir(join(root, 'status')), ['status-atomic-retry.json']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows persistent rename denial also preserves post-sync runtime refresh current status', async () => {
+  const root = await tempWorkspace();
+  try {
+    const filename = 'post-sync-runtime-refresh-current.json';
+    const target = join(root, 'status', filename);
+    const original = createSharedWorkspaceStatusRecord({
+      statusId: 'post-sync-runtime-refresh-current',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'REFRESH_READY',
+    });
+    await writeAtomicJson(root, ['status', filename], original, { repoRoot: REPO_ROOT });
+    const replacement = createSharedWorkspaceStatusRecord({
+      statusId: 'post-sync-runtime-refresh-current',
+      timestampUtc: '2026-07-07T00:01:00Z',
+      status: 'REFRESH_COMPLETE',
+    });
+    let renameAttempts = 0;
+    const result = await writeAtomicJson(root, ['status', filename], replacement, {
+      repoRoot: REPO_ROOT,
+      platform: 'win32',
+      atomicRenameRetryDelaysMs: [],
+      renameFn: async () => {
+        renameAttempts += 1;
+        const error = new Error('destination handle denies atomic replacement');
+        error.code = 'EPERM';
+        throw error;
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(renameAttempts, 1);
+    assert.equal(JSON.parse(await readFile(target, 'utf8')).status, 'REFRESH_COMPLETE');
+    assert.deepEqual(await readdir(join(root, 'status')), [filename]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Windows persistent rename denial falls back to fsynced in-place status replacement', async () => {
+  const root = await tempWorkspace();
+  try {
+    const target = join(root, 'status', 'stephanos-build-truth-current.json');
+    const original = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic-pinned',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'OLD',
+    });
+    await writeAtomicJson(root, ['status', 'stephanos-build-truth-current.json'], original, { repoRoot: REPO_ROOT });
+    const replacement = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic-pinned',
+      timestampUtc: '2026-07-07T00:01:00Z',
+      status: 'READY',
+    });
+    let renameAttempts = 0;
+    const result = await writeAtomicJson(
+      root,
+      ['status', 'stephanos-build-truth-current.json'],
+      replacement,
+      {
+        repoRoot: REPO_ROOT,
+        platform: 'win32',
+        atomicRenameRetryDelaysMs: [],
+        renameFn: async () => {
+          renameAttempts += 1;
+          const error = new Error('destination handle denies atomic replacement');
+          error.code = 'EPERM';
+          throw error;
+        },
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(renameAttempts, 1);
+    assert.equal(JSON.parse(await readFile(target, 'utf8')).status, 'READY');
+    assert.deepEqual(await readdir(join(root, 'status')), ['stephanos-build-truth-current.json']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+for (const scenario of ['hardlink', 'opened-file-substitution', 'missing-target', 'authority-file']) {
+  test(`pinned status fallback preserves containment for ${scenario}`, async () => {
+    const root = await tempWorkspace();
+    const outside = await tempWorkspace();
+    try {
+      await mkdir(join(root, 'status'));
+      const filename = scenario === 'authority-file'
+        ? 'source-mutation-lease-current.json'
+        : 'stephanos-build-truth-current.json';
+      const target = join(root, 'status', filename);
+      const sentinel = join(outside, 'outside-sentinel.json');
+      const original = '{"sentinel":"must remain unchanged"}\n';
+      await writeFile(sentinel, original);
+      if (scenario === 'hardlink') await link(sentinel, target);
+      else if (scenario !== 'missing-target') await writeFile(target, original);
+      let opened = 0;
+      await assert.rejects(writeAtomicJson(root, ['status', filename], createSharedWorkspaceStatusRecord({
+        statusId: 'status-containment', timestampUtc: '2026-07-07T00:00:00Z', status: 'READY',
+      }), {
+        repoRoot: REPO_ROOT, platform: 'win32', atomicRenameRetryDelaysMs: [],
+        renameFn: async () => { const error = new Error('controlled rename denial'); error.code = 'EPERM'; throw error; },
+        openFn: async (...args) => {
+          opened += 1;
+          return scenario === 'opened-file-substitution' ? fsOpen(sentinel, 'r+') : fsOpen(...args);
+        },
+      }), /WORKSPACE_PINNED_TARGET_UNSAFE|WORKSPACE_PINNED_TARGET_CHANGED|ENOENT|controlled rename denial/);
+      assert.equal(await readFile(sentinel, 'utf8'), original);
+      if (scenario === 'missing-target') assert.deepEqual(await readdir(join(root, 'status')), []);
+      else {
+        assert.equal(await readFile(target, 'utf8'), original);
+        assert.deepEqual(await readdir(join(root, 'status')), [filename]);
+      }
+      if (scenario !== 'opened-file-substitution') assert.equal(opened, 0);
+    } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
+  });
+}
+
+test('persistent rename denial remains fail-closed outside Windows', async () => {
+  const root = await tempWorkspace();
+  try {
+    const record = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic-linux',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'READY',
+    });
+    await assert.rejects(
+      writeAtomicJson(
+        root,
+        ['status', 'status-atomic-linux.json'],
+        record,
+        {
+          repoRoot: REPO_ROOT,
+          platform: 'linux',
+          atomicRenameRetryDelaysMs: [],
+          renameFn: async () => {
+            const error = new Error('persistent replacement denial');
+            error.code = 'EPERM';
+            throw error;
+          },
+        },
+      ),
+      /persistent replacement denial/,
+    );
+    assert.deepEqual(await readdir(join(root, 'status')), []);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('atomic JSON write removes its own temporary file when replacement fails', async () => {
+  const root = await tempWorkspace();
+  try {
+    const statusRoot = join(root, 'status');
+    const target = join(statusRoot, 'status-atomic.json');
+    await mkdir(target, { recursive: true });
+    const record = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'FIRST',
+    });
+    await assert.rejects(() => writeAtomicJson(
+      root,
+      ['status', 'status-atomic.json'],
+      record,
+      { repoRoot: REPO_ROOT },
+    ));
+    assert.deepEqual(await readdir(statusRoot), ['status-atomic.json']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('JSONL append behavior appends one valid JSON object per line', async () => {
   const root = await tempWorkspace();
   try {
@@ -95,7 +341,7 @@ test('latest-status aggregation reads latest goal/status/proof/capability record
   try {
     await writeAtomicJson(root, ['goals', 'goal.json'], createSharedWorkspaceGoalRecord({ goalId: 'goal-1290', timestampUtc: '2026-07-07T00:00:00Z', title: '#1290' }), { repoRoot: REPO_ROOT });
     await writeAtomicJson(root, ['status', 'status.json'], createSharedWorkspaceStatusRecord({ statusId: 'status-1290', timestampUtc: '2026-07-07T00:01:00Z', status: 'READY' }), { repoRoot: REPO_ROOT });
-    await writeAtomicJson(root, ['proof', 'proof.json'], createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: '2026-07-07T00:02:00Z', status: 'PASS' }), { repoRoot: REPO_ROOT });
+    await writeAtomicJson(root, ['proof', 'proof.json'], createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: '2026-07-07T00:02:00Z', status: 'PASS', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1290'] }), { repoRoot: REPO_ROOT });
     await writeAtomicJson(root, ['capabilities', 'codex.json'], createAgentCapabilityRecord({ agentId: 'codex', timestampUtc: '2026-07-07T00:03:00Z', mode: 'source_writer', trustedBuilder: true }), { repoRoot: REPO_ROOT });
     const result = await aggregateLatestSharedWorkspaceStatus(root, { repoRoot: REPO_ROOT, nowMs: Date.parse('2026-07-07T00:10:00Z') });
     assert.equal(result.finalVerdict, 'SHARED_WORKSPACE_LATEST_STATUS_READY');
@@ -124,6 +370,49 @@ test('unsafe path rejection prevents source tree and traversal writes', async ()
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('canonical build truth admits bounded logical lane identity without weakening secret rejection', () => {
+  const record = {
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'stephanos-build-truth-current',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-06T16:00:00.000Z',
+      relatedIssue: '#2002',
+      status: 'BUILDING',
+    }),
+    stephanosBuildTruth: {
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      observedAtUtc: '2026-10-06T16:00:00.000Z',
+      state: 'BUILDING',
+      trafficLight: 'GREEN',
+      goals: [{
+        issue: '#2002',
+        logicalLaneId: 'logical-goal-2002',
+        builder: 'openclaw-local',
+        proofRefs: ['proof/build-2002'],
+      }],
+    },
+  };
+  assert.equal(validateSharedWorkspaceRecord(record).valid, true);
+  assert.equal(validateSharedWorkspaceRecord({
+    ...record,
+    stephanosBuildTruth: {
+      ...record.stephanosBuildTruth,
+      goals: [{ ...record.stephanosBuildTruth.goals[0], apiKey: 'sentinel' }],
+    },
+  }).valid, false);
+  assert.equal(validateSharedWorkspaceRecord({
+    ...record,
+    stephanosBuildTruth: {
+      ...record.stephanosBuildTruth,
+      goals: [{ ...record.stephanosBuildTruth.goals[0], logicalLaneId: 'runtime-data' }],
+    },
+  }).valid, false);
+  assert.equal(validateSharedWorkspaceRecord({
+    ...record,
+    statusId: 'some-other-status',
+  }).valid, false);
+});
+
 test('secret/env/session fields are rejected rather than persisted', async () => {
   const root = await tempWorkspace();
   try {
@@ -135,6 +424,72 @@ test('secret/env/session fields are rejected rather than persisted', async () =>
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+
+function coreLaneTelemetryRecord(createRecord = createSharedWorkspaceStatusRecord) {
+  return {
+    ...createRecord({
+      statusId: 'stephanos-core-daemon-current',
+      proofId: 'stephanos-core-daemon-current',
+      participantId: 'stephanos-core',
+      timestampUtc: '2026-10-05T19:00:00.000Z',
+      correlationId: 'stephanos-core-daemon-heartbeat',
+      relatedIssue: '#2593',
+      proofRefs: ['proof/stephanos-core-daemon-current.json'],
+    }),
+    logicalLaneTruth: 'UNKNOWN',
+    logicalControllerCount: 0,
+    logicalActiveLaneCount: 0,
+    logicalTrackingLaneCount: 0,
+    logicalParkedLaneCount: 0,
+    logicalSelectedForAdmissionCount: 0,
+    logicalLaneDeficitToTarget: null,
+  };
+}
+
+test('Core status and proof admit bounded lane telemetry without admitting secret fields', () => {
+  for (const createRecord of [createSharedWorkspaceStatusRecord, createSharedWorkspaceProofRecord]) {
+    const record = coreLaneTelemetryRecord(createRecord);
+    assert.equal(validateSharedWorkspaceRecord(record).valid, true);
+    assert.equal(validateSharedWorkspaceRecord({
+      ...record, logicalLaneTruth: 'CURRENT', logicalLaneDeficitToTarget: 15,
+    }).valid, true);
+    for (const key of ['sessionToken', 'apiKey', 'password', 'runtimeLog', 'logicalSessionToken', 'logicalUnexpected']) {
+      assert.equal(validateSharedWorkspaceRecord({ ...record, [key]: 'sentinel' }).valid, false, key);
+    }
+    const telemetryKeys = Object.keys(record).filter((key) => key.startsWith('logical'));
+    for (const key of telemetryKeys) {
+      for (const value of ['sentinel', {}, [], true, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+        assert.equal(validateSharedWorkspaceRecord({ ...record, [key]: value }).valid, false, key);
+      }
+      assert.equal(validateSharedWorkspaceRecord({
+        ...record, nested: { [key]: record[key] },
+      }).valid, false, key);
+    }
+    assert.equal(validateSharedWorkspaceRecord({ ...record, logicalControllerCount: null }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, participantId: 'other-agent' }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, statusId: 'other', proofId: 'other' }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, schemaVersion: 'stephanos.control-plane-spine.v1' }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, summary: 'runtime-data' }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, proofRefs: ['../escape.json'] }).valid, false);
+  }
+});
+
+test('rejected Core telemetry preserves the existing atomic status record', async () => {
+  const root = await tempWorkspace();
+  try {
+    const record = coreLaneTelemetryRecord();
+    const segments = ['status', 'stephanos-core-daemon-current.json'];
+    assert.equal((await writeAtomicJson(root, segments, record, { repoRoot: REPO_ROOT })).ok, true);
+    const before = await readFile(join(root, ...segments), 'utf8');
+    const result = await writeAtomicJson(root, segments, {
+      ...record, logicalControllerCount: { sessionToken: 'sentinel' },
+    }, { repoRoot: REPO_ROOT });
+    assert.equal(result.ok, false);
+    assert.equal(await readFile(join(root, ...segments), 'utf8'), before);
+    assert.deepEqual(await readdir(join(root, 'status')), ['stephanos-core-daemon-current.json']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('OpenClaw default capability remains design_only via /courier-open', () => {
   const record = createAgentCapabilityRecord({ agentId: 'openclaw', timestampUtc: '2026-07-07T00:00:00Z', mode: 'source_writer', trustedBuilder: true });
   assert.deepEqual(OPENCLAW_DEFAULT_CAPABILITY, { agentId: 'openclaw', mode: 'design_only', boundedWritePath: '/courier-open', trustedBuilder: false, mergeAuthority: false, arbitraryShellAllowed: false });
@@ -142,4 +497,178 @@ test('OpenClaw default capability remains design_only via /courier-open', () => 
   assert.equal(record.boundedWritePath, '/courier-open');
   assert.equal(record.trustedBuilder, false);
   assert.equal(validateSharedWorkspaceRecord(record).valid, true);
+});
+
+
+
+test('legacy Shared Workspace v1 records do not require participant identity unless runtime contract requires it', () => {
+  const timestampUtc = '2026-07-09T00:00:00.000Z';
+  const legacyRecords = [
+    { ...createSharedWorkspaceGoalRecord({ goalId: 'goal-legacy', timestampUtc, title: 'Legacy goal' }), participantId: '' },
+    { ...createSharedWorkspaceStatusRecord({ statusId: 'status-legacy', timestampUtc, status: 'CURRENT' }), participantId: '' },
+    { ...createSharedWorkspaceProofRecord({ proofId: 'proof-legacy', timestampUtc, status: 'PASS', correlationId: 'issue-1503', relatedIssue: '#1503', proofRefs: ['proof/legacy.json'] }), participantId: '' },
+    { ...createSharedWorkspaceEventRecord({ eventId: 'event-legacy', timestampUtc, eventKind: 'status' }), participantId: '' },
+  ];
+  for (const record of legacyRecords) {
+    const result = validateSharedWorkspaceRecord(record, { nowMs: Date.parse('2026-07-09T00:10:00.000Z') });
+    assert.equal(result.valid, true, `${record.kind}: ${result.errors.join(',')}`);
+  }
+
+  const runtime = { ...createSharedWorkspaceMessageRecord({ messageId: 'message-runtime', timestampUtc, correlationId: 'issue-1503', relatedIssue: '#1503', proofRefs: ['proof/runtime.json'] }), participantId: '' };
+  const runtimeResult = validateSharedWorkspaceRecord(runtime);
+  assert.equal(runtimeResult.valid, false);
+  assert.equal(runtimeResult.errors.includes('invalid-participant-id'), true);
+});
+
+test('PROOF records fail closed without canonical correlation and safe proof refs', () => {
+  const base = { proofId: 'proof-1503', timestampUtc: '2026-07-09T00:00:00.000Z', status: 'PASS' };
+  const missingCorrelation = validateSharedWorkspaceRecord(createSharedWorkspaceProofRecord({ ...base, relatedIssue: '#1503', proofRefs: ['proof/1503.json'] }));
+  assert.equal(missingCorrelation.valid, false);
+  assert.equal(missingCorrelation.errors.includes('missing-correlationId'), true);
+
+  const missingProofRefs = validateSharedWorkspaceRecord(createSharedWorkspaceProofRecord({ ...base, correlationId: 'issue-1503', relatedIssue: '#1503' }));
+  assert.equal(missingProofRefs.valid, false);
+  assert.equal(missingProofRefs.errors.includes('missing-proofRefs'), true);
+
+  const unsafeProofRefs = validateSharedWorkspaceRecord(createSharedWorkspaceProofRecord({ ...base, correlationId: 'issue-1503', relatedIssue: '#1503', proofRefs: ['../secret.json'] }));
+  assert.equal(unsafeProofRefs.valid, false);
+  assert.equal(unsafeProofRefs.errors.includes('unsafe-proof-ref'), true);
+});
+
+test('Shared Workspace Record Store V1 accepts message proof receipt status handoff records', () => {
+  const base = { timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1290'] };
+  const records = [
+    createSharedWorkspaceMessageRecord({ ...base, messageId: 'message-1290', body: 'Bounded source-only update.' }),
+    createSharedWorkspaceProofRecord({ ...base, proofId: 'proof-1290', status: 'PASS' }),
+    createSharedWorkspaceReceiptRecord({ ...base, receiptId: 'receipt-1290', receivedRecordId: 'message-1290' }),
+    createSharedWorkspaceParticipantStatusRecord({ ...base, participantStatusId: 'status-codex', status: 'available' }),
+    createSharedWorkspaceHandoffRecord({ ...base, handoffId: 'handoff-1290', fromParticipantId: 'codex', toParticipantId: 'operator' }),
+  ];
+  for (const record of records) {
+    const result = validateSharedWorkspaceRecord(record, { nowMs: Date.parse('2026-07-09T00:10:00.000Z') });
+    assert.equal(result.valid, true, `${record.kind}: ${result.errors.join(',')}`);
+  }
+});
+
+test('Shared Workspace Record Store V1 requires issue or PR correlation and proof refs', () => {
+  const missing = createSharedWorkspaceMessageRecord({ messageId: 'message-missing', timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'c' });
+  const result = validateSharedWorkspaceRecord(missing);
+  assert.equal(result.valid, false);
+  assert.equal(result.errors.includes('missing-related-issue-or-pr'), true);
+  assert.equal(result.errors.includes('missing-proofRefs'), true);
+});
+
+test('Shared Workspace Record Store V1 rejects large bodies and unsafe proof paths', () => {
+  const large = createSharedWorkspaceMessageRecord({ messageId: 'message-large', timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'c', relatedIssue: '1290', proofRefs: ['proof-1290'], body: 'x'.repeat(16 * 1024 + 1) });
+  assert.equal(validateSharedWorkspaceRecord(large).errors.includes('body-too-large'), true);
+  const unsafe = createSharedWorkspaceMessageRecord({ messageId: 'message-path', timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'c', relatedIssue: '1290', proofRefs: ['../secret'] });
+  assert.equal(validateSharedWorkspaceRecord(unsafe).errors.includes('unsafe-proof-ref'), true);
+});
+
+test('Shared Workspace Record Store V1 writes runtime records and reads latest status/proof summary from temp workspace', async () => {
+  const root = await tempWorkspace();
+  try {
+    await writeAtomicJson(root, ['status', 'participant-status.json'], createSharedWorkspaceParticipantStatusRecord({ participantStatusId: 'status-codex', timestampUtc: '2026-07-09T00:00:00.000Z', participantId: 'codex', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1290'], status: 'available' }), { repoRoot: REPO_ROOT });
+    await writeAtomicJson(root, ['proof', 'proof-1290.json'], createSharedWorkspaceProofRecord({ proofId: 'proof-1290', timestampUtc: '2026-07-09T00:01:00.000Z', participantId: 'codex', correlationId: 'issue-1290', relatedIssue: '1290', proofRefs: ['proof-1290'], status: 'PASS', summary: 'Deterministic temp workspace proof.' }), { repoRoot: REPO_ROOT });
+    await writeAtomicJson(root, ['capabilities', 'codex.json'], createAgentCapabilityRecord({ agentId: 'codex', timestampUtc: '2026-07-09T00:02:00.000Z' }), { repoRoot: REPO_ROOT });
+    const latest = await aggregateLatestSharedWorkspaceStatus(root, { repoRoot: REPO_ROOT, nowMs: Date.parse('2026-07-09T00:10:00.000Z') });
+    assert.equal(latest.finalVerdict, 'SHARED_WORKSPACE_LATEST_STATUS_READY');
+    assert.equal(latest.latest.status.status, 'available');
+    assert.equal(latest.latest.proof.summary, 'Deterministic temp workspace proof.');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('command inbox remains inert and grants no execution surfaces', () => {
+  const inbox = readCommandInboxInert();
+  assert.equal(inbox.finalVerdict, 'COMMAND_INBOX_INERT');
+  assert.equal(inbox.commandExecutionAllowed, false);
+  assert.equal(inbox.arbitraryShellAllowed, false);
+  assert.equal(inbox.patchApplicationAllowed, false);
+  assert.deepEqual(inbox.records, []);
+});
+
+test('participant-status listing discovers latest calibration and ordinary participant records without inventing a registry', async () => {
+  const root = await tempWorkspace();
+  try {
+    const base = {
+      correlationId: 'capability-calibration',
+      relatedIssue: '#1308',
+      proofRefs: ['proof/calibration'],
+    };
+    const records = [
+      ['status', 'stephanos-ordinary.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'stephanos-runtime',
+        participantId: 'stephanos',
+        timestampUtc: '2026-09-25T10:00:00.000Z',
+        status: 'available',
+        summary: 'Stephanos available.',
+      })],
+      ['status', 'stephanos-calibration-old.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'calibration-stephanos',
+        participantId: 'stephanos',
+        timestampUtc: '2026-09-20T10:00:00.000Z',
+        status: 'calibrated',
+        summary: 'Older calibration.',
+      })],
+      ['status', 'stephanos-calibration-new.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'calibration-stephanos',
+        participantId: 'stephanos',
+        timestampUtc: '2026-09-26T10:00:00.000Z',
+        status: 'calibrated',
+        summary: 'Current calibration.',
+      })],
+      ['status', 'openclaw-runtime.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'openclaw-runtime',
+        participantId: 'openclaw-standalone',
+        timestampUtc: '2026-09-26T09:00:00.000Z',
+        status: 'available',
+        summary: 'OpenClaw available.',
+      })],
+    ];
+    for (const [directory, name, record] of records) {
+      const written = await writeAtomicJson(root, [directory, name], record, { repoRoot: REPO_ROOT });
+      assert.equal(written.ok, true);
+    }
+
+    const listed = await listLatestSharedWorkspaceParticipantStatuses(root, {
+      repoRoot: REPO_ROOT,
+      nowMs: Date.parse('2026-09-26T20:30:00.000Z'),
+    });
+    assert.equal(listed.ok, true);
+    assert.equal(listed.finalVerdict, 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY');
+    assert.equal(listed.records.length, 3);
+    const calibration = listed.records.find((record) => record.participantStatusId === 'calibration-stephanos');
+    assert.equal(calibration.timestampUtc, '2026-09-26T10:00:00.000Z');
+    assert.deepEqual(
+      [...new Set(listed.records.map((record) => record.participantId))].sort(),
+      ['openclaw-standalone', 'stephanos'],
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test('capability failure suppresses legacy learning candidate until closed-loop gates pass', () => {
+  const event = createSharedWorkspaceEventRecord({
+    eventId: 'legacy-bypass-attempt',
+    participantId: 'sovereign-commander',
+    timestampUtc: '2026-10-02T22:45:00.000Z',
+    eventKind: 'capability-gap',
+    capabilityFailure: {
+      failureClass: 'CAPABILITY_GAP',
+      genuineCapabilityFailure: true,
+      capabilityId: 'PRODUCT_SURFACE_DISCOVERY_AND_MUTATION',
+      targetRefs: ['stephanos-ui/src'],
+    },
+    learningCandidate: {
+      lessonId: 'unsafe-legacy-candidate',
+      recordClass: 'REUSABLE_METHOD',
+    },
+  });
+
+  assert.equal(event.closedLoopLearning.state, 'TEACHING_REQUIRED');
+  assert.equal(Object.hasOwn(event, 'learningCandidate'), false);
 });

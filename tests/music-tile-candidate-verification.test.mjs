@@ -11,7 +11,8 @@ test('AI candidate without URLs defaults to unverified', () => {
 test('Unverified candidate does not render Spotify iframe/open links and shows warning label', () => {
   assert.match(js, /AI suggestion · unverified/);
   assert.match(js, /Unverified AI candidate\. Search before treating as real\./);
-  assert.match(js, /const hasPlayableSpotifyTrack = verifiedCandidate && spotifyRef\.valid && spotifyRef\.type === 'track';/);
+  assert.match(js, /const hasPlayableSpotifyTrack = verifiedCandidate && hasReachableSpotifyTrack;/);
+  assert.match(js, /hasReachableSpotifyTrack = spotifyRef\.valid && spotifyRef\.type === 'track' && \(verifiedCandidate \|\| hasValidatedCatalogLink\)/);
 });
 
 test('Hallucination feedback parser and events are present', () => {

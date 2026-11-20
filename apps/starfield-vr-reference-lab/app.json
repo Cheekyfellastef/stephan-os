@@ -1,0 +1,26 @@
+{
+  "name": "Starfield VR Reference Lab",
+  "icon": "✦",
+  "entry": "index.html",
+  "type": "research",
+  "packaging": "classic-static",
+  "description": "Compose proven VR systems and inspect the live evidence-bound capability graph driving Starfield toward a native-feeling VR experience.",
+  "launcherBadges": [
+    "Live capability graph",
+    "Quest 3 proof gates",
+    "Evolution workspace"
+  ],
+  "launcherActionLabel": "Enter Reference Lab",
+  "capabilities": [
+    "starfield-vr-reference-atlas",
+    "composite-capability-design",
+    "acceptance-test-planning",
+    "starfield-vr-live-capability-map",
+    "evidence-bound-bottleneck-ranking"
+  ],
+  "eventsPublished": [],
+  "eventsConsumed": [],
+  "memoryUsage": "shared-reference-catalogue-and-vr-playtest-feed-read-only",
+  "continuityParticipation": "existing-starfield-vr-goal",
+  "aiAddressable": true
+}

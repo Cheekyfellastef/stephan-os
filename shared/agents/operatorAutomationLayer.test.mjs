@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  GITHUB_OPERATOR_ACTION_CLASS,
   OPERATOR_DECISION_STATUS,
   applyOperatorApproval,
   buildOperatorAutomationLayerContract,
   createOperatorAutomationBatch,
+  createGitHubOperatorActionBrief,
   createOperatorDecision,
   validateOperatorDecision,
 } from './operatorAutomationLayer.mjs';
@@ -92,4 +94,89 @@ test('operator text only passes when exact text matches', () => {
 
   assert.equal(rejected.finalVerdict, 'OPERATOR_APPROVAL_REJECTED');
   assert.equal(approved.finalVerdict, 'OPERATOR_APPROVAL_PASS');
+});
+
+
+test('GitHub Operator Action Brief status-only intent returns status brief', () => {
+  const brief = createGitHubOperatorActionBrief({
+    issue: '#1286',
+    action: 'status-only',
+    relatedPr: '#1465',
+  });
+
+  assert.equal(brief.actionClass, GITHUB_OPERATOR_ACTION_CLASS.STATUS_ONLY);
+  assert.equal(brief.issue, '#1286');
+  assert.equal(brief.relatedPr, '#1465');
+  assert.deepEqual(brief.safetyBlockers, []);
+  assert.equal(brief.executesAction, false);
+  assert.equal(brief.merges, false);
+});
+
+test('GitHub Operator Action Brief blocks merge-needed action without exact head', () => {
+  const brief = createGitHubOperatorActionBrief({
+    issue: '#1286',
+    action: 'exact-head merge-needed',
+    relatedPr: '#1448',
+    proofRefs: ['proof/operator-automation/pr-publication.json'],
+  });
+
+  assert.equal(brief.actionClass, GITHUB_OPERATOR_ACTION_CLASS.BLOCKED);
+  assert.equal(brief.safetyBlockers.includes('expected-head-missing'), true);
+  assert.equal(brief.finalVerdict, 'GITHUB_OPERATOR_ACTION_BRIEF_BLOCKED');
+  assert.equal(brief.merges, false);
+});
+
+test('GitHub Operator Action Brief blocks success claim when proof is missing', () => {
+  const brief = createGitHubOperatorActionBrief({
+    issue: '#1286',
+    action: 'proof-needed',
+    relatedPr: '#1448',
+  });
+
+  assert.equal(brief.actionClass, GITHUB_OPERATOR_ACTION_CLASS.BLOCKED);
+  assert.equal(brief.safetyBlockers.includes('proof-missing-success-claim-blocked'), true);
+  assert.match(brief.requiredProofs.join(' '), /ProofReferenceVerifier PASS/);
+});
+
+test('GitHub Operator Action Brief routes patch-needed action to Patch Courier', () => {
+  const brief = createGitHubOperatorActionBrief({
+    issue: '#1286',
+    action: 'patch-needed',
+    sourcePaths: ['shared/agents/operatorAutomationLayer.mjs'],
+  });
+
+  assert.equal(brief.actionClass, GITHUB_OPERATOR_ACTION_CLASS.PATCH_NEEDED);
+  assert.equal(brief.routesTo, 'Patch Courier V1');
+  assert.match(brief.allowedCommands[0], /^git diff --binary -- shared\/agents\/operatorAutomationLayer\.mjs \| base64 -w 0$/);
+  assert.equal(brief.pushes, false);
+});
+
+test('GitHub Operator Action Brief rejects unsafe commands', () => {
+  const brief = createGitHubOperatorActionBrief({
+    issue: '#1286',
+    action: 'status-only',
+    allowedCommands: ['gh issue view #1286', 'git push origin HEAD', 'rm -rf apps/stephanos/dist'],
+  });
+
+  assert.equal(brief.actionClass, GITHUB_OPERATOR_ACTION_CLASS.BLOCKED);
+  assert.deepEqual(brief.allowedCommands, ['gh issue view #1286']);
+  assert.equal(brief.rejectedCommands.length, 2);
+  assert.equal(brief.safetyBlockers.includes('unsafe-command-rejected'), true);
+});
+
+test('GitHub Operator Action Brief rejects operator approval spoofing', () => {
+  const brief = createGitHubOperatorActionBrief({
+    issue: '#1286',
+    action: 'exact-head merge-needed',
+    relatedPr: '#1448',
+    expectedHead: headSha,
+    proofRefs: ['proof/operator-automation/pr-publication.json'],
+    operatorApproved: true,
+    exactApprovalText: `APPROVE MERGE PR #1448 EXACT HEAD ${headSha}`,
+  });
+
+  assert.equal(brief.actionClass, GITHUB_OPERATOR_ACTION_CLASS.BLOCKED);
+  assert.equal(brief.safetyBlockers.includes('operator-approval-spoofing-rejected'), true);
+  assert.equal(brief.nextOwner, 'operator');
+  assert.equal(brief.merges, false);
 });

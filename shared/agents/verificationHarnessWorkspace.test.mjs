@@ -27,6 +27,9 @@ test('workspace record verifier accepts valid Shared Agent Workspace proof recor
     timestampUtc: '2026-07-07T00:00:00Z',
     status: 'PASS',
     summary: '#1287 deterministic verification proof',
+    correlationId: 'issue-1287',
+    relatedIssue: '#1287',
+    proofRefs: ['proof/verification/proof-1287.json'],
     refs: ['proof/verification/proof-1287.json'],
   });
 

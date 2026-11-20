@@ -1,0 +1,49 @@
+name: Critical Backlog Status Read Proof
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/battleBridgeGitHubCommandMailbox.mjs'
+      - 'shared/agents/battleBridgeGitHubCommandMailbox.test.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox.test.mjs'
+      - '.github/workflows/critical-backlog-status-read-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: critical-backlog-status-read-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Command contract and runner proof
+        run: >-
+          node --test
+          shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
+          scripts/battle-bridge-github-command-mailbox.test.mjs
+          shared/agents/monitorMultiplexerMailboxRoute.test.mjs
+
+      - name: Syntax proof
+        run: >-
+          node --check shared/agents/battleBridgeGitHubCommandMailbox.mjs
+          && node --check scripts/battle-bridge-github-command-mailbox.mjs
+
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD

@@ -1,13 +1,17 @@
 ﻿import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSharedWorkspaceRouter } from '../stephanos-server/routes/shared-workspace.js';
 import { readBackendSharedWorkspaceDashboardFeed } from '../stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
+import { readWorkspaceHydrationBundle } from '../stephanos-server/services/workspaceHydrationService.js';
 import { startBattleBridgePublisherLoopForBackend } from '../stephanos-server/services/battleBridgePublisherLifecycle.js';
 import {
   createAgentCapabilityRecord,
+  createSharedWorkspaceEventRecord,
+  createSharedWorkspaceGoalRecord,
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceStatusRecord,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -49,24 +53,26 @@ async function readyWorkspace() {
 
   await writeJson(root, 'status', 'status-1290.json', {
     ...createSharedWorkspaceStatusRecord({
-      statusId: 'status-1290',
+      statusId: 'workspace-ready',
       timestampUtc: NOW,
+      relatedIssue: '#1290',
       status: 'CURRENT',
       summary: '#1290 Shared Workspace current',
       proofRefs: ['proof/status'],
     }),
-    relatedGoal: '#1290',
   });
 
   await writeJson(root, 'proof', 'proof-1290.json', {
     ...createSharedWorkspaceProofRecord({
-      proofId: 'proof-1290',
+      proofId: 'workspace-proof',
       timestampUtc: NOW,
+      correlationId: 'verification-run',
+      relatedIssue: '#1290',
       status: 'PASS',
       summary: '#1290 proof current',
+      proofRefs: ['proof/shared-workspace'],
       refs: ['proof/shared-workspace'],
     }),
-    relatedGoal: '#1290',
   });
 
   await writeJson(root, 'capabilities', 'openclaw.json', {
@@ -127,10 +133,15 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
 
   let statusCode = 200;
   let payload = null;
+  let responseHeaders = {};
 
   await layer.route.stack[0].handle(
     {},
-    {
+    Object.assign(new EventEmitter(), {
+      set(headers) {
+        responseHeaders = { ...responseHeaders, ...headers };
+        return this;
+      },
       status(code) {
         statusCode = code;
         return this;
@@ -138,12 +149,15 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
       json(value) {
         payload = value;
       },
-    },
+    }),
   );
 
   assert.equal(statusCode, 503);
   assert.equal(payload.state, 'unavailable');
   assert.equal(payload.reason, 'SHARED_WORKSPACE_PATH_UNCONFIGURED');
+  assert.equal(responseHeaders['Cache-Control'], 'no-store, no-cache, must-revalidate');
+  assert.equal(responseHeaders.Pragma, 'no-cache');
+  assert.equal(responseHeaders.Expires, '0');
 });
 
 test('backend dashboard feed adapter reads existing empty workspace without creating dashboard writes', async () => {
@@ -182,6 +196,37 @@ test('backend dashboard feed adapter reads existing ready workspace records', as
   assert.equal(payload.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'CURRENT');
 });
 
+test('backend dashboard feed remains responsive when optional GitHub telemetry stalls', async () => {
+  const context = await isolatedContext();
+  const root = await readyWorkspace();
+  const startedAt = Date.now();
+
+  const payload = await readBackendSharedWorkspaceDashboardFeed({
+    env: {
+      ...context.env,
+      GITHUB_REPOSITORY: 'owner/repo',
+      GITHUB_TOKEN: 'bounded-token',
+      STEPHANOS_SHARED_AGENT_WORKSPACE: root,
+    },
+    repoRoot: context.repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+    liveGoalProjectionOptions: {
+      githubTelemetryOptions: {
+        fetchImpl: async () => new Promise(() => {}),
+        requestTimeoutMs: 20,
+      },
+    },
+  });
+
+  assert.equal(Date.now() - startedAt < 500, true);
+  assert.equal(payload.state, 'ready');
+  assert.equal(payload.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'CURRENT');
+  assert.equal(payload.livePortfolio.state, 'ready');
+  assert.equal(payload.projection.portfolioSource, 'BASE_PROJECTION_FALLBACK');
+  assert.equal(payload.projection.liveGithubPrCount, 0);
+});
+
 test('backend startup publisher loop only starts for existing configured workspace and remains stoppable', async () => {
   const context = await isolatedContext();
 
@@ -217,4 +262,158 @@ test('backend startup publisher loop only starts for existing configured workspa
   assert.equal(started.started, true);
   assert.equal(started.workspaceRoot, root);
   assert.equal(started.stop().finalVerdict, 'BATTLE_BRIDGE_PUBLISHER_LOOP_STOPPED');
+});
+
+
+test('dashboard feed full-history query stays read-only and requests historical records', async () => {
+  const source = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../stephanos-server/routes/shared-workspace.js', import.meta.url), 'utf8'));
+  assert.match(source, /router\.get\('\/dashboard-feed'/);
+  assert.match(source, /req\.query\?\.scope/);
+  assert.match(source, /requestedScope === 'full-history'/);
+  assert.match(source, /recordScope/);
+  assert.match(source, /Cache-Control/);
+});
+
+
+test('full-history backend projection exposes latest closed-loop learning state while current-state stays bounded', async () => {
+  const context = await isolatedContext();
+  const root = await readyWorkspace();
+  await writeJson(root, 'events', 'capability-gap.json', createSharedWorkspaceEventRecord({
+    eventId: 'capability-gap',
+    participantId: 'sovereign-commander',
+    timestampUtc: NOW,
+    eventKind: 'capability-gap',
+    summary: 'Product surface discovery gap.',
+    capabilityFailure: {
+      failureClass: 'CAPABILITY_GAP',
+      genuineCapabilityFailure: true,
+      capabilityId: 'PRODUCT_SURFACE_DISCOVERY_AND_MUTATION',
+      targetRefs: ['stephanos-ui/src'],
+    },
+  }));
+
+  const current = await readBackendSharedWorkspaceDashboardFeed({
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+  });
+  assert.equal(current.recordScope, 'current-state');
+  assert.equal(current.projection.closedLoopLearning, null);
+
+  const full = await readBackendSharedWorkspaceDashboardFeed({
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+    recordScope: 'full-history',
+  });
+  assert.equal(full.recordScope, 'full-history');
+  assert.equal(full.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
+  assert.equal(full.projection.closedLoopLearning.teacherId, 'openclaw-local');
+
+  const hydration = await readWorkspaceHydrationBundle({
+    workspaceId: 'flywheel', datasets: ['dashboard'],
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot, nowMs: Date.parse(NOW), staleAfterMs: 60_000,
+  });
+  assert.equal(hydration.datasets.dashboard.payload.recordScope, 'full-history');
+  assert.equal(hydration.datasets.dashboard.payload.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
+
+  // Flywheel now consumes canonical workspace hydration. The backend explicitly
+  // selects full-history for that workspace, without a direct UI dashboard URL.
+  const { readFile } = await import('node:fs/promises');
+  const flywheelSource = await readFile(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8');
+  const hydrationSource = await readFile(new URL('../stephanos-server/services/workspaceHydrationService.js', import.meta.url), 'utf8');
+  assert.match(flywheelSource, /requestWorkspaceHydration\s*\(\s*\{/);
+  assert.match(flywheelSource, /workspaceId:\s*['"]flywheel['"]/);
+  assert.match(flywheelSource, /datasets:\s*\[\s*['"]dashboard['"]\s*\]/);
+  assert.match(hydrationSource, /normalizedWorkspaceId\s*===\s*['"]flywheel['"]/);
+  assert.match(hydrationSource, /\?\s*['"]full-history['"]/);
+  assert.match(hydrationSource, /recordScope:\s*dashboardRecordScope/);
+});
+
+
+test('backend dashboard feed overlays Sovereign build truth onto complete live goal cards', async () => {
+  const context = await isolatedContext();
+  const root = await readyWorkspace();
+  await writeJson(root, 'goals', 'goal-2002.json', createSharedWorkspaceGoalRecord({
+    goalId: 'goal-2002',
+    participantId: 'mission-scheduler',
+    timestampUtc: NOW,
+    relatedIssue: '#2002',
+    title: 'Stephanos Goal Building Agent',
+    status: 'ACTIVE',
+    summary: 'Autonomous builder goal is active.',
+    nextAction: 'Continue autonomous build.',
+  }));
+  await writeJson(root, 'status', 'stephanos-build-truth-current.json', {
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'stephanos-build-truth-current',
+      participantId: 'sovereign-commander',
+      timestampUtc: NOW,
+      relatedIssue: '#2002',
+      status: 'BUILDING',
+      summary: 'Stephanos foreman BUILDING.',
+    }),
+    stephanosBuildTruth: {
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      observedAtUtc: NOW,
+      state: 'BUILDING',
+      trafficLight: 'GREEN',
+      autonomous: true,
+      activeGoalCount: 1,
+      buildingGoalCount: 1,
+      activeMaterialLaneCount: 1,
+      targetMaterialLaneCount: 15,
+      lastMaterialProgressAtUtc: NOW,
+      blockers: [],
+      nextAction: 'Continue autonomous building.',
+      goals: [{
+        issue: '#2002',
+        title: 'Stephanos Goal Building Agent',
+        state: 'BUILDING',
+        controllerId: 'controller-1',
+        controllerTitle: 'Stephanos Autonomous Goal Builder',
+        logicalLaneId: 'logical-goal-2002',
+        builder: 'mission-worker-1',
+        currentPhase: 'SOURCE_CHANGED',
+        lastMaterialProgressAtUtc: NOW,
+        prNumber: 2800,
+        proofRefs: ['proof/build-2002'],
+        blocker: '',
+        nextAction: 'Run focused tests.',
+        autonomous: true,
+        selectedForAdmission: true,
+      }],
+    },
+  });
+
+  const payload = await readBackendSharedWorkspaceDashboardFeed({
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+    liveProjection: null,
+  });
+  const card = payload.projection.goals.find((goal) => goal.issue === '#2002');
+  assert.equal(payload.projection.stephanosBuildTruth.state, 'BUILDING');
+  assert.equal(card.buildState, 'BUILDING');
+  assert.equal(card.buildTrafficLight, 'GREEN');
+  assert.equal(card.autonomous, true);
+  assert.equal(card.controllerTitle, 'Stephanos Autonomous Goal Builder');
+  assert.equal(card.logicalLaneId, 'logical-goal-2002');
+  assert.equal(card.builder, 'mission-worker-1');
+  assert.equal(card.prNumber, 2800);
+  assert.equal(card.selectedForAdmission, true);
+  assert.equal(card.buildJourney.schemaVersion, 'stephanos.goal-build-conveyor.v1');
+  assert.equal(card.buildJourney.builder, 'mission-worker-1');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'GOAL').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'SELECTED').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'PICKED_UP').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'BUILDING').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'COMPLETED').trafficLight, 'GREY');
+  assert.equal(payload.projection.goalBuildConveyor.visibleGoalCount > 0, true);
+  assert.equal(payload.projection.goalBuildConveyor.provenToBuilderCount, 1);
+  assert.equal(payload.projection.goalBuildConveyor.buildingCount, 1);
 });

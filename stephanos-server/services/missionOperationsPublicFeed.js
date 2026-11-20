@@ -11,6 +11,17 @@ function publicReceiptPath(value = '') {
   return leaf ? `receipt://${leaf}` : '';
 }
 
+function publicApproval(approval = {}) {
+  return {
+    approvalId: text(approval.approvalId),
+    kind: text(approval.kind),
+    status: text(approval.status),
+    approvalRequired: approval.status === 'pending',
+    requestedAt: text(approval.requestedAt),
+    decidedAt: text(approval.decidedAt),
+  };
+}
+
 function sanitizePublicText(value = '') {
   const raw = text(value);
   if (!raw || raw.startsWith('receipt://') || raw.startsWith('/api/')) return raw;
@@ -70,6 +81,7 @@ export async function readPublicMissionOperations(options = {}) {
         ...mission.git,
         worktreePath: mission.git?.worktreePath ? 'configured-isolated-worktree' : '',
       },
+      approvals: (mission.approvals || []).map(publicApproval),
       receipts: (mission.receipts || []).map((receipt) => ({
         ...receipt,
         path: publicReceiptPath(receipt.path),
