@@ -411,6 +411,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
   const richResponse = buildStephanosRichConversationalResponseV1({
     question,
     answer,
+    correlationId: decoded.lineage.correlationId,
     structured: options.richResponseStructured,
   });
   if (!richResponse.valid) return blocked('RICH_RESPONSE_BUILD_FAILED', richResponse.errors);

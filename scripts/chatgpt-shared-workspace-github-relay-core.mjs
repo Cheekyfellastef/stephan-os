@@ -40,7 +40,6 @@ import {
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
-  decodeStephanosWorkspaceAnswerRecord,
   decodeStephanosWorkspaceAnswerRecordByLineage,
   decodeStephanosWorkspaceQuestionRecordByLineage,
 } from '../shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs';
@@ -300,9 +299,9 @@ function compactConversationRecord(record = null) {
   }) : null;
 }
 
-function sanitizedConversationAnswerProjection(answerRecord = null, nowMs = Date.now()) {
+function sanitizedConversationAnswerProjection(answerRecord = null, questionRecord = null, nowMs = Date.now()) {
   if (!answerRecord) return null;
-  const decoded = decodeStephanosWorkspaceAnswerRecord(answerRecord, {
+  const decoded = decodeStephanosWorkspaceAnswerRecordByLineage(answerRecord, questionRecord, {
     expectedRecipientParticipantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
     workspaceValidationOptions: { nowMs },
   });
@@ -325,7 +324,9 @@ function sanitizedConversationAnswerProjection(answerRecord = null, nowMs = Date
   return Object.freeze({
     answerId: safeId(answer.answerId),
     questionId: safeId(answer.questionId),
-    roundId: safeId(answer.roundId),
+    ...(decoded.lineage.formalRound
+      ? { roundId: safeId(answer.roundId) }
+      : { conversationMode: decoded.lineage.kind, correlationId: safeId(decoded.lineage.correlationId) }),
     responderParticipantId: safeId(answer.responderParticipantId),
     answerText: redacted ? '[REDACTED]' : bounded(rawAnswerText, 1000),
     epistemicState: safeId(answer.epistemicState),
@@ -1255,10 +1256,10 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     } : null),
     correlatedAnswerRecord: compactConversationRecord(answerRecord),
     sanitizedAnswer: publicationRecovery?.ok ? {
-      ...sanitizedConversationAnswerProjection(answerRecord, publicationRecovery.atMs),
+      ...sanitizedConversationAnswerProjection(answerRecord, workspaceRecord, publicationRecovery.atMs),
       answeredAtUtc: answerRecord.timestampUtc,
       freshness: staleQaQuestion(answerRecord, nowMs) ? 'STALE' : 'RECENT',
-    } : sanitizedConversationAnswerProjection(answerRecord, nowMs),
+    } : sanitizedConversationAnswerProjection(answerRecord, workspaceRecord, nowMs),
     ...(publicationRecovery?.ok ? { publicationRecovery: {
       classification: 'EXACT_PERSISTED_QA_PUBLICATION_RECOVERED',
       acceptedAtUtc: new Date(publicationRecovery.atMs).toISOString(),

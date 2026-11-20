@@ -9,10 +9,10 @@ import {
   STEPHANOS_CONVERSATION_CANVAS_TARGET_PRESENTER_SCHEMA_VERSION,
 } from './stephanosConversationCanvasHandoffV1.mjs';
 
-function richResponse({ partial = false } = {}) {
+function richResponse({ partial = false, ambient = false } = {}) {
   const built = buildStephanosRichConversationalResponseV1({
     question: {
-      roundId: 'stephanos-round-001',
+      ...(ambient ? {} : { roundId: 'stephanos-round-001' }),
       questionId: 'stephanos-round-001-q01',
       questionClass: 'CURRENT_PROGRAMME_TRUTH',
     },
@@ -24,6 +24,7 @@ function richResponse({ partial = false } = {}) {
       answerVerdict: partial ? 'ANSWERED_PARTIAL' : 'ANSWERED_GROUNDED',
       cannotAnswerReason: partial ? 'One provider health receipt is not fresh enough to settle the route.' : null,
     },
+    ...(ambient ? { correlationId: 'ambient-canvas-001' } : {}),
   });
   assert.equal(built.valid, true, built.errors?.join(','));
   return built;
@@ -97,4 +98,31 @@ test('rejects unsupported presentation surfaces without inventing another render
   assert.equal(handoff.valid, false);
   assert.equal(handoff.state, 'SAFE_HOLD');
   assert.deepEqual(handoff.errors, ['unsupported-surface']);
+});
+
+test('ambient canvas handoffs preserve correlation and reject mixed or accessor-bearing continuity', () => {
+  const response = richResponse({ ambient: true });
+  const handoff = buildStephanosConversationCanvasHandoffV1({ richResponse: response });
+  assert.equal(handoff.valid, true, handoff.errors.join(','));
+  assert.equal(handoff.continuity.conversationMode, 'AMBIENT');
+  assert.equal(handoff.continuity.correlationId, 'ambient-canvas-001');
+  assert.equal(Object.hasOwn(handoff.continuity, 'roundId'), false);
+  assert.equal(handoff.privacy.rawAnswerMayEnterPublicRelay, false);
+  for (const continuity of [
+    { ...response.continuity, roundId: 'different-round' },
+    { ...response.continuity, conversationMode: 'FORMAL_ROUND' },
+    { ...response.continuity, correlationId: '' },
+  ]) {
+    const rejected = buildStephanosConversationCanvasHandoffV1({ richResponse: { ...response, continuity } });
+    assert.equal(rejected.valid, false);
+    assert.deepEqual(rejected.errors, ['continuity-identity-invalid']);
+  }
+  let getterCalls = 0;
+  const continuity = { ...response.continuity };
+  Object.defineProperty(continuity, 'correlationId', {
+    enumerable: true,
+    get() { getterCalls += 1; return 'ambient-canvas-001'; },
+  });
+  assert.equal(buildStephanosConversationCanvasHandoffV1({ richResponse: { ...response, continuity } }).valid, false);
+  assert.equal(getterCalls, 0);
 });

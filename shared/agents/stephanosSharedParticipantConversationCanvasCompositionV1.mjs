@@ -1,6 +1,6 @@
 import {
-  decodeStephanosWorkspaceAnswerRecord,
-  decodeStephanosWorkspaceQuestionRecord,
+  decodeStephanosWorkspaceAnswerRecordByLineage,
+  decodeStephanosWorkspaceQuestionRecordByLineage,
 } from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import {
   answerStephanosWorkspaceQuestionRecord,
@@ -101,7 +101,7 @@ function composeConversationCanvasArtifacts({
 
   const workspaceHandoffRecord = buildStephanosConversationCanvasWorkspaceHandoffRecordV1({
     canvasHandoff,
-    correlationId: question.roundId,
+    correlationId: questionRecord.correlationId,
     proofRefs: Array.isArray(questionRecord?.proofRefs) ? [...questionRecord.proofRefs] : [],
     timestampUtc: answer.answeredAtUtc,
     relatedIssue: text(questionRecord?.relatedIssue) || '#1308',
@@ -155,7 +155,7 @@ export function buildStephanosConversationCanvasFromPersistedQaV1(questionRecord
   const nowMs = Number.isFinite(options.nowMs)
     ? options.nowMs
     : Date.parse(text(answerRecord?.timestampUtc)) || Date.now();
-  const decodedQuestion = decodeStephanosWorkspaceQuestionRecord(questionRecord, {
+  const decodedQuestion = decodeStephanosWorkspaceQuestionRecordByLineage(questionRecord, {
     workspaceValidationOptions: { nowMs },
     questionValidationOptions: options.questionValidationOptions,
   });
@@ -163,7 +163,7 @@ export function buildStephanosConversationCanvasFromPersistedQaV1(questionRecord
     return blocked('PERSISTED_CONVERSATION_QUESTION_REJECTED', decodedQuestion.errors);
   }
 
-  const decodedAnswer = decodeStephanosWorkspaceAnswerRecord(answerRecord, {
+  const decodedAnswer = decodeStephanosWorkspaceAnswerRecordByLineage(answerRecord, questionRecord, {
     expectedRecipientParticipantId: decodedQuestion.question.askerParticipantId,
     workspaceValidationOptions: { nowMs },
   });
@@ -193,6 +193,7 @@ export function buildStephanosConversationCanvasFromPersistedQaV1(questionRecord
   const richResponse = buildStephanosRichConversationalResponseV1({
     question,
     answer,
+    correlationId: decodedQuestion.lineage.correlationId,
     structured: options.richResponseStructured,
   });
   if (!richResponse.valid) {
