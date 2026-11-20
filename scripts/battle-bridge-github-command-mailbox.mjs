@@ -70,6 +70,8 @@ import { MAILBOX_ROTATION_OPERATION, MAILBOX_ROTATION_REQUEST_ID, auditMailboxRo
   parseMailboxRotationComment, mailboxRotationCommandAllowed, projectMailboxRotation,
   validateMailboxRotationRecord, projectMailboxRotationReceipt } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
+import { attestHistoricalMailboxTerminal, projectHistoricalTerminalAttestation,
+  HISTORICAL_TERMINAL_ATTESTATION_VERDICT } from '../shared/agents/mailboxHistoricalTerminalAttestationV1.mjs';
 import { executeMailboxRotationOnHost, readMailboxAuthorityLiteral, verifyMailboxRotationActivationPull } from './canonical-mailbox-rotation-host-v1.mjs';
 import { buildMailboxRotationFence, findMailboxRotationFence } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
 import { inventoryMailboxRotationExecution } from './canonical-mailbox-action-evidence-v2.mjs';
@@ -2672,6 +2674,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       ...coreDaemonStatusReadbackProjection(receipt, operationResult),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
+      ...projectHistoricalTerminalAttestation(operationResult, receipt),
       ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
@@ -3034,6 +3037,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         ok: inner?.ok !== false,
         ...projectMaintenanceRecoveryReceiptV1(inner?.maintenanceRecovery, compactReceipt.operation),
         ...projectMailboxRotationReceipt(inner, compactReceipt.operation),
+        ...projectHistoricalTerminalAttestation(inner, compactReceipt),
         ...projectFrontendVisibilityReceiptV1(inner?.frontendVisibility, compactReceipt.operation,
           { expectedHead: compactReceipt.expectedHead, expectedDistFingerprint: inner?.expectedDistFingerprint }),
         blocker: inner?.blocker || '',
@@ -3207,6 +3211,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
       ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
+      ...projectHistoricalTerminalAttestation(operationResult, receipt),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
@@ -4449,6 +4454,10 @@ export async function cancelMissionOrchestratorMission(command = {}, {
 export async function readMailboxReceipt(command = {}, {
   readSourceIdentity = readCanonicalSourceIdentity,
   receiptRoot = canonicalReceiptRoot,
+  readExecutionLedger = requestId => executionLedger.read(requestId),
+  processSourceHead = MAILBOX_PROCESS_SOURCE_HEAD,
+  readCommentId = 0,
+  now = () => new Date(),
 } = {}) {
   const identity = await readSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -4484,6 +4493,15 @@ export async function readMailboxReceipt(command = {}, {
       return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_JSON_INVALID', targetRequestId };
     }
     if (String(receipt?.requestId || '') !== targetRequestId) {
+      const historicalTerminalAttestation = attestHistoricalMailboxTerminal({
+        command, identity, processSourceHead, readCommentId, unidentifiedReceipt: receipt,
+        readLedger: readExecutionLedger, now,
+      });
+      if (historicalTerminalAttestation) return {
+        ...identity, ok: true, finalVerdict: HISTORICAL_TERMINAL_ATTESTATION_VERDICT,
+        historicalTerminalAttestation,
+        arbitraryFilesystemAccess: false, commandExecutionAccess: false, sourceMutationAccess: false,
+      };
       return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
     }
     return {
@@ -4541,7 +4559,7 @@ async function executeSelectedMailboxCommand(selected, receiptRef, state) {
     readSharedWorkspaceStatus,
     readCriticalBacklogStatus,
     readProgrammeAuthorityStatus,
-    readMailboxReceipt,
+    readMailboxReceipt: command => readMailboxReceipt(command, { readCommentId: selected.commentId }),
     cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
     startRemoteCommander,
