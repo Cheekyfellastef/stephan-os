@@ -217,6 +217,28 @@ try {
                 $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Rejected drift changed confirmation authority'
         }
     }
+    Invoke-Fixture 'null-process cleanup frame does not erase the same-run game identity' {
+        Reset-MonitorFixture
+        Send-FixtureFrame (New-StateFrame 'waiting')
+        $withoutGame = New-StateFrame 'waiting'
+        $withoutGame.eventSequence = 2
+        $withoutGame.process = $null
+        $withoutGame.allowedActions = @('cancel', 'close')
+        $withoutGame.confirmationToken = $null
+        Send-FixtureFrame $withoutGame
+        Assert-True (-not $monitorState.GameProcess -and
+            $monitorState.GameProcessIdentity.pid -eq 54321 -and
+            $monitorState.GameProcessIdentity.createdFileTime -ceq '134384678410182997') 'Cleanup frame erased the original game identity'
+        $retarget = New-StateFrame 'waiting'
+        $retarget.eventSequence = 3
+        $retarget.process.pid = 54322
+        $rejected = $false
+        try { Send-FixtureFrame $retarget }
+        catch { $rejected = $_.Exception.Message -ceq 'monitor-state-game-identity-drift' }
+        Assert-True $rejected 'Same-run process retarget after a null frame was accepted'
+        Assert-True ($monitorState.GameProcessIdentity.pid -eq 54321 -and
+            $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Rejected retarget changed identity or sent confirmation'
+    }
     Invoke-Fixture 'failed foreground transfer consumes neither token nor request sequence' {
         Reset-MonitorFixture
         Send-FixtureFrame (New-StateFrame 'waiting')
