@@ -343,6 +343,19 @@ test('parked backlog without elastic admission is blocked, never falsely idle gr
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED');
 });
 
+test('acceptance-only backlog retains missing-admission and all-held failures without reporting completion', async () => {
+  for (const elasticAdmission of [null, { ok: true, classification: 'ELASTIC_GOAL_MISSIONS_HELD',
+    activeMissions: [], runnableMissions: [], held: [{ issueNumber: 1284, reason: 'EXISTING_GOAL_MISSION_ACCEPTANCE_PENDING' }] }]) {
+    const result = await runSupervisor({ conveyor: async () => conveyorResult({
+      classification: 'PARKED_ACCEPTANCE_ONLY', elasticAdmission, elasticIgnition: null,
+    }) });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, elasticAdmission ? 'ELASTIC_GOALS_ALL_HELD_REPAIR_REQUIRED' : 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.mergeAuthority, false);
+  }
+});
+
 test('one-minute supervisor never calls an authoritative programme HOLD healthy idle', async () => {
   const result = await runSupervisor({
     conveyor: async () => conveyorResult({

@@ -89,3 +89,48 @@ test('mismatched terminal identity cannot stop the parent outcome', () => {
   assert.equal(state.terminalPacketValid, false);
   assert.equal(state.terminalRequestRejected, true);
 });
+
+test('distinct boundary and no-safe-repair identities survive repeated JSON round trips', () => {
+  for (const boundary of [
+    { hardBoundary: true, boundaryId: '  exact-operator-boundary  ',
+      identityField: 'boundaryId', identity: 'exact-operator-boundary',
+      terminalState: ONION_TERMINAL_STATE.OPERATOR_PHYSICAL_AUTHORITY_BOUNDARY },
+    { safeRepairAvailable: false, noSafeRepairId: '  exact-safe-path-hold  ',
+      identityField: 'noSafeRepairId', identity: 'exact-safe-path-hold',
+      terminalState: ONION_TERMINAL_STATE.NO_SAFE_REPAIR_CURRENTLY_AVAILABLE },
+  ]) {
+    let state = projectOnionContinuationV1({
+      ...terminalPacket(boundary.identity), ...boundary,
+      blocker: 'REPAIR_RESULT_REQUIRES_EXISTING_OWNER', blockerDepth: 4,
+    });
+    for (let restart = 0; restart < 3; restart += 1) {
+      assert.equal(state[boundary.identityField], boundary.identity);
+      assert.equal(state.terminalState, boundary.terminalState);
+      assert.equal(state.terminalPacketValid, true);
+      assert.equal(state.shouldContinue, false);
+      state = projectOnionContinuationV1(JSON.parse(JSON.stringify(state)));
+    }
+  }
+});
+
+test('persisted boundary identifiers still require matching terminal evidence', () => {
+  for (const boundary of [
+    { hardBoundary: true, boundaryId: 'exact-boundary' },
+    { safeRepairAvailable: false, noSafeRepairId: 'exact-boundary' },
+  ]) {
+    for (const invalid of [
+      { terminalIdentity: 'other-boundary' }, { evidenceRefs: [] },
+      { terminalOwner: '' }, { terminalAction: '' }, { reEvaluationTrigger: '' },
+    ]) {
+      const state = projectOnionContinuationV1({
+        ...terminalPacket('exact-boundary'), ...boundary, ...invalid,
+        blocker: 'INDEPENDENT_BLOCKER_TEXT',
+      });
+      const restored = projectOnionContinuationV1(JSON.parse(JSON.stringify(state)));
+      assert.equal(restored.terminalState, '');
+      assert.equal(restored.terminalPacketValid, false);
+      assert.equal(restored.terminalRequestRejected, true);
+      assert.equal(restored.shouldContinue, true);
+    }
+  }
+});

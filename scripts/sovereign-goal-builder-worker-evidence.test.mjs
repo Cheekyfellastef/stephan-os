@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createMissionWorkerHeartbeatRecord, projectMissionWorkerHeartbeat, resolveCanonicalMissionWorkerPaths } from './mission-orchestrator-worker-heartbeat.mjs';
 import { readGoalBuilderSourceIdentity, readGoalBuilderWorkerHeartbeatAgeMs, runSovereignCommanderGoalBuilderRepair } from './sovereign-commander-goal-builder-repair.mjs';
-import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { runBattleBridgeCapacityObservationHeartbeat, runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { readCanonicalMissionWorkerCapacityObservationEvidenceV1, readCanonicalMissionWorkerSourceIdentity } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed } from '../shared/agents/stephanosCoreDaemonV1.mjs';
 import vm from 'node:vm';
 
@@ -22,6 +23,156 @@ async function fixture(action) {
   try { await action({ env, paths, record, read }); }
   finally { rmSync(home, { recursive: true, force: true }); }
 }
+
+function capacityLaunchFixture(paths, record, changes = {}) {
+  const receiptPath = join(paths.workspaceRoot, 'status',
+    `mission-orchestrator-worker-launch-identity-${record.launchIdentityId}.json`);
+  const receipt = {
+    schemaVersion: 'stephanos.mission-worker-launch-identity.v1',
+    launchIdentityId: record.launchIdentityId, launchKind: 'ordinary', restartInvocationId: '',
+    taskName: record.taskName, repositoryRoot: paths.repositoryRoot, branch: 'main', headSha: HEAD,
+    workerPid: record.pid, workerStartedAtUtc: record.workerStartedAtUtc,
+    canonicalNode: 'C:\\Program Files\\nodejs\\node.exe',
+    canonicalWorkerScript: join(paths.repositoryRoot, 'scripts', 'mission-orchestrator-worker-supervised.mjs'),
+    createdAtUtc: record.workerStartedAtUtc,
+    ...changes,
+  };
+  writeFileSync(receiptPath, JSON.stringify(receipt));
+  return receiptPath;
+}
+
+test('real producer NO_WORKER_GRANT report can observe Forge without inventing idle or authorizing work', () => fixture(async ({ env, paths, record, read }) => {
+  const noGrant = createMissionWorkerHeartbeatRecord({ ...record,
+    lastTickVerdict: 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT' });
+  for (const key of ['activeTaskId', 'activeReceiptId', 'executionPhase']) {
+    assert.equal(Object.hasOwn(noGrant, key), false, 'actual producer omits execution metadata');
+  }
+  writeFileSync(paths.heartbeatPath, JSON.stringify(noGrant));
+  capacityLaunchFixture(paths, noGrant);
+  const readObservation = () => readCanonicalMissionWorkerCapacityObservationEvidenceV1({ env, nowMs,
+    expectedSourceHead: HEAD, readSourceIdentity: () => ({ ok: true, branch: 'main', sourceHead: HEAD }) });
+  assert.equal(read(), null, 'capacity observation must not redefine the operational work predicate');
+  const evidence = await readObservation();
+  assert.equal(evidence.capacityObservationAllowed, true);
+  assert.equal(evidence.workAuthorized, false);
+  assert.equal(evidence.executionMetadataState, 'UNREPORTED');
+  assert.equal(evidence.reportedTickVerdict, 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT');
+  assert.equal(evidence.idleProven, false);
+  assert.equal(evidence.physicalExclusionGranted, false);
+  let probes = 0;
+  const observed = await runBattleBridgeCapacityObservationHeartbeat({ expectedSourceHead: HEAD,
+    paths: { repoRoot: paths.repositoryRoot, workspaceRoot: paths.workspaceRoot },
+    readWorkerObservation: readObservation,
+    refreshLifeboatCapacity: async options => {
+      probes++;
+      assert.ok(options.probeTimeoutMs > 0 && options.probeTimeoutMs <= 10000);
+      return { ok: true, available: true, sourceHead: HEAD };
+    },
+  });
+  assert.equal(observed.ok, true);
+  assert.equal(probes, 1);
+  assert.equal(observed.admissionAttempted, false);
+  assert.equal(observed.sourceBuildAttempted, false);
+  assert.equal(observed.idleProven, false);
+  assert.equal(observed.physicalExclusionGranted, false);
+  assert.equal(observed.workAuthorized, false);
+  assert.equal(observed.executionMetadataState, 'UNREPORTED');
+  const forbidden = () => assert.fail('capacity observation authorized work');
+  const work = await runBattleBridgeGoalDiscoveryHeartbeat({ readWorkerHeartbeatAgeMs: read,
+    refreshGithubLifeboat: forbidden, refreshGithubLifeboatClaimAck: forbidden,
+    refreshLifeboatCapacity: forbidden, refreshCommanderCapacity: forbidden,
+    refreshSovereignCapacity: forbidden, refreshOpenClawCapacity: forbidden,
+    conveyor: forbidden, buildClaimedGoal: forbidden, publishTrack: forbidden });
+  assert.equal(work.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+}));
+
+test('capacity exception retains exact source, launch, reported metadata, freshness and failure boundaries', () => fixture(async ({ env, paths, record }) => {
+  const noGrant = { ...record, lastTickVerdict: 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT' };
+  const readObservation = () => readCanonicalMissionWorkerCapacityObservationEvidenceV1({ env, nowMs,
+    expectedSourceHead: HEAD, readSourceIdentity: () => ({ ok: true, branch: 'main', sourceHead: HEAD }) });
+  for (const change of [
+    { lastTickVerdict: 'MISSION_WORKER_TICK_FAILED' },
+    { lastTickVerdict: 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED' },
+    { lastTickVerdict: 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS' },
+    { lastTickVerdict: 'MISSION_WORKER_STALLED_MISSION_SIDELINED' },
+    { lastTickVerdict: 'unknown' }, { activeTaskId: 'active-task' },
+    { activeReceiptId: 'active-receipt' }, { executionPhase: 'processing:foundry-forge' },
+    ...['activeTaskId', 'activeReceiptId', 'executionPhase'].flatMap(key =>
+      [null, false, 0, ' '].map(value => ({ [key]: value }))),
+    { timestampUtc: new Date(nowMs - 120001).toISOString() },
+    { timestampUtc: new Date(nowMs + 1).toISOString() }, { headSha: 'c'.repeat(40) },
+    { branch: 'other' }, { pid: 0 }, { launchIdentityId: 'wrong' },
+    { workerStartedAtUtc: record.timestampUtc }, { sourceMutationAllowed: true },
+    { arbitraryShellAllowed: true }, { repositoryRoot: join(paths.repositoryRoot, 'other') },
+  ]) {
+    capacityLaunchFixture(paths, noGrant);
+    writeFileSync(paths.heartbeatPath, JSON.stringify({ ...noGrant, ...change }));
+    assert.equal(await readObservation(), null, JSON.stringify(change));
+    const held = await runBattleBridgeCapacityObservationHeartbeat({ expectedSourceHead: HEAD,
+      paths: { repoRoot: paths.repositoryRoot, workspaceRoot: paths.workspaceRoot },
+      readWorkerObservation: readObservation,
+      refreshLifeboatCapacity: () => assert.fail('invalid observation reached model probe') });
+    assert.equal(held.blocker, 'CAPACITY_OBSERVATION_WORKER_UNPROVEN');
+  }
+  const explicitlyEmpty = { ...noGrant, activeTaskId: '', activeReceiptId: '', executionPhase: '' };
+  writeFileSync(paths.heartbeatPath, JSON.stringify(explicitlyEmpty)); capacityLaunchFixture(paths, noGrant);
+  const emptyEvidence = await readObservation();
+  assert.equal(emptyEvidence.executionMetadataState, 'REPORTED');
+  assert.equal(emptyEvidence.idleProven, false, 'empty JSON fields cannot prove physical idle');
+  writeFileSync(paths.heartbeatPath, JSON.stringify(noGrant));
+  for (const change of [{ workerPid: 124 }, { headSha: 'c'.repeat(40) },
+    { workerStartedAtUtc: '2026-10-21T16:01:00Z' }, { canonicalNode: 'C:\\other\\node.exe' },
+    { canonicalWorkerScript: join(paths.repositoryRoot, 'other.mjs') },
+    { createdAtUtc: '2026-10-21T17:00:01Z' }]) {
+    capacityLaunchFixture(paths, noGrant, change);
+    assert.equal(await readObservation(), null, JSON.stringify(change));
+  }
+  const receiptPath = capacityLaunchFixture(paths, noGrant);
+  rmSync(receiptPath);
+  assert.equal(await readObservation(), null, 'missing launch proof stays unknown');
+  capacityLaunchFixture(paths, noGrant);
+  let sourceReads = 0;
+  assert.equal(await readCanonicalMissionWorkerCapacityObservationEvidenceV1({ env, nowMs,
+    expectedSourceHead: HEAD, readSourceIdentity: () => ({ ok: true, branch: 'main',
+      sourceHead: ++sourceReads === 1 ? HEAD : 'c'.repeat(40) }) }), null);
+}));
+
+test('capacity source reads reduce finite Git deadlines and never spawn with an exhausted budget', () => {
+  let remaining = 7;
+  const timeouts = [];
+  const result = readCanonicalMissionWorkerSourceIdentity({ remainingMs: () => remaining,
+    spawnSyncFn: (_file, args, options) => {
+      timeouts.push(options.timeout); remaining -= 2;
+      return { status: 0, stdout: args.includes('rev-parse') ? HEAD : 'main' };
+    } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(timeouts, [7, 5]);
+  for (const value of [0, -1, NaN, Infinity]) {
+    assert.throws(() => readCanonicalMissionWorkerSourceIdentity({ remainingMs: () => value,
+      spawnSyncFn: () => assert.fail('exhausted/nonfinite budget reached Git') }), /WORKER_SOURCE_IDENTITY_UNPROVEN/);
+  }
+});
+
+test('capacity observation rejects a changed launch after its awaited producer without granting work', () => fixture(async ({ env, paths, record }) => {
+  const noGrant = { ...record, lastTickVerdict: 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT' };
+  writeFileSync(paths.heartbeatPath, JSON.stringify(noGrant)); capacityLaunchFixture(paths, noGrant);
+  const readObservation = () => readCanonicalMissionWorkerCapacityObservationEvidenceV1({ env, nowMs,
+    expectedSourceHead: HEAD, readSourceIdentity: () => ({ ok: true, branch: 'main', sourceHead: HEAD }) });
+  const result = await runBattleBridgeCapacityObservationHeartbeat({ expectedSourceHead: HEAD,
+    paths: { repoRoot: paths.repositoryRoot, workspaceRoot: paths.workspaceRoot }, readWorkerObservation: readObservation,
+    refreshLifeboatCapacity: async () => {
+      const replacement = { ...noGrant, pid: 124, launchIdentityId: 'c'.repeat(64) };
+      writeFileSync(paths.heartbeatPath, JSON.stringify(replacement)); capacityLaunchFixture(paths, replacement);
+      return { ok: true, available: true, sourceHead: HEAD };
+    } });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CAPACITY_OBSERVATION_WORKER_CHANGED');
+  assert.equal(result.admissionAttempted, false);
+  assert.equal(result.workerObservationProven, false);
+  assert.equal(result.capacityObservationProven, false);
+  assert.equal(result.lifeboatCapacity.available, true,
+    'the changed worker does not retroactively erase the independent producer receipt');
+}));
 
 test('actual bounded reader admits a valid canonical worker record, independent of filesystem mtime', () => fixture(({ paths, record, read }) => {
   writeFileSync(paths.heartbeatPath, JSON.stringify(record));

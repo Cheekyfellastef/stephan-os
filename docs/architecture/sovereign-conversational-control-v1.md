@@ -64,10 +64,17 @@ loaded those bytes. The selected workspace's ledger is explicitly not proof of
 the relay workspace identity. The local command's caller token observation
 applies only to that diagnostic caller.
 
-## The native command
+## Remote native observation
 
-After this source has been merged and adopted on Battle Bridge, PowerShell can
-run the checked-in inspector directly:
+Authenticated `OBSERVE_CONTROL_SYSTEM` requests use the existing owner-comment
+ingress, Control Tower carrier and Sovereign relay to invoke the checked-in
+native inspector on Battle Bridge. This is the normal remote continuation of
+an inspection request and does not require a manual desktop or PowerShell
+handoff. The original command identity, expected main head, acceptance and
+terminal receipt remain the evidence for that request.
+
+After the source has been merged and adopted, direct local invocation also
+remains available:
 
 ```powershell
 & 'C:\Program Files\nodejs\node.exe' 'C:\Users\Stephan Callear\Documents\GitHub\stephan-os\scripts\sovereign-commander-native-inspect.mjs'
@@ -80,6 +87,39 @@ source, samples the listener before and after bounded health, independently
 reads the existing fixed-runtime qualification, optionally reads the named
 original ledger entry and rechecks source. It creates no ledger entry and
 performs no native mutation.
+
+### Fresh governor diagnostics
+
+Immediately after initial source validation and before owner checks, the
+inspector captures the one fixed governor script from the expected main Git
+tree and invokes its existing `ObserveAdmission` branch. The child receives
+the captured immutable source through stdin and the fixed action; there is no
+caller-selected command, script, path or action. Bounded source capture, child
+time and output checks preserve unavailable evidence as a typed diagnostic.
+The source is rechecked before the complete observation can be accepted.
+
+The optional public `governorObservation` contains `available`, the original
+`observedAtUtc`, `signalActive`, `overrideMode` and `preparePending`, with
+`readOnly:true`, `diagnosticOnly:true` and `executionAuthority:false`. A failed
+observation contains only unavailability, a closed reason code and those same
+restrictive flags. The producer checks the actual child capture window; the
+shared projection binds the sample to the original inspection's first thirty
+seconds. Historical receipt readback never replaces that sample time with a
+new poll time. Receipts without this optional field keep their existing bytes
+and hashes.
+
+These are fresh detector facts, separate from the persisted governor state
+used by native capacity qualification. The observation does not refresh state,
+reconcile resources, clear preparation, stop a model or stop a process. It
+cannot clear a persisted stale, activity, override or preparation hold. An
+inactive detector result does not establish a complete process census or
+resource permission. Existing governor, owner, guardian and native
+qualification blockers retain their original meanings, and a successful
+governor observation alone cannot complete the control-system observation or
+admit a repair. Core census and writer-custody requirements remain unchanged.
+
+This governor diagnostic extension does not commission a different native
+owner or process-identity path.
 
 Exit zero and `observationCompleted:true` mean the observation completed. An
 authentic installation or normal-operator refusal is a completed observation,
@@ -165,6 +205,33 @@ receipt, a real Commander conversation response, and—separately—any claimed
 material repair/build's original worker evidence. A staged Actions artifact,
 completed observation or successful guarded wake never proves a finished goal.
 
+The existing Sovereign Core Repair Custody job runs the inspector, public
+projection and governor suites on both Ubuntu and Windows. Its Windows-only
+governor fixtures execute the unchanged script and real `ObserveAdmission`
+parameter branch with inert process observations, mutation guards and an
+isolated workspace. Before/after file comparisons cover absent state, retained
+expired preparation and stale recorded activity. This proves the bounded
+source behavior in a fixture; commissioning still requires the actual remote
+request and its original Battle Bridge receipt.
+
 Reusable invariant: transport polls, retained request outcomes, runtime
 admission and material construction are separate facts. Keep their original
 identities and evidence even when they are presented in one conversation.
+
+## Connected GitHub submission and ordinary browser chat
+
+The bounded owner-comment ingress described in
+[Control Tower build start](control-tower-build-start-v1.md) lets an already
+authenticated GitHub connector submit the two existing closed operations to
+the same workflow, artifact reader and execution ledger. GitHub supplies the
+owner identity and immutable comment provenance. Chat text and runtime context
+do not supply those facts.
+
+The ordinary AI route still has no authenticated operator session. Its replies
+remain read-only, and a prepared browser handoff remains `NOT_SUBMITTED`.
+It does not read a Commander bearer, synthesize a GitHub principal, or post an
+owner comment on the browser caller's behalf. Receipt projections can now retain
+`control-tower-comment-<id>-1` alongside existing run-based request IDs. The
+actual workflow run remains separate metadata; missing comment history has no
+invented run ID. Desktop/phone receipt presentation is evidence only and cannot
+create submission, execution, native pickup or goal-completion authority.

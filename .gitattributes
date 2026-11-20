@@ -89,6 +89,10 @@ scripts/windows/SovereignFixedRuntimeHostV1.cs text eol=lf
 
 scripts/windows/SovereignFixedRuntimeSourceV1.cs text eol=lf
 
+# The protected mobile installer compiles exact captured native/bootstrap bytes.
+scripts/windows/SovereignMobileInstall*.cs text eol=lf
+scripts/windows/install-battle-bridge-mobile-installer-v1.ps1 text eol=lf
+
 scripts/sovereign-fixed-runtime-parent-v1.mjs text eol=lf
 
 scripts/sovereign-fixed-runtime-source-task-v1.mjs text eol=lf
@@ -326,3 +330,39 @@ scripts/sovereign-high-risk-advisory-v1.mjs text eol=lf
 scripts/sovereign-high-risk-advisory-launcher-v1.mjs text eol=lf
 scripts/sovereign-windows-review-calibration-v1.mjs text eol=lf
 scripts/sovereign-windows-review-calibration-v1-engine.mjs text eol=lf
+
+# The attended Starfield monitor verifies raw Python bytes before every child.
+scripts/windows/starfield-native-monitor/splash_monitor_bridge.py text eol=lf
+scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py text eol=lf
+scripts/windows/starfield-native-monitor/start_native_eye_output_session.py text eol=lf
+scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py text eol=lf
+scripts/windows/starfield-native-monitor/analyze_paired_source_session.py text eol=lf
+scripts/windows/starfield-native-monitor/test_splash_monitor_bridge.py text eol=lf
+scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py text eol=lf
+scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py text eol=lf
+scripts/windows/starfield-native-monitor/test_analyze_native_eye_output_session.py text eol=lf
+# Private search verifies and runs only captured helper bytes.
+scripts/windows/SovereignSearchV1.cs text eol=lf
+scripts/windows/sovereign-search.ps1 text eol=lf
+scripts/windows/SovereignFileMoveV1.cs text eol=lf
+scripts/windows/sovereign-move-file.ps1 text eol=lf
+scripts/windows/SovereignFileCopyV1.cs text eol=lf
+scripts/windows/sovereign-copy-file-content.ps1 text eol=lf
+scripts/windows/status-battle-bridge-recovery-mesh.ps1 text eol=lf
+scripts/windows/status-battle-bridge-worker-watchdog.ps1 text eol=lf
+
+# Fixed create-only PDF helpers are hashed byte-for-byte.
+scripts/windows/SovereignPdfWriteV1.cs text eol=lf
+scripts/windows/sovereign-write-pdf.ps1 text eol=lf
+
+# Caravan control and fixed native observation are captured byte-for-byte.
+scripts/battle-bridge-caravan-http-v1.mjs text eol=lf
+scripts/battle-bridge-caravan-page-v1.mjs text eol=lf
+scripts/windows/battle-bridge-mobile-install-native-v1.mjs text eol=lf
+scripts/windows/observe-battle-bridge-mobile-install-v1.ps1 text eol=lf
+shared/agents/battleBridgeMobileInstallationV1.mjs text eol=lf
+
+scripts/windows/starfield-native-monitor/monitor_session_custody.py text eol=lf
+scripts/windows/starfield-native-monitor/test_monitor_session_custody.py text eol=lf
+scripts/windows/starfield-native-monitor/paired_session_adapter.py text eol=lf
+scripts/windows/starfield-native-monitor/test_paired_session_adapter.py text eol=lf

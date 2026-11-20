@@ -8,6 +8,7 @@ import {
   validateOwnerEscalationCommentV1,
   qualifyExactHeadReviewV1,
   assertCurrentExactHeadPrIdentityV1,
+  readOwnerEscalationCommentV1,
 } from './exact-head-qualified-escalation-v1.mjs';
 
 const SHA_A = 'a'.repeat(40), SHA_B = 'b'.repeat(40);
@@ -165,6 +166,24 @@ test('forged marker comments never shadow latest owner escalation', async () => 
     unzip: async () => { throw Error('must not unpack'); },
     nowMs: Date.parse(time) + 20_000,
   }), /OWNER_ESCALATION_NOT_POSTED/);
+});
+
+test('shared owner-fence preflight selection preserves expiry and never falls back from a later owner record', async () => {
+  const first = comment(), later = comment({ expiresAt: '2026-10-13T11:00:10.000Z' }, { id: 1000 });
+  const records = [first], calls = [];
+  const api = async path => {
+    calls.push(path);
+    if (path === '/issues/3086') return { comments: records.length };
+    if (path.startsWith('/issues/3086/comments?')) return records;
+    throw Error('owner selection cannot qualify an independent review');
+  };
+  const selected = await readOwnerEscalationCommentV1(input, sha, { api, nowMs: Date.parse(time) + 20_000 });
+  assert.equal(selected.comment, first);
+  assert.equal(selected.owner.commentId, 999);
+  assert.equal(selected.owner.scope, 'exact-head-review-only');
+  records.push(later);
+  await assert.rejects(readOwnerEscalationCommentV1(input, sha, { api, nowMs: Date.parse(time) + 20_000 }), /OWNER_EXPIRY/);
+  assert.equal(calls.some(path => path.startsWith('/actions/')), false);
 });
 
 test('without authenticated GitHub records escalation never becomes approval', async () => {

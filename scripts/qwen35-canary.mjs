@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import process from 'node:process';
+import { projectVrGovernorExecutionPermissionsV1 } from '../shared/ai/ollamaLoadGovernor.mjs';
 
 const BASE_URL = 'http://127.0.0.1:11434';
 const MODEL = 'qwen3.5:27b';
@@ -13,17 +14,18 @@ const VR_GOVERNOR_STATE_PATH = resolve(homedir(), 'Documents', 'Stephanos-opencl
 function readVrResourceGovernorBlock() {
   try {
     const state = JSON.parse(readFileSync(VR_GOVERNOR_STATE_PATH, 'utf8'));
-    const blocked = state?.schemaVersion === 'stephanos.vr-resource-governor.v1'
-      && state?.active === true
-      && state?.localModelAllowed === false;
+    const permission = projectVrGovernorExecutionPermissionsV1(state);
+    const blocked = permission.heavyModelAllowed === false;
     return {
       blocked,
       phase: String(state?.phase || ''),
-      reason: String(state?.reason || ''),
+      reason: permission.reason || String(state?.reason || ''),
       loadedModelsAfter: Array.isArray(state?.loadedModelsAfter) ? state.loadedModelsAfter : [],
     };
-  } catch {
-    return { blocked: false, phase: '', reason: '', loadedModelsAfter: [] };
+  } catch (error) {
+    const blocked = error?.code !== 'ENOENT' || process.platform === 'win32';
+    return { blocked, phase: 'UNKNOWN',
+      reason: blocked ? 'GOVERNOR_STATE_UNPROVEN' : '', loadedModelsAfter: [] };
   }
 }
 
@@ -72,6 +74,10 @@ try {
     if (!models.includes(MODEL)) {
       fail('QWEN35_MODEL_NOT_INSTALLED', { availableModels: models });
     } else {
+      const beforeModel = readVrResourceGovernorBlock();
+      if (beforeModel.blocked) {
+        fail('QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR', beforeModel);
+      } else {
       const startedAt = Date.now();
       const response = await fetch(`${BASE_URL}/api/chat`, {
         method: 'POST',
@@ -102,6 +108,7 @@ try {
           finalVerdict: passed ? 'QWEN35_CANARY_GREEN' : 'QWEN35_CANARY_RESPONSE_MISMATCH',
         })}\n`);
         if (!passed) process.exitCode = 3;
+      }
       }
     }
   }
