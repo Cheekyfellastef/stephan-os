@@ -153,7 +153,7 @@ const STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_AER_
 // is known. Refuse hostile Proxy envelopes without invoking a single trap.
 // Keep the walk bounded and inspect own DATA descriptors only: accessors are
 // never evaluated by this preflight. Strict child evidence guards still apply.
-function unsafeNestedReviewEvidence(value, seen = new Set(), depth = 0) {
+function unsafeNestedReviewEvidence(value, seen = new Set(), depth = 0, sourceEvidence = false) {
   if (value === null || typeof value !== 'object') return false;
   if (types.isProxy(value)) return true;
   if (seen.has(value)) return false;
@@ -164,11 +164,16 @@ function unsafeNestedReviewEvidence(value, seen = new Set(), depth = 0) {
   if (keys.length > 512) return true;
   for (const key of keys) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    // A nested accessor is executable evidence. Sibling specialists may
-    // traverse arrays or properties before applying their own source guards.
-    // Reject it by descriptor, without invoking the getter or setter.
-    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return true;
-    if (unsafeNestedReviewEvidence(descriptor.value, seen, depth + 1)) return true;
+    // Array index accessors can run during child iteration; source-envelope
+    // accessors can run before each child's strict byte-contract check.
+    // Harmless analysis extension accessors remain inert and compatible.
+    if (!descriptor) return true;
+    if (!Object.hasOwn(descriptor, 'value')) {
+      if (sourceEvidence || (Array.isArray(value) && typeof key === 'string'
+        && /^(0|[1-9][0-9]*)$/.test(key))) return true;
+      continue;
+    }
+    if (unsafeNestedReviewEvidence(descriptor.value, seen, depth + 1, sourceEvidence)) return true;
   }
   return false;
 }
@@ -427,7 +432,8 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   // source or lineage array. Check before any sibling specialist dispatch.
   const untrustedNestedEvidence = ['analysis', 'sources', 'lineageEvidence'].some((key) => {
     const field = Object.getOwnPropertyDescriptor(input, key);
-    return field && Object.hasOwn(field, 'value') && unsafeNestedReviewEvidence(field.value);
+    return field && Object.hasOwn(field, 'value')
+      && unsafeNestedReviewEvidence(field.value, new Set(), 0, key === 'sources');
   });
   if (untrustedNestedEvidence) {
     return Object.freeze({

@@ -842,26 +842,26 @@ test('specialist entry denies nested Proxy review evidence before any sibling ca
   assert.deepEqual(denied.proofRefs, []);
 });
 
-test('specialist preflight rejects nested accessor source and analysis evidence without executing a getter', () => {
+test('specialist preflight rejects source or array-index accessors before child iteration', () => {
   const verdict = 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE';
   const cases = [
-    ['sources array index', (claim, getter) => {
+    ['sources array index 0', (claim, getter) => {
       Object.defineProperty(claim.sources, '0', { enumerable: true, configurable: true, get: getter });
+    }],
+    ['sources array index 1', (claim, getter) => {
+      claim.sources = [{ path: 'ordinary.ps1' }];
+      Object.defineProperty(claim.sources, '1', { enumerable: true, configurable: true, get: getter });
     }],
     ['source object path', (claim, getter) => {
       claim.sources = [{ path: 'untrusted.ps1' }];
       Object.defineProperty(claim.sources[0], 'path', { enumerable: true, configurable: true, get: getter });
     }],
+    ['source object content', (claim, getter) => {
+      claim.sources = [{ path: 'ordinary.ps1' }];
+      Object.defineProperty(claim.sources[0], 'content', { enumerable: true, configurable: true, get: getter });
+    }],
     ['analysis findings index', (claim, getter) => {
       Object.defineProperty(claim.analysis.findings, '0', { enumerable: true, configurable: true, get: getter });
-    }],
-    ['analysis P0 count', (claim, getter) => {
-      Object.defineProperty(claim.analysis.counts, 'P0', { enumerable: true, configurable: true, get: getter });
-    }],
-    ['lineage comparison status', (claim, getter) => {
-      Object.defineProperty(claim.lineageEvidence.comparison, 'status', {
-        enumerable: true, configurable: true, get: getter,
-      });
     }],
   ];
   for (const [label, alter] of cases) {
