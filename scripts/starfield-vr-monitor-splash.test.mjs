@@ -234,6 +234,15 @@ test('waiting-window retry is time-bounded, never relaunches game or replays sav
   assert.doesNotMatch(handoff, /Send-MonitorCommand|Start-StarfieldVrLauncherProcess|Start-MonitorFromHybridCard/);
 });
 
+test('a broken monitor transport terminates all foreground retry work before closing child input', () => {
+  const fault = functionSource('Stop-MonitorTransport');
+  const retry = functionSource('Invoke-MonitorWaitingGameFocus');
+  assert.match(fault, /\$monitorState\.TransportFailed = \$true[\s\S]*?\$focusRetryTimer\.Stop\(\)/);
+  assert.ok(fault.indexOf('$focusRetryTimer.Stop()') < fault.indexOf('$monitorState.Pipe.CloseInput()'));
+  assert.match(retry, /\$monitorState\.TransportFailed/);
+  assert.doesNotMatch(fault, /FocusBoundGame|Send-MonitorCommand|Start-Process|\.Kill\(/);
+});
+
 test('the splash exposes local meter-free cleanup reasons without touching the custody decision', () => {
   const diagnostic = functionSource('Get-MonitorCleanupDiagnostics');
   const event = functionSource('Receive-MonitorEvent');
