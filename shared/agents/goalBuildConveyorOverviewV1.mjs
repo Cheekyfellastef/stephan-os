@@ -229,16 +229,20 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   // A controller cannot inherit a green light or a future expiry from an old
   // status report. Freshness and reported traffic light are separate facts.
   const controllers = array(projection.controllerFleet?.controllers).map(controller => {
-    const current = controller.freshness === 'CURRENT'
-      && fresh(controller.timestampUtc, nowMs, maxAgeMs);
-    const reportedLight = String(controller.trafficLight || '').toUpperCase();
+    // Current and positive GREEN must be established by producer-owned fields,
+    // never by an inherited wrapper. Negative owned reports remain visible.
+    const own = field => Object.prototype.hasOwnProperty.call(controller, field);
+    const current = own('freshness') && own('timestampUtc')
+      && controller.freshness === 'CURRENT' && fresh(controller.timestampUtc, nowMs, maxAgeMs);
+    const reportedLight = own('trafficLight') ? String(controller.trafficLight || '').toUpperCase() : '';
+    const greenQualified = ['controllerId', 'activityState', 'freshness', 'timestampUtc', 'trafficLight']
+      .every(own) && controller.activityState !== 'BUILDING';
     return {
       id: controller.controllerId, title: controller.title || controller.controllerId,
       state: controller.activityState || 'UNKNOWN',
       truth: current ? 'CURRENT' : controller.freshness === 'UNKNOWN' ? 'UNKNOWN' : 'STALE',
       trafficLight: current && ['GREEN', 'AMBER', 'RED', 'GREY'].includes(reportedLight)
-        ? reportedLight === 'GREEN' && controller.activityState === 'BUILDING'
-          ? 'AMBER' : reportedLight : 'GREY',
+        ? reportedLight === 'GREEN' ? greenQualified ? 'GREEN' : 'AMBER' : reportedLight : 'GREY',
       expiresAtUtc: current ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
     };
   });

@@ -775,3 +775,28 @@ test('Goal #2961: Core aggregate service flags must be producer-owned', () => {
     Object.create({ missionWorkerHealthy: true, backendHealthy: true }),
     { ...base, daemonHealthy: false }), 'UNKNOWN');
 });
+
+test('Goal #2961: controller-card GREEN requires producer-owned observation fields', () => {
+  const valid = item('owned-card', { activityState: 'READY', trafficLight: 'GREEN' });
+  const card = record => overview(projection([record]), { nowMs: NOW }).controllers[0];
+  assert.equal(card(valid).trafficLight, 'GREEN', 'fully owned current non-BUILDING card remains green');
+  assert.equal(card({ ...valid, activityState: 'BUILDING' }).trafficLight, 'AMBER',
+    'a self-reported BUILDING card cannot certify physical work');
+  assert.equal(card({ ...valid, trafficLight: 'RED' }).trafficLight, 'RED');
+  assert.equal(card({ ...valid, trafficLight: 'AMBER' }).trafficLight, 'AMBER');
+  assert.equal(card({ ...valid, freshness: 'STALE', trafficLight: 'RED' }).trafficLight, 'GREY');
+  for (const field of ['controllerId', 'activityState', 'freshness', 'timestampUtc', 'trafficLight']) {
+    const inherited = Object.assign(Object.create({ [field]: valid[field] }),
+      Object.fromEntries(Object.entries(valid).filter(([key]) => key !== field)));
+    const result = card(inherited);
+    assert.notEqual(result.trafficLight, 'GREEN', 'inherited ' + field + ' must not certify GREEN');
+    if (field === 'freshness' || field === 'timestampUtc' || field === 'trafficLight') {
+      assert.equal(result.trafficLight, 'GREY', 'unowned current observation has no positive expiry: ' + field);
+    }
+  }
+  const inheritedActivity = Object.assign(Object.create({ activityState: 'READY' }), {
+    ...Object.fromEntries(Object.entries(valid).filter(([key]) => key !== 'activityState')),
+    trafficLight: 'RED',
+  });
+  assert.equal(card(inheritedActivity).trafficLight, 'RED', 'owned negative remains visible');
+});
