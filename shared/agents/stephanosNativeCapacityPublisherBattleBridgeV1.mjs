@@ -233,7 +233,6 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
   }
 
   const installer = resolve(repositoryRoot, 'scripts', 'windows', 'install-stephanos-native-capacity-publisher.ps1');
-  const installRequestedAtUtc = (options.now || (() => new Date()))().toISOString();
   const install = run(spawnSyncFn, POWERSHELL, [
     '-NoProfile',
     '-NonInteractive',
@@ -262,9 +261,13 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     return fail('STEPHANOS_NATIVE_PUBLISHER_INSTALL_RECEIPT_INVALID');
   }
 
+  // StartNow is requested within the fixed installer. An observation from
+  // the interval before its completion cannot certify new publisher work.
+  // Only post-completion, independently signed current-head capacity qualifies.
+  const installCompletedAtUtc = (options.now || (() => new Date()))().toISOString();
   let signed = await proveNativePublisherSignedReadbackV1({
     expectedHead: shape.expectedHead, repositoryRoot, env,
-    notBeforeUtc: installRequestedAtUtc,
+    notBeforeUtc: installCompletedAtUtc,
     verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
     verifyStale: options.verifyStaleFn || readVerifiedStephanosNativeStalePublisherHeadV1,
     sleep: options.sleepFn,
