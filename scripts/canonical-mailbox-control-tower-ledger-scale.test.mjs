@@ -90,6 +90,33 @@ test('streaming discovery yields and rejects an in-place update to an already sc
   assert.equal(result.blocker, 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
 });
 
+test('new shard during streamed discovery cannot disappear behind stable-looking root metadata', async t => {
+  const { root, ledger, ledgerRoot } = setup(t, 5);
+  const priorShards = new Set(readdirSync(ledgerRoot));
+  let runId = 10_000;
+  while (priorShards.has(mailboxRotationDigest('control-tower-build-' + runId + '-1').slice(0, 2))) {
+    if (++runId > 50_000) throw Error('TEST_MISSING_SHARD_UNAVAILABLE');
+  }
+  // Emulate coarse or stale directory timestamps without hiding real names.
+  // The old metadata-only closing proof could miss a new unscanned shard.
+  const original = fs.lstatSync, frozenRoot = original(ledgerRoot, { bigint: true });
+  t.mock.method(fs, 'lstatSync',
+    (path, options) => path === ledgerRoot ? frozenRoot : original(path, options));
+  syncBuiltinESMExports();
+  try {
+    const pending = ledger.discoverControlTower({ nowMs, batchSize: 1 });
+    await immediate();
+    const request = reserve(ledger, runId);
+    const discovered = await pending;
+    assert.equal(discovered.ok, false);
+    assert.equal(discovered.blocker, 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
+    assert.equal(discovered.latestBuildRequestObservation, null);
+    assert.equal(discovered.latestControlSystemObservation, null);
+    assert.equal(ledger.read(request.requestId).phase, 'RESERVED',
+      'the original reservation must remain untouched for private reconciliation');
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});
+
 test('concurrent reservation invalidates the full snapshot instead of authorizing another request', async t => {
   const { ledger } = setup(t, 350);
   const pending = ledger.discoverControlTower({ nowMs, batchSize: 1 });
@@ -360,4 +387,23 @@ test('combined admission rejects wrong operation and malformed request binding w
     assert.equal(result.reservationAttempted, false);
     assert.equal(ledger.read(command.requestId), null);
   }
+});
+
+test('extended read-only deadline cannot extend original BUILD admission or return partial success', async t => {
+  const { ledger } = setup(t, 0);
+  const longerRead = await ledger.discoverControlTower({ nowMs, maxDurationMs: 30_000 });
+  assert.equal(longerRead.ok, true, longerRead.blocker);
+  assert.equal(longerRead.latestBuildRequestObservation, null);
+  const overBound = await ledger.discoverControlTower({ nowMs, maxDurationMs: 30_001 });
+  assert.equal(overBound.ok, false);
+  assert.equal(overBound.blocker, 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
+  assert.equal(overBound.latestBuildRequestObservation, null);
+  const command = admissionRequest(1234);
+  const denied = await ledger.discoverAndReserveControlTower(command,
+    { ...admissionOptions(command), maxDurationMs: 10_001 });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.blocker, 'CONTROL_TOWER_LEDGER_DISCOVERY_UNPROVEN');
+  assert.equal(denied.reservationAttempted, false);
+  assert.equal(denied.reservation, null);
+  assert.equal(ledger.read(command.requestId), null);
 });
