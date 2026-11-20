@@ -243,9 +243,10 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     '-StartNow',
   ]);
   if (!install.ok) {
+    // A PowerShell diagnostic may contain private Windows paths, identities or
+    // command arguments. Only the exit status is eligible for public mailbox proof.
     return fail('STEPHANOS_NATIVE_PUBLISHER_INSTALL_FAILED', {
       status: install.status,
-      stderr: text(install.stderr).slice(0, 500),
     });
   }
   const receipt = parseNativePublisherInstallerReceiptV1(install.stdout);

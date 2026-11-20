@@ -146,6 +146,28 @@ test('wrapper delegates only the fixed native publisher install operation', asyn
   assert.equal(result.ok, true);
 });
 
+test('failed native publisher installer never echoes PowerShell stderr into the mailbox receipt', async () => {
+  const confidential = 'private-path-operator-token-MUST_NOT_LEAK';
+  let installerCalls = 0;
+  const spawnSyncFn = (_executable, args) => {
+    if (args.includes('branch')) return { status: 0, stdout: 'main\\n', stderr: '' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\\n', stderr: '' };
+    if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
+    installerCalls += 1;
+    assert.ok(args.some(value => String(value).endsWith('install-stephanos-native-capacity-publisher.ps1')));
+    return { status: 1, stdout: '', stderr: 'Access denied at ' + confidential };
+  };
+  const result = await executeStephanosNativeCapacityPublisherInstallOnBattleBridge(command(), {
+    env: { USERPROFILE: 'C:\\\\Users\\\\Operator' }, spawnSyncFn,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_FAILED');
+  assert.equal(result.status, 1);
+  assert.equal(Object.hasOwn(result, 'stderr'), false);
+  assert.equal(JSON.stringify(result).includes(confidential), false);
+  assert.equal(installerCalls, 1);
+});
+
 test('Battle Bridge executor proves exact main then invokes only the fixed installer with StartNow', async () => {
   const invocations = [];
   const spawnSyncFn = (executable, args) => {
