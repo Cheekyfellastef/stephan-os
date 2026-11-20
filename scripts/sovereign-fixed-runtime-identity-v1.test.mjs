@@ -9,6 +9,114 @@ import { fileURLToPath } from 'node:url';
 const native = ['SovereignCoreJobCustodyV1.cs','SovereignFixedRuntimeJobV1.cs','SovereignFixedRuntimeIdentityV1.cs','SovereignFixedRuntimeAuthorityV1.cs','SovereignFixedRuntimeHostV1.cs','SovereignFixedRuntimeSourceV1.cs'];
 const literal = value => "'" + value.replaceAll("'", "''") + "'";
 test('fixed runtime identity keeps each native unit within the original 32KiB bound', () => { for (const name of native) assert.ok(readFileSync(new URL('./windows/'+name, import.meta.url)).length <= 32768, name); });
+const providerDirectory = 'integrations/openclaw/stephanos-builder-provider/lib/';
+const memberAdmissionVectors = [
+  ...['oc1-gateway-provider.mjs', 'oc1-repository-scout.mjs',
+    'oc2-deterministic-test-build.mjs', 'oc2-gateway-provider.mjs']
+    .map(name => ({ path: providerDirectory + name, valid: true })),
+  ...['oc2-unreviewed.mjs', 'oc2-repository-scout.mjs', 'oc1-deterministic-test-build.mjs',
+    'oc3-gateway-provider.mjs', 'OC2-gateway-provider.mjs', 'oc2-gateway-provider.mjs.backup',
+    'oc2-gateway-provider.mjs/child', 'nested/oc2-gateway-provider.mjs', '../oc2-gateway-provider.mjs']
+    .map(name => ({ path: providerDirectory + name, valid: false })),
+  { path: 'integrations/other/stephanos-builder-provider/lib/oc2-gateway-provider.mjs', valid: false },
+];
+// Execute the production rule, rather than testing whether source contains a
+// desired literal. This expression uses the common JS/.NET regex subset; the
+// Windows case below additionally executes the real PowerShell record guard.
+for (const vector of memberAdmissionVectors) test('OC2 installer member admission: ' + vector.path, () => {
+  const installer = readFileSync(new URL('./windows/install-sovereign-fixed-runtime-v1.ps1', import.meta.url), 'utf8');
+  const rules = [...installer.matchAll(/\$row\.Path -cnotmatch '([^']+)'/g)];
+  assert.equal(rules.length, 1, 'one production member path rule');
+  assert.equal(new RegExp(rules[0][1]).test(vector.path), vector.valid, vector.path);
+});
+
+test('OC2 native and PowerShell production member guards agree without installation',
+  { skip: process.platform !== 'win32', timeout: 30000 }, () => {
+  const identity = readFileSync(new URL('./windows/SovereignFixedRuntimeIdentityV1.cs', import.meta.url), 'utf8');
+  const loop = 'foreach(var row in manifest.Files) {';
+  assert.equal(identity.split(loop).length, 2, 'one production manifest loop');
+  const afterLoop = identity.slice(identity.indexOf(loop) + loop.length);
+  const guardEnd = afterLoop.indexOf('string path=Path.Combine(RuntimeSourceRootV1,');
+  assert.ok(guardEnd > 0, 'manifest admission precedes filesystem access');
+  const guard = afterLoop.slice(0, guardEnd).trim();
+  assert.match(guard, /^if\(row==null/);
+  assert.match(guard, /throw new InvalidOperationException\("RUNTIME_SOURCE_MEMBER_UNPROVEN"\);$/);
+  // Compile the verbatim production guard in the real partial class, sharing
+  // its actual row type and RuntimeHexV1 helper. This fixture evaluates member
+  // admission only; installation and the surrounding native checks stay separate.
+  const fixture = `namespace Stephanos.Sovereign {
+    using System;
+    using System.Collections.Generic;
+    public static partial class CoreJobCustodyV1 {
+      internal static bool FixtureMemberAdmissionV1(string path) {
+        var row = new FixedRuntimeManifestFileV1 { Path=path,
+          Sha256=new string('a',64), MaterializedSha256=new string('b',64) };
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try {
+          ${guard}
+          return true;
+        } catch(InvalidOperationException error) {
+          if(error.Message!="RUNTIME_SOURCE_MEMBER_UNPROVEN") throw;
+          return false;
+        }
+      }
+    }
+  }`;
+  const directory = mkdtempSync(join(tmpdir(), 'stph-member-admission-'));
+  const fixturePath = join(directory, 'member-fixture.cs');
+  const vectorsPath = join(directory, 'vectors.json');
+  try {
+    writeFileSync(fixturePath, fixture, { encoding: 'utf8', flag: 'wx' });
+    writeFileSync(vectorsPath, JSON.stringify(memberAdmissionVectors), { encoding: 'utf8', flag: 'wx' });
+    const files = native.map(name => literal(fileURLToPath(new URL('./windows/' + name, import.meta.url))));
+    const script = String.raw`$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+Set-StrictMode -Version Latest
+$source=(@(__FILES__) | ForEach-Object { [IO.File]::ReadAllText($_) }) -join [Environment]::NewLine
+$source+=[Environment]::NewLine+[IO.File]::ReadAllText(__FIXTURE__)
+Add-Type -TypeDefinition $source -ReferencedAssemblies 'System.Web.Extensions','System.Core','System.Management' -ErrorAction Stop
+$flags=[Reflection.BindingFlags]'NonPublic,Static'
+$nativeGuard=[Stephanos.Sovereign.CoreJobCustodyV1].GetMethod('FixtureMemberAdmissionV1',$flags)
+if($null -eq $nativeGuard){throw 'NATIVE_MEMBER_FIXTURE_MISSING'}
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile(__INSTALLER__,[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'INSTALLER_MEMBER_PARSE_FAILED'}
+# Admission iterates bootstrap records; a later row loop pins records.Values.
+$loops=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.ForEachStatementAst] -and $node.Variable.VariablePath.UserPath -ceq 'row' -and $node.Condition.Extent.Text -ceq '$bootstrap.Records'},$true))
+if($loops.Count -ne 1){throw 'INSTALLER_MEMBER_LOOP_AMBIGUOUS'}
+$first=$loops[0].Body.Statements[0]
+if($first -isnot [Management.Automation.Language.IfStatementAst]){throw 'INSTALLER_MEMBER_GUARD_MISSING'}
+$installerGuard=[scriptblock]::Create($first.Extent.Text)
+$vectors=[IO.File]::ReadAllText(__VECTORS__)|ConvertFrom-Json
+$checked=0
+foreach($vector in $vectors){
+  $row=[pscustomobject]@{Path=[string]$vector.path;Sha256=('a'*64);MaterializedSha256=('b'*64);GitBlobSha=('c'*40);GitMode='100644'}
+  $records=@{}
+  $accepted=$true
+  try{. $installerGuard}
+  catch{if($_.Exception.Message -cne 'FIXED_INSTALL_SOURCE_MEMBER_REFUSED'){throw};$accepted=$false}
+  if($accepted -ne [bool]$vector.valid){throw ('INSTALLER_MEMBER_ADMISSION_MISMATCH:'+ $vector.path)}
+  $nativeAccepted=$nativeGuard.Invoke($null,@([string]$vector.path))
+  if($nativeAccepted -ne [bool]$vector.valid){throw ('NATIVE_MEMBER_ADMISSION_MISMATCH:'+ $vector.path)}
+  $checked++
+}
+[Console]::Write('MEMBER_ADMISSION_AGREEMENT='+$checked)
+`.replace('__FILES__', files.join(','))
+      .replace('__FIXTURE__', literal(fixturePath))
+      .replace('__INSTALLER__', literal(fileURLToPath(new URL('./windows/install-sovereign-fixed-runtime-v1.ps1', import.meta.url))))
+      .replace('__VECTORS__', literal(vectorsPath));
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    assert.ok(encoded.length < 16000, 'bounded fixture command');
+    const out = execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+      { encoding: 'utf8', windowsHide: true, timeout: 25000, maxBuffer: 65536 });
+    assert.equal(out.trim(), 'MEMBER_ADMISSION_AGREEMENT=' + memberAdmissionVectors.length);
+  } finally {
+    if(existsSync(fixturePath)) unlinkSync(fixturePath);
+    if(existsSync(vectorsPath)) unlinkSync(vectorsPath);
+    rmdirSync(directory);
+  }
+});
 test('native identity requires a genuine later boot and denies absent protected installation', { skip: process.platform !== 'win32', timeout: 30000 }, () => {
 const files = native.map(name => literal(fileURLToPath(new URL('./windows/'+name, import.meta.url))));
 const fixedExecutables=[
