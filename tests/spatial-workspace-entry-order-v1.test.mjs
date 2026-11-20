@@ -75,6 +75,70 @@ function frame(session) {
   } }) };
 }
 
+test('immersive entry revokes local audio tests and blocks new tests without touching ChatGPT Voice', () => {
+  const start = html.indexOf('    const workspaceEntry = createHolodeckEntryLifecycle({');
+  const end = html.indexOf("    enterButton.addEventListener('click'", start);
+  assert.ok(start >= 0 && end > start);
+  const nodes = new Map();
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { disabled: false, textContent: '' });
+    return nodes.get(id);
+  };
+  let onState, micStops = 0, speakerStops = 0, audioRefreshes = 0;
+  const page = vm.createContext({
+    createHolodeckEntryLifecycle: options => {
+      onState = options.onState;
+      return { isBusy: () => false };
+    },
+    enterHolodeckBaseline() {}, createSpatialWorkspaceTelemetryRecorderV1() {},
+    enterButton: node('enter-holodeck'), sessionReason: node('session-reason'),
+    stopMicTest() { micStops += 1; },
+    audio: {
+      stopSpeakers() { speakerStops += 1; },
+      getState() { return { microphoneActive: false, microphonePending: false }; },
+    },
+    refreshAudioUI() { audioRefreshes += 1; },
+    previewFrame: 19, previewRenderer: { dispose() {} },
+    immersiveActive: false, cancelAnimationFrame() {},
+    document: { getElementById: node },
+  });
+  vm.runInContext(html.slice(start, end), page);
+  onState({ state: 'requesting' });
+  assert.equal(page.immersiveActive, true);
+  assert.equal(micStops, 1, 'a pending or active local mic test must be revoked');
+  assert.equal(speakerStops, 1, 'a pending or active local speaker tone must be revoked');
+  assert.equal(audioRefreshes, 1, 'audio test controls must be refreshed under VR state');
+
+  const controlsStart = html.indexOf("    document.getElementById('audio-test-microphone').addEventListener");
+  const controlsEnd = html.indexOf("    document.getElementById('audio-voice-help').addEventListener", controlsStart);
+  assert.ok(controlsStart >= 0 && controlsEnd > controlsStart);
+  let micStarts = 0, speakerStarts = 0, stopCalls = 0;
+  const handlers = new Map();
+  const controls = vm.createContext({
+    immersiveActive: true,
+    document: { getElementById: id => ({
+      addEventListener: (_kind, handler) => handlers.set(id, handler),
+    }) },
+    audio: {
+      testMicrophone() { micStarts += 1; },
+      testSpeakers() { speakerStarts += 1; },
+    },
+    stopMicTest() { stopCalls += 1; },
+  });
+  vm.runInContext(html.slice(controlsStart, controlsEnd), controls);
+  handlers.get('audio-test-microphone')();
+  handlers.get('audio-test-speakers')();
+  assert.equal(micStarts, 0);
+  assert.equal(speakerStarts, 0);
+  handlers.get('audio-stop-microphone')();
+  assert.equal(stopCalls, 1, 'Stop remains usable in VR');
+  controls.immersiveActive = false;
+  handlers.get('audio-test-microphone')();
+  handlers.get('audio-test-speakers')();
+  assert.equal(micStarts, 1, 'the explicit local test is available again after exit');
+  assert.equal(speakerStarts, 1);
+});
+
 test('the actual Enter handler requests XR in the click before any telemetry work; stalled telemetry cannot hold entry', { timeout: 1000 }, async () => {
   const telemetry = deferred(), startGate = deferred(), recorder = recorderFixture({ startGate });
   let activated = false, click;

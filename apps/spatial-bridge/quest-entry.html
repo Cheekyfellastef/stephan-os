@@ -255,7 +255,8 @@
       }
       document.getElementById('audio-microphone').value=state.inputId;
       document.getElementById('audio-speakers').value=state.outputId;
-      document.getElementById('audio-test-microphone').disabled=state.microphoneActive||state.microphonePending;
+      document.getElementById('audio-test-microphone').disabled=immersiveActive||state.microphoneActive||state.microphonePending;
+      document.getElementById('audio-test-speakers').disabled=immersiveActive;
       document.getElementById('audio-stop-microphone').disabled=!state.microphoneActive&&!state.microphonePending;
       if(state.microphoneActive){
         if(micMeterTimer===null)micMeterTimer=setInterval(()=>{
@@ -387,9 +388,9 @@
     document.getElementById('audio-refresh').addEventListener('click',()=>audio.listDevices());
     document.getElementById('audio-microphone').addEventListener('change',event=>audio.setInput(event.target.value));
     document.getElementById('audio-speakers').addEventListener('change',event=>audio.setOutput(event.target.value));
-    document.getElementById('audio-test-microphone').addEventListener('click',()=>audio.testMicrophone());
+    document.getElementById('audio-test-microphone').addEventListener('click',()=>{if(!immersiveActive)void audio.testMicrophone();});
     document.getElementById('audio-stop-microphone').addEventListener('click',stopMicTest);
-    document.getElementById('audio-test-speakers').addEventListener('click',()=>audio.testSpeakers());
+    document.getElementById('audio-test-speakers').addEventListener('click',()=>{if(!immersiveActive)void audio.testSpeakers();});
     document.getElementById('audio-voice-help').addEventListener('click',()=>{
       screen.action('voice');consoleDetails.open=true;
       consoleDetails.scrollIntoView({block:'center',behavior:'auto'});
@@ -508,6 +509,11 @@
           enterButton.disabled = true;
           sessionReason.textContent = 'Requesting bounded immersive-vr session.';
           immersiveActive = true;
+          // Browser-local mic/speaker checks are not ChatGPT Voice. Never let
+          // a live test or a late local media permission follow entry into VR.
+          stopMicTest();
+          audio.stopSpeakers();
+          refreshAudioUI(audio.getState());
           if (previewFrame !== null) cancelAnimationFrame(previewFrame);
           previewFrame = null;
           for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = true;
@@ -521,6 +527,7 @@
           return;
         }
         immersiveActive = false;
+        refreshAudioUI(audio.getState());
         for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = false;
         playPreview();
         sessionStatus.textContent = state === 'stopping' ? 'stopping' : 'fallback';
