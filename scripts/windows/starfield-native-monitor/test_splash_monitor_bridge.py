@@ -257,18 +257,35 @@ class AdapterTests(unittest.TestCase):
         self.prepare()
         self.host.manual_close_required = True
         self.session.command(request("close", 2))
-        self.settle()
-        self.assertTrue(self.session.closed)
-        self.assertEqual(self.session.exit_code, 2)
+        self.session.pump()
+        deadline = time.monotonic() + 3
+        while self.session.busy and time.monotonic() < deadline:
+            self.session.pump()
+            time.sleep(0.002)
+        self.session.pump()
+        self.assertFalse(self.session.closed)
+        self.assertNotIn("host-close", self.host.calls)
+        self.assertTrue(self.journal.lock.exists())
         self.assertFalse(self.session.projection()["safeToClose"])
         self.assertFalse(self.session.projection()["providerSlotReleased"])
         self.assertEqual(self.host.calls.count("finish"), 1)
+        self.host.alive = False
+        self.session.next_retirement_observation = 0
+        self.settle()
+        self.assertTrue(self.session.closed)
+        self.assertEqual(self.session.exit_code, 2)
+        self.assertEqual(self.host.calls.count("finish"), 1)
+        self.assertFalse(self.monitor.state["cleanupComplete"])
 
     def test_existing_attempt_is_cleanup_only_and_never_reconfirmed(self):
         first = self.prepare()
-        self.journal.release()
+        self.session.command(request("finish", 2))
+        self.settle()
+        self.session.command(request("close", 3))
+        self.settle()
         second_journal = m.Journal(self.directory)
         second_host = fixtures.FakeHost(second_journal)
+        second_host.status = self.host.status
         second_host.close = lambda: None
         second_monitor = m.Monitor(second_journal, second_host)
         second = b.SplashSession(lambda notify: second_monitor, io.StringIO(), CHANNEL, self.directory)
@@ -322,8 +339,41 @@ class AdapterTests(unittest.TestCase):
         self.journal.write_uncertain = True
         self.assertFalse(self.session.projection()["providerSlotReleased"])
         self.session.request_stop("CANCELLED_TEST_COMPLETE")
-        self.settle()
+        self.session.pump()
+        self.assertFalse(self.session.closed)
+        self.assertNotIn("host-close", self.host.calls)
         self.assertTrue(self.journal.lock.exists())
+        self.journal.write_uncertain = False
+        self.host.alive = False
+        self.session.next_retirement_observation = 0
+        self.settle()
+
+    def test_unresolved_loader_survives_close_until_child_and_game_retire(self):
+        self.prepare()
+        child = {"id": "a" * 32, "role": "load", "state": "UNRESOLVED", "pid": 90000}
+        self.monitor.state.update(activeChild=child.copy(), childCalls=[child], cleanupComplete=False)
+        self.session.mode = "cleanup"
+        self.session.request_stop("CANCELLED_SPLASH_DISCONNECTED")
+        self.session.transport_broken = True
+        self.session.pump()
+        self.assertFalse(self.session.closed)
+        self.assertTrue(self.journal.lock.exists())
+        self.assertNotIn("host-close", self.host.calls)
+        # Authentic completion is represented by a returned child, but the
+        # remote thread/game may still be alive after that child has returned.
+        child.update(state="RETURNED", returnCode=0)
+        self.monitor.state["activeChild"] = None
+        self.session.next_retirement_observation = 0
+        self.session.pump()
+        self.assertFalse(self.session.closed)
+        self.assertTrue(self.journal.lock.exists())
+        self.host.alive = False
+        self.session.next_retirement_observation = 0
+        self.settle()
+        self.assertTrue(self.session.closed)
+        self.assertEqual(self.host.calls.count("host-close"), 1)
+        self.assertNotIn("finish", self.host.calls)
+        self.assertNotIn("load", self.host.calls)
 
     def test_done_does_not_manufacture_capture_or_playable_success(self):
         self.prepare()
@@ -335,6 +385,13 @@ class AdapterTests(unittest.TestCase):
         self.assertFalse(projected["analysisAccepted"])
         self.assertFalse(projected["playableVRProven"])
         self.assertNotEqual(projected["outcome"], "REVIEWED_MONITOR_TEST_PASSED")
+
+    def test_cleanup_flag_alone_never_projects_retired_custody(self):
+        self.prepare()
+        self.monitor.state["cleanupComplete"] = True
+        self.assertFalse(self.session.projection()["safeToClose"])
+        self.assertFalse(self.session.projection()["providerSlotReleased"])
+        self.host.alive = False
 
     def test_result_paths_only_project_existing_scoped_results(self):
         self.prepare()

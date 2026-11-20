@@ -8,25 +8,374 @@ param(
     [string]$ProfileName = ''
 )
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
+if ($MyInvocation.InvocationName -ne '.') {
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+    $ProgressPreference = 'SilentlyContinue'
+    if (-not $env:USERPROFILE) { throw 'USERPROFILE is required.' }
+    $workspaceRoot = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'
+    $stateRoot = Join-Path $workspaceRoot 'vr'
+    $statePath = Join-Path $stateRoot 'vr-resource-governor-current.json'
+    $overridePath = Join-Path $stateRoot 'gaming-resource-override.json'
+    $preparePath = Join-Path $stateRoot 'gaming-resource-prepare.json'
+    $profilesPath = Join-Path $stateRoot 'gaming-resource-profiles.json'
+    $telemetryPath = Join-Path $stateRoot 'gaming-resource-governor-events.jsonl'
+    $simAirLinkStatePath = Join-Path $stateRoot 'starfield-vr-sim-air-link.json'
+    $lightweightModel = 'llama3.2:3b'
+    $script:governorDependencyHealthy = $true
+    $script:governorNativeClock = $null
+    $script:governorNativeProbeOwnedHold = $false
+    $script:governorNativeAttemptDigest = ''
+    $script:governorMutationOwner = $null
+}
 
-if (-not $env:USERPROFILE) { throw 'USERPROFILE is required.' }
+function Get-GovernorNativeMetadataApiV1 {
+    # Definition-only import never invokes this. No compiler/metadata child is
+    # created: fixed P/Invoke declarations are emitted entirely in this process.
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try {
+        if ($identity.ImpersonationLevel -ne [Security.Principal.TokenImpersonationLevel]::None -or
+            ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -or
+            [IntPtr]::Size -ne 8 -or -not [Environment]::Is64BitProcess) { throw 'GOVERNOR_NATIVE_CONTEXT_UNPROVEN' }
+    } finally { $identity.Dispose() }
+    $existing = 'Stephanos.GovernorNativeMetadataV1' -as [type]
+    if ($existing) { return $existing }
+    $assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly(
+        [Reflection.AssemblyName]::new('Stephanos.GovernorNativeMetadataV1'), [Reflection.Emit.AssemblyBuilderAccess]::Run)
+    $builder = $assembly.DefineDynamicModule('Native').DefineType('Stephanos.GovernorNativeMetadataV1',
+        [Reflection.TypeAttributes]'Public,Abstract,Sealed')
+    $kernel = 'C:\Windows\System32\kernel32.dll'
+    $ntdll = 'C:\Windows\System32\ntdll.dll'
+    $u32ref = [uint32].MakeByRefType(); $i64ref = [long].MakeByRefType()
+    # Every name, library and signature is literal; no caller-selected API.
+    $declarations = @(
+        @('CreateToolhelp32Snapshot',$kernel,[IntPtr],[type[]]@([uint32],[uint32])),
+        @('Process32FirstW',$kernel,[bool],[type[]]@([IntPtr],[IntPtr])),
+        @('Process32NextW',$kernel,[bool],[type[]]@([IntPtr],[IntPtr])),
+        @('OpenProcess',$kernel,[IntPtr],[type[]]@([uint32],[bool],[uint32])),
+        @('GetProcessTimes',$kernel,[bool],[type[]]@([IntPtr],$i64ref,$i64ref,$i64ref,$i64ref)),
+        @('QueryFullProcessImageNameW',$kernel,[bool],[type[]]@([IntPtr],[uint32],[Text.StringBuilder],$u32ref)),
+        @('WaitForSingleObject',$kernel,[uint32],[type[]]@([IntPtr],[uint32])),
+        @('GetProcessId',$kernel,[uint32],[type[]]@([IntPtr])),
+        @('GetCurrentProcess',$kernel,[IntPtr],[type[]]@()),
+        @('GetCurrentProcessId',$kernel,[uint32],[type[]]@()),
+        @('CloseHandle',$kernel,[bool],[type[]]@([IntPtr])),
+        @('CreateFileW',$kernel,[IntPtr],[type[]]@([string],[uint32],[uint32],[IntPtr],[uint32],[uint32],[IntPtr])),
+        @('GetFileInformationByHandle',$kernel,[bool],[type[]]@([IntPtr],[IntPtr])),
+        @('GetFinalPathNameByHandleW',$kernel,[uint32],[type[]]@([IntPtr],[Text.StringBuilder],[uint32],[uint32])),
+        @('NtQueryInformationProcess',$ntdll,[int],[type[]]@([IntPtr],[int],[IntPtr],[uint32],$u32ref)),
+        @('NtQuerySystemInformation',$ntdll,[int],[type[]]@([int],[IntPtr],[uint32],$u32ref))
+    )
+    foreach ($row in $declarations) {
+        $method = $builder.DefinePInvokeMethod($row[0],$row[1],$row[0],
+            [Reflection.MethodAttributes]'Public,Static,PinvokeImpl',[Reflection.CallingConventions]::Standard,
+            $row[2],$row[3],[Runtime.InteropServices.CallingConvention]::Winapi,[Runtime.InteropServices.CharSet]::Unicode)
+        $method.SetImplementationFlags([Reflection.MethodImplAttributes]::PreserveSig)
+        $attribute = [Runtime.InteropServices.DllImportAttribute]
+        $fields = [Reflection.FieldInfo[]]@($attribute.GetField('SetLastError'),$attribute.GetField('ExactSpelling'),$attribute.GetField('CharSet'),$attribute.GetField('CallingConvention'))
+        $method.SetCustomAttribute([Reflection.Emit.CustomAttributeBuilder]::new(
+            $attribute.GetConstructor([type[]]@([string])),[object[]]@($row[1]),$fields,[object[]]@($true,$true,[Runtime.InteropServices.CharSet]::Unicode,[Runtime.InteropServices.CallingConvention]::Winapi)))
+    }
+    return $builder.CreateType()
+}
 
-$workspaceRoot = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'
-$stateRoot = Join-Path $workspaceRoot 'vr'
-$statePath = Join-Path $stateRoot 'vr-resource-governor-current.json'
-$overridePath = Join-Path $stateRoot 'gaming-resource-override.json'
-$preparePath = Join-Path $stateRoot 'gaming-resource-prepare.json'
-$profilesPath = Join-Path $stateRoot 'gaming-resource-profiles.json'
-$telemetryPath = Join-Path $stateRoot 'gaming-resource-governor-events.jsonl'
-$simAirLinkStatePath = Join-Path $stateRoot 'starfield-vr-sim-air-link.json'
-$lightweightModel = 'llama3.2:3b'
-$script:governorDependencyHealthy = $true
-$script:governorNativeClock = $null
-$script:governorNativeProbeOwnedHold = $false
-$script:governorMutationOwner = $null
+function Assert-GovernorRecoveryDeadlineV1 {
+    param($Clock)
+    $elapsed = $Clock.Elapsed.TotalMilliseconds
+    if ($elapsed -isnot [double] -or [double]::IsNaN($elapsed) -or [double]::IsInfinity($elapsed) -or
+        $elapsed -lt $script:governorRecoveryLastElapsed -or $elapsed -gt 5000) { throw 'GOVERNOR_RECOVERY_OBSERVATION_UNPROVEN' }
+    $script:governorRecoveryLastElapsed = $elapsed
+}
+
+function Get-GovernorNativeEpochV1 {
+    $api = Get-GovernorNativeMetadataApiV1
+    $buffer = [Runtime.InteropServices.Marshal]::AllocHGlobal(32)
+    try {
+        for ($i=0;$i -lt 32;$i+=8) { [Runtime.InteropServices.Marshal]::WriteInt64($buffer,$i,0) }
+        [uint32]$returned=0
+        # Fixed x64 SYSTEM_BOOT_ENVIRONMENT_INFORMATION, opaque boot GUID only.
+        # phnt ntexapi.h@53fbbdc5b5d2b08761db1c7b26bfa8c820924356: class90.
+        if ($api::NtQuerySystemInformation(90,$buffer,32,[ref]$returned) -ne 0 -or $returned -ne 32 -or
+            [Runtime.InteropServices.Marshal]::ReadInt32($buffer,16) -notin @(1,2)) { throw 'GOVERNOR_NATIVE_BOOT_UNPROVEN' }
+        $bytes = New-Object byte[] 16
+        [Runtime.InteropServices.Marshal]::Copy($buffer,$bytes,0,16)
+        $boot = [Guid]::new($bytes)
+        if ($boot -eq [Guid]::Empty) { throw 'GOVERNOR_NATIVE_BOOT_UNPROVEN' }
+        $machine = [Microsoft.Win32.Registry]::GetValue('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography','MachineGuid',$null)
+        [Guid]$machineGuid=[Guid]::Empty
+        if ($machine -isnot [string] -or -not [Guid]::TryParse($machine,[ref]$machineGuid) -or $machineGuid -eq [Guid]::Empty) { throw 'GOVERNOR_NATIVE_BOOT_UNPROVEN' }
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try { $machineHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($machine.ToLowerInvariant())))).Replace('-','').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+        [long]$born=0;[long]$exited=0;[long]$kernel=0;[long]$user=0
+        if (-not $api::GetProcessTimes($api::GetCurrentProcess(),[ref]$born,[ref]$exited,[ref]$kernel,[ref]$user) -or $born -le 0 -or
+            $api::GetCurrentProcessId() -ne $PID) { throw 'GOVERNOR_NATIVE_OWNER_UNPROVEN' }
+        return [pscustomobject]@{machineHash=$machineHash;bootIdentifier=$boot.ToString('N');ownerProcessId=$PID;ownerCreationFileTime=$born}
+    } finally { for ($i=0;$i -lt 32;$i+=8) { [Runtime.InteropServices.Marshal]::WriteInt64($buffer,$i,0) };[Runtime.InteropServices.Marshal]::FreeHGlobal($buffer) }
+}
+
+function Assert-GovernorNativeEpochV1 {
+    param($Epoch)
+    if($null -eq $Epoch -or $Epoch.GetType().FullName -cne 'System.Management.Automation.PSCustomObject' -or
+        (($Epoch.PSObject.Properties.Name|Sort-Object) -join ',') -cne 'bootIdentifier,machineHash,ownerCreationFileTime,ownerProcessId' -or
+        $Epoch.machineHash -isnot [string] -or $Epoch.machineHash -cnotmatch '^[a-f0-9]{64}$' -or
+        $Epoch.bootIdentifier -isnot [string] -or $Epoch.bootIdentifier -cnotmatch '^[a-f0-9]{32}$' -or $Epoch.bootIdentifier -ceq ('0'*32) -or
+        ($Epoch.ownerProcessId -isnot [int] -and $Epoch.ownerProcessId -isnot [long]) -or $Epoch.ownerProcessId -ne $PID -or
+        $Epoch.ownerCreationFileTime -isnot [long] -or $Epoch.ownerCreationFileTime -le 0 -or $Epoch.ownerCreationFileTime -gt [DateTime]::UtcNow.ToFileTimeUtc()){
+        throw 'GOVERNOR_NATIVE_OWNER_UNPROVEN'
+    }
+}
+
+function Get-GovernorProbeCandidatesV1 {
+    param($Clock)
+    $api=Get-GovernorNativeMetadataApiV1
+    Assert-GovernorRecoveryDeadlineV1 $Clock
+    $snapshot=$api::CreateToolhelp32Snapshot(2,0)
+    if ($snapshot -eq [IntPtr]::Zero -or $snapshot -eq [IntPtr](-1)) { throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN' }
+    $buffer=[Runtime.InteropServices.Marshal]::AllocHGlobal(568)
+    try {
+        for($i=0;$i -lt 568;$i+=8){[Runtime.InteropServices.Marshal]::WriteInt64($buffer,$i,0)}
+        [Runtime.InteropServices.Marshal]::WriteInt32($buffer,568)
+        $more=$api::Process32FirstW($snapshot,$buffer)
+        if(-not $more){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+        $rows=@();$seen=@{};$count=0;$self=$false
+        while($more){
+            Assert-GovernorRecoveryDeadlineV1 $Clock
+            if(++$count -gt 4096 -or [Runtime.InteropServices.Marshal]::ReadInt32($buffer) -ne 568){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+            $pidValue=[uint32][Runtime.InteropServices.Marshal]::ReadInt32($buffer,8)
+            $name=[Runtime.InteropServices.Marshal]::PtrToStringUni([IntPtr]::Add($buffer,44),260)
+            $end=$name.IndexOf([char]0)
+            if($end -lt 1 -or $seen.ContainsKey([string]$pidValue)){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+            $name=$name.Substring(0,$end)
+            if($name -match '[\x00-\x1f\x7f\\/:]'){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+            $seen[[string]$pidValue]=$true
+            if($pidValue -eq $PID){
+                $self=$name -ieq 'powershell.exe'
+                if(-not $self){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+            }
+            if($name -ieq 'nvidia-smi.exe' -or $name -ieq 'ollama.exe'){
+                if($pidValue -eq 0 -or $rows.Count -ge 64){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+                $rows+=,[pscustomobject]@{processId=$pidValue;name=$name.ToLowerInvariant()}
+            }
+            $more=$api::Process32NextW($snapshot,$buffer)
+            if(-not $more -and [Runtime.InteropServices.Marshal]::GetLastWin32Error() -ne 18){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+        }
+        if(-not $self){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+        Assert-GovernorRecoveryDeadlineV1 $Clock
+        return @($rows | Sort-Object processId)
+    } finally {
+        [Runtime.InteropServices.Marshal]::FreeHGlobal($buffer)
+        if(-not $api::CloseHandle($snapshot)){throw 'GOVERNOR_RECOVERY_CENSUS_UNPROVEN'}
+    }
+}
+
+function Read-GovernorNativeCommandV1 {
+    param([IntPtr]$Handle)
+    $api=Get-GovernorNativeMetadataApiV1
+    $buffer=[Runtime.InteropServices.Marshal]::AllocHGlobal(65536)
+    try {
+        for($i=0;$i -lt 65536;$i+=8){[Runtime.InteropServices.Marshal]::WriteInt64($buffer,$i,0)}
+        [uint32]$actual=0
+        if($api::NtQueryInformationProcess($Handle,60,$buffer,65536,[ref]$actual) -ne 0 -or $actual -lt 16 -or $actual -gt 65536){throw 'GOVERNOR_RECOVERY_COMMAND_UNPROVEN'}
+        $length=[uint16][Runtime.InteropServices.Marshal]::ReadInt16($buffer)
+        $maximum=[uint16][Runtime.InteropServices.Marshal]::ReadInt16($buffer,2)
+        $start=[uint64]$buffer.ToInt64();$pointer=[uint64][Runtime.InteropServices.Marshal]::ReadIntPtr($buffer,8).ToInt64()
+        if($length -lt 2 -or ($length % 2) -ne 0 -or ($maximum % 2) -ne 0 -or $length -gt $maximum -or
+            [Runtime.InteropServices.Marshal]::ReadInt32($buffer,4) -ne 0 -or $start -gt ([uint64]::MaxValue-$actual) -or
+            $pointer -lt ($start+16) -or $pointer -gt ($start+$actual) -or $maximum -gt ($start+$actual-$pointer)) {throw 'GOVERNOR_RECOVERY_COMMAND_UNPROVEN'}
+        $bytes=New-Object byte[] $length
+        [Runtime.InteropServices.Marshal]::Copy([IntPtr]([long]$pointer),$bytes,0,$length)
+        $command=[Text.UnicodeEncoding]::new($false,$false,$true).GetString($bytes)
+        if([string]::IsNullOrWhiteSpace($command) -or $command.IndexOf([char]0) -ge 0){throw 'GOVERNOR_RECOVERY_COMMAND_UNPROVEN'}
+        return $command
+    } finally {
+        if($null -ne (Get-Variable bytes -ErrorAction SilentlyContinue)){[Array]::Clear($bytes,0,$bytes.Length)}
+        for($i=0;$i -lt 65536;$i+=8){[Runtime.InteropServices.Marshal]::WriteInt64($buffer,$i,0)}
+        [Runtime.InteropServices.Marshal]::FreeHGlobal($buffer)
+    }
+}
+
+function Assert-GovernorServePinV1 {
+    param($Pin)
+    $api=Get-GovernorNativeMetadataApiV1
+    [long]$birth=0;[long]$exitTime=0;[long]$kernel=0;[long]$user=0
+    $image=[Text.StringBuilder]::new(1024);[uint32]$size=1024
+    if($api::GetProcessId($Pin.handle) -ne $Pin.processId -or $api::WaitForSingleObject($Pin.handle,0) -ne 258 -or
+        -not $api::GetProcessTimes($Pin.handle,[ref]$birth,[ref]$exitTime,[ref]$kernel,[ref]$user) -or $birth -le 0 -or
+        ($Pin.birth -ne 0 -and $Pin.birth -ne $birth) -or
+        -not $api::QueryFullProcessImageNameW($Pin.handle,0,$image,[ref]$size) -or $size -lt 1 -or $size -ge 1024){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}
+    $allowed=@((Join-Path $env:LOCALAPPDATA 'Programs\Ollama\ollama.exe'),(Join-Path $env:LOCALAPPDATA 'Ollama\ollama.exe'))
+    $path=$image.ToString()
+    if($path -inotmatch '\\ollama\.exe$' -or $allowed -inotcontains $path -or ($Pin.image -and $Pin.image -ine $path)){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}
+    $command=Read-GovernorNativeCommandV1 $Pin.handle
+    if($command -cne ('"'+$path+'" serve') -and $command -cne ($path+' serve')){throw 'GOVERNOR_RECOVERY_ACTIVE_PROBE'}
+    if($Pin.command -and $Pin.command -cne $command){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}
+    $Pin.birth=$birth;$Pin.image=$path;$Pin.command=$command
+}
+
+function Get-GovernorBytesDigestV1 {
+    param([byte[]]$Bytes)
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try{return ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant()}
+    finally{$sha.Dispose()}
+}
+
+function Get-GovernorPinnedFileInfoV1 {
+    param([IntPtr]$Handle)
+    $api=Get-GovernorNativeMetadataApiV1
+    $buffer=[Runtime.InteropServices.Marshal]::AllocHGlobal(52)
+    try{
+        if(-not $api::GetFileInformationByHandle($Handle,$buffer)){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+        $attributes=[Runtime.InteropServices.Marshal]::ReadInt32($buffer)
+        if(($attributes -band 0x400) -ne 0){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+        return [pscustomobject]@{attributes=$attributes;links=[Runtime.InteropServices.Marshal]::ReadInt32($buffer,40);
+            high=[uint32][Runtime.InteropServices.Marshal]::ReadInt32($buffer,32);low=[uint32][Runtime.InteropServices.Marshal]::ReadInt32($buffer,36)}
+    }finally{[Runtime.InteropServices.Marshal]::FreeHGlobal($buffer)}
+}
+
+function Open-GovernorRecoveryParentPinsV1 {
+    param([string]$Directory)
+    $api=Get-GovernorNativeMetadataApiV1
+    $pins=@();$path=[IO.Path]::GetFullPath($Directory)
+    try{
+        for($count=0;$count -lt 32;$count++){
+            # Attribute read, no write/delete authority; share neither rename
+            # nor deletion while original/archive paths are used.
+            $handle=$api::CreateFileW($path,0x80,3,[IntPtr]::Zero,3,0x02200000,[IntPtr]::Zero)
+            if($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+            $pins+=,$handle
+            $info=Get-GovernorPinnedFileInfoV1 $handle
+            if(($info.attributes -band 0x10) -eq 0){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+            $parent=[IO.Path]::GetDirectoryName($path)
+            if(-not $parent -or $parent -eq $path){return @($pins)}
+            $path=$parent
+        }
+        throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'
+    }catch{foreach($pin in $pins){[void]$api::CloseHandle($pin)};throw}
+}
+
+function Assert-GovernorRecoveryStateHandleV1 {
+    param($Stream)
+    $api=Get-GovernorNativeMetadataApiV1
+    $handle=$Stream.SafeFileHandle.DangerousGetHandle()
+    $info=Get-GovernorPinnedFileInfoV1 $handle
+    $path=[Text.StringBuilder]::new(1024)
+    $length=$api::GetFinalPathNameByHandleW($handle,$path,1024,0)
+    if($length -lt 1 -or $length -ge 1024 -or $path.ToString() -ine ('\\?\'+[IO.Path]::GetFullPath($statePath)) -or
+        ($info.attributes -band 0x10) -ne 0 -or $info.links -ne 1 -or $info.high -ne 0 -or $info.low -lt 2 -or $info.low -gt 32768 -or
+        $Stream.Length -ne $info.low){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+}
+
+function Invoke-GovernorHeldProbeRecoveryV1 {
+    Assert-GovernorMutationOwner
+    $script:governorRecoveryLastElapsed=0.0
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    $pins=@();$parentPins=@();$stream=$null;$api=$null
+    try {
+        $epoch=Get-GovernorNativeEpochV1
+        Assert-GovernorNativeEpochV1 $epoch
+        $api=Get-GovernorNativeMetadataApiV1
+        $parentPins=@(Open-GovernorRecoveryParentPinsV1 $stateRoot)
+        $info=Get-Item -LiteralPath $statePath -ErrorAction Stop
+        if($info.PSIsContainer -or $info.Length -lt 2 -or $info.Length -gt 32768 -or
+            ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+        $stream=[IO.FileStream]::new($statePath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        Assert-GovernorRecoveryStateHandleV1 $stream
+        $original=New-Object byte[] ([int]$stream.Length)
+        if($stream.Read($original,0,$original.Length) -ne $original.Length -or $stream.ReadByte() -ne -1){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+        $state=[Text.UTF8Encoding]::new($false,$true).GetString($original)|ConvertFrom-Json -ErrorAction Stop
+        if($state.schemaVersion -cne 'stephanos.vr-resource-governor.v1' -or $state.governorVersion -ne 3 -or
+            $state.nativeProbeCustodyHeld -isnot [bool] -or $state.nativeProbeCustodyHeld -ne $true){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+        if($state.PSObject.Properties['nativeProbeAttempt']){
+            $attempt=$state.nativeProbeAttempt
+            if($null -eq $attempt -or $attempt.GetType().FullName -cne 'System.Management.Automation.PSCustomObject' -or
+                (($attempt.PSObject.Properties.Name|Sort-Object) -join ',') -cne 'attemptId,bootIdentifier,commandSha256,machineHash,operation,ownerCreationFileTime,ownerProcessId,phase,preparedAtUtc,schemaVersion' -or
+                $attempt.schemaVersion -cne 'stephanos.governor-probe-attempt.v1' -or $attempt.attemptId -cnotmatch '^[a-f0-9]{32}$' -or
+                @('schemaVersion','attemptId','operation','commandSha256','phase','machineHash','bootIdentifier','preparedAtUtc').Where({$attempt.$_ -isnot [string]}).Count -ne 0 -or
+                $attempt.commandSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+                $attempt.operation -cnotin @('GpuSnapshot','OllamaInventory','OllamaStop','GovernorRecycle','OwnerAbandoned') -or
+                $attempt.phase -cnotin @('PREPARING','BOUND') -or ($attempt.ownerProcessId -isnot [int] -and $attempt.ownerProcessId -isnot [long]) -or $attempt.ownerProcessId -le 0 -or
+                ($attempt.ownerCreationFileTime -isnot [int] -and $attempt.ownerCreationFileTime -isnot [long]) -or
+                $attempt.preparedAtUtc -cnotmatch 'Z$' -or
+                ($attempt.phase -ceq 'PREPARING' -and ($attempt.machineHash -cne 'UNOBSERVED' -or $attempt.bootIdentifier -cne 'UNOBSERVED' -or $attempt.ownerCreationFileTime -ne 0)) -or
+                ($attempt.phase -ceq 'BOUND' -and ($attempt.machineHash -cnotmatch '^[a-f0-9]{64}$' -or $attempt.bootIdentifier -cnotmatch '^[a-f0-9]{32}$' -or $attempt.ownerCreationFileTime -le 0))){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+        }
+        $digest=Get-GovernorBytesDigestV1 $original
+        $first=@(Get-GovernorProbeCandidatesV1 $clock)
+        $api=Get-GovernorNativeMetadataApiV1
+        foreach($row in $first){
+            if($row.name -cne 'ollama.exe'){throw 'GOVERNOR_RECOVERY_ACTIVE_PROBE'}
+            $handle=$api::OpenProcess(0x101000,$false,$row.processId)
+            if($handle -eq [IntPtr]::Zero -or $handle -eq [IntPtr](-1)){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}
+            $pin=[pscustomobject]@{handle=$handle;processId=$row.processId;birth=[long]0;image='';command='';file=$null;hash=''}
+            $pins+=,$pin
+            Assert-GovernorServePinV1 $pin
+            $fileInfo=Get-Item -LiteralPath $pin.image -ErrorAction Stop
+            if($fileInfo.PSIsContainer -or $fileInfo.Length -lt 1 -or $fileInfo.Length -gt 134217728 -or $fileInfo.LastWriteTimeUtc.ToFileTimeUtc() -gt $pin.birth -or
+                ($fileInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}
+            $pin.file=[IO.FileStream]::new($pin.image,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+            $sha=[Security.Cryptography.SHA256]::Create()
+            try{$pin.hash=([BitConverter]::ToString($sha.ComputeHash($pin.file))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+            # Actual 0.40.14 Ollama Inc image independently observed 2026-11-18.
+            # This pin restricts legacy serve exclusion only; no online trust or
+            # revocation request can stall the existing watcher.
+            if($pin.hash -cne '4ccefcbfecc50fb6526471adabbc20869dd614e29e351120b15083cb174b0b8a'){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}
+            Assert-GovernorRecoveryDeadlineV1 $clock
+        }
+        $second=@(Get-GovernorProbeCandidatesV1 $clock)
+        if(($first|ConvertTo-Json -Compress) -cne ($second|ConvertTo-Json -Compress)){throw 'GOVERNOR_RECOVERY_CENSUS_CHANGED'}
+        foreach($pin in $pins){
+            Assert-GovernorServePinV1 $pin
+            $pin.file.Position=0;$sha=[Security.Cryptography.SHA256]::Create()
+            try{if($pin.hash -cne ([BitConverter]::ToString($sha.ComputeHash($pin.file))).Replace('-','').ToLowerInvariant()){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}}finally{$sha.Dispose()}
+        }
+        $currentEpoch=Get-GovernorNativeEpochV1
+        Assert-GovernorNativeEpochV1 $currentEpoch
+        if(($epoch|ConvertTo-Json -Compress) -cne ($currentEpoch|ConvertTo-Json -Compress)){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}
+        Assert-GovernorMutationOwner
+        Assert-GovernorRecoveryDeadlineV1 $clock
+        $stream.Position=0;$check=New-Object byte[] ([int]$stream.Length)
+        if($stream.Read($check,0,$check.Length) -ne $check.Length -or (Get-GovernorBytesDigestV1 $check) -cne $digest){throw 'GOVERNOR_RECOVERY_STATE_CHANGED'}
+        $archive=Join-Path $stateRoot 'governor-custody-recovery'
+        if(Test-Path -LiteralPath $archive){if((Get-Item -LiteralPath $archive).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'GOVERNOR_RECOVERY_ARCHIVE_UNPROVEN'}}
+        else{[void][IO.Directory]::CreateDirectory($archive)}
+        $parentPins+=@(Open-GovernorRecoveryParentPinsV1 $archive)
+        $receipt=[ordered]@{schemaVersion='stephanos.governor-probe-custody-recovery.v1';originalSha256=$digest;originalBytesBase64=[Convert]::ToBase64String($original);
+            epoch=$epoch;historicalOutcome='UNKNOWN';exclusion='CURRENT_CLOSED_PROBE_DOMAIN_EXCLUDED';observedServeCount=$pins.Count;
+            phase='ORIGINAL_ARCHIVED';restrictionRetired=$false;observedAtUtc=[DateTime]::UtcNow.ToString('o');localModelAllowed=$false;heavyModelAllowed=$false;dependencyObservationKnown=$false;sourceMutationAllowed=$false}
+        $receiptPath=Join-Path $archive ($digest+'-'+[Guid]::NewGuid().ToString('N')+'.json')
+        $receiptBytes=[Text.UTF8Encoding]::new($false).GetBytes(($receipt|ConvertTo-Json -Depth 8 -Compress))
+        $audit=[IO.FileStream]::new($receiptPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        try{$audit.Write($receiptBytes,0,$receiptBytes.Length);$audit.Flush($true)}finally{$audit.Dispose()}
+        $final=@(Get-GovernorProbeCandidatesV1 $clock)
+        if(($first|ConvertTo-Json -Compress) -cne ($final|ConvertTo-Json -Compress)){throw 'GOVERNOR_RECOVERY_CENSUS_CHANGED'}
+        foreach($pin in $pins){Assert-GovernorServePinV1 $pin}
+        $finalEpoch=Get-GovernorNativeEpochV1
+        Assert-GovernorNativeEpochV1 $finalEpoch
+        if(($epoch|ConvertTo-Json -Compress) -cne ($finalEpoch|ConvertTo-Json -Compress)){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}
+        Assert-GovernorRecoveryStateHandleV1 $stream
+        $stream.Position=0;$check=New-Object byte[] ([int]$stream.Length)
+        if($stream.Read($check,0,$check.Length) -ne $check.Length -or (Get-GovernorBytesDigestV1 $check) -cne $digest){throw 'GOVERNOR_RECOVERY_STATE_CHANGED'}
+        foreach($pin in $pins){
+            $pin.file.Dispose();$pin.file=$null
+            if(-not $api::CloseHandle($pin.handle)){throw 'GOVERNOR_RECOVERY_IDENTITY_UNPROVEN'}
+            $pin.handle=[IntPtr]::Zero
+        }
+        Assert-GovernorRecoveryDeadlineV1 $clock
+        foreach($pair in @(@('nativeProbeCustodyHeld',$false),@('heavyModelAllowed',$false),@('localModelAllowed',$false),@('evictionHealthy',$false),@('zeroLocalModelInvariant',$false),@('dependencyObservationKnown',$false),@('ollamaLoadMode','unknown'),@('nativeProbeRecoveryReceiptSha256',(Get-GovernorBytesDigestV1 $receiptBytes)))){
+            $state|Add-Member -NotePropertyName $pair[0] -NotePropertyValue $pair[1] -Force
+        }
+        $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($state|ConvertTo-Json -Depth 10))
+        if($bytes.Length -lt 2 -or $bytes.Length -gt 32768){throw 'GOVERNOR_RECOVERY_STATE_UNPROVEN'}
+        $stream.Position=0;$stream.Write($bytes,0,$bytes.Length);$stream.SetLength($bytes.Length);$stream.Flush($true)
+        return $true
+    } catch {return $false}
+    finally{
+        foreach($pin in $pins){if($pin.file){$pin.file.Dispose()};if($pin.handle -ne [IntPtr]::Zero){[void]$api::CloseHandle($pin.handle)}}
+        if($stream){$stream.Dispose()}
+        if($api){foreach($pin in $parentPins){[void]$api::CloseHandle($pin)}}
+    }
+}
 
 # One cross-process owner for the existing governor, including caretaker
 # replacement. The name and protected DACL derive only from the actual user.
@@ -82,11 +431,108 @@ function Assert-GovernorMutationOwner {
         ($script:governorMutationOwner.abandoned -and -not $AllowAbandoned)) { throw 'GOVERNOR_MUTATION_OWNER_UNPROVEN' }
 }
 
+
+# A fresh idle reconciliation may preserve ONLY an already-admitted cooperative
+# CPU job. Model grants and initial admission remain restrictive during probes.
+# This subrecord belongs to this same canonical state/mutation owner; consumers
+# must independently observe its exact live process birth and enforce expiry.
+function Revoke-GovernorCpuProbeContinuity {
+    if (-not (Get-Variable -Name governorCpuProbeCycleId -Scope Script -ErrorAction SilentlyContinue) -or
+        -not $script:governorCpuProbeCycleId) { return }
+    Assert-GovernorMutationOwner -AllowAbandoned
+    $state = Read-GovernorState
+    if (-not $state -or -not $state.PSObject.Properties['cpuProbeContinuity'] -or
+        $state.cpuProbeContinuity.cycleId -cne $script:governorCpuProbeCycleId) {
+        throw 'GOVERNOR_CPU_PROBE_OWNERSHIP_UNPROVEN'
+    }
+    $state.cpuProbeContinuity.allowed = $false
+    foreach ($pair in @(@('localModelAllowed',$false),@('heavyModelAllowed',$false),@('dependencyObservationKnown',$false),@('evictionHealthy',$false),@('ollamaLoadMode','unknown'))) {
+        $state | Add-Member -NotePropertyName $pair[0] -NotePropertyValue $pair[1] -Force
+    }
+    [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    $script:governorCpuProbeCycleId = ''
+}
+
+function Set-GovernorDependencyUnknown {
+    $script:governorDependencyHealthy = $false
+    Revoke-GovernorCpuProbeContinuity
+}
+
+function Start-GovernorCpuProbeContinuity {
+    param($Signal, $Effective)
+    Assert-GovernorMutationOwner
+    Revoke-GovernorCpuProbeContinuity
+    $script:governorCpuProbeCycleId = ''
+    # Read raw persisted fields, never Normalize-GovernorState's legacy defaults.
+    if (-not (Get-Variable -Name statePath -ErrorAction SilentlyContinue) -or
+        -not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return }
+    if (-not (Get-Variable -Name governorCpuPriorStateSha256 -Scope Script -ErrorAction SilentlyContinue) -or
+        -not $script:governorCpuPriorStateSha256) { return }
+    try {
+        $info = Get-Item -LiteralPath $statePath -Force
+        if ($info.Length -lt 2 -or $info.Length -gt 32768 -or
+            ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return }
+        $raw = [IO.File]::ReadAllText($statePath)
+        if ([Text.Encoding]::UTF8.GetByteCount($raw) -gt 32768) { return }
+        # Only this owner's last complete publication can supply the prior
+        # observation. Changed bytes, legacy defaults and duplicate JSON fields
+        # cannot be normalized into authority by ConvertFrom-Json.
+        if ((Get-GovernorBytesDigestV1 ([Text.UTF8Encoding]::new($false).GetBytes($raw))) -cne
+            $script:governorCpuPriorStateSha256) { return }
+        $state = $raw | ConvertFrom-Json
+        if ($state.schemaVersion -cne 'stephanos.vr-resource-governor.v1' -or
+            $state.governorVersion -isnot [int] -or $state.governorVersion -ne 3 -or
+            $state.phase -cne 'NORMAL' -or $state.overrideMode -cne 'AUTO' -or
+            $state.ollamaLoadMode -cne 'balanced' -or $state.cooldownUntilUtc -cne '') { return }
+        foreach ($key in @('active','flatGameActive','airLinkActive','realAirLinkActive','virtualAirLinkTestActive','prepareLeaseActive','nativeProbeCustodyHeld')) {
+            if ($state.$key -isnot [bool] -or $state.$key) { return }
+        }
+        foreach ($key in @('localModelAllowed','heavyModelAllowed','dependencyObservationKnown','evictionHealthy')) {
+            if ($state.$key -isnot [bool] -or -not $state.$key) { return }
+        }
+        foreach ($key in @('active','flatGameActive','airLinkActive','realAirLinkActive','virtualAirLinkTestActive')) {
+            if ($Signal.$key -isnot [bool] -or $Signal.$key) { return }
+        }
+        if ($Effective.active -isnot [bool] -or $Effective.active -or $Effective.phase -cne 'NORMAL' -or
+            $Effective.overrideMode -cne 'AUTO' -or $Effective.lease.active -isnot [bool] -or $Effective.lease.active -or
+            (Test-Path -LiteralPath $preparePath) -or (Read-OverrideMode) -cne 'AUTO') { return }
+        if ($state.updatedAtUtc -isnot [string] -or $state.updatedAtUtc -cnotmatch '(Z|[+-][0-9]{2}:[0-9]{2})$') { return }
+        $priorAt = [DateTimeOffset]::Parse($state.updatedAtUtc, [Globalization.CultureInfo]::InvariantCulture)
+        $now = [DateTimeOffset]::UtcNow
+        if (($now - $priorAt).TotalMilliseconds -lt 0 -or ($now - $priorAt).TotalMilliseconds -gt 10000) { return }
+    } catch { return }
+    # Native identity failure never becomes a CPU grant. No child has launched.
+    $epoch = Get-GovernorNativeEpochV1
+    Assert-GovernorNativeEpochV1 $epoch
+    $remaining = [math]::Floor(5000 - $script:governorNativeClock.Elapsed.TotalMilliseconds)
+    if ($remaining -le 0 -or $remaining -gt 5000) { return }
+    $now = [DateTimeOffset]::UtcNow
+    if (($now - $priorAt).TotalMilliseconds -gt 10000) { return }
+    $cycle = [Guid]::NewGuid().ToString('N')
+    $record = [ordered]@{
+        schemaVersion = 'stephanos.governor-cpu-probe-continuity.v1'
+        cycleId = $cycle
+        phase = 'IDLE_READ_ONLY_RECONCILE'
+        allowed = $true
+        observedAtUtc = $now.ToString('o')
+        expiresAtUtc = $now.AddMilliseconds($remaining).ToString('o')
+        priorObservationAtUtc = $state.updatedAtUtc
+        ownerProcessId = $epoch.ownerProcessId
+        ownerCreationFileTime = [string]$epoch.ownerCreationFileTime
+        machineHash = $epoch.machineHash
+        bootIdentifier = $epoch.bootIdentifier
+    }
+    $state | Add-Member -NotePropertyName cpuProbeContinuity -NotePropertyValue ([pscustomobject]$record) -Force
+    [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    $script:governorCpuProbeCycleId = $cycle
+}
+
 # Closed native probes only. Keep both pipes bounded and drained while the
 # retained direct child runs; neither a timeout nor a failed inventory is empty.
 function Invoke-GovernorNativeProbe {
     param([ValidateSet('GpuSnapshot','OllamaInventory','OllamaStop')][string]$Operation, [string]$Model = '')
     Assert-GovernorMutationOwner
+    if ($Operation -eq 'OllamaStop') { Revoke-GovernorCpuProbeContinuity }
     $executable = ''
     $arguments = ''
     if ($Operation -eq 'GpuSnapshot') {
@@ -108,11 +554,14 @@ function Invoke-GovernorNativeProbe {
     if ($remaining -le 0) { return [pscustomobject]@{ ok = $false; output = ''; reason = 'CYCLE_DEADLINE' } }
     # Persist exclusion before launch. A crash or cleanup API failure cannot
     # leave an uncertain child behind an apparently healthy permission record.
-    Set-GovernorNativeCustodyHold -Held $true
+    $commandSha256=Get-GovernorBytesDigestV1 ([Text.Encoding]::UTF8.GetBytes($Operation+[char]0+$executable+[char]0+$arguments))
+    Set-GovernorNativeCustodyHold -Held $true -Operation $Operation -CommandSha256 $commandSha256
+    $script:governorNativeProbeExitProven = $false
     $child = New-Object System.Diagnostics.Process
     $started = $false
     $startAttempted = $false
     $reason = 'PROBE_FAILED'
+    $succeeded = $false
     try {
         $child.StartInfo.FileName = $executable
         $child.StartInfo.Arguments = $arguments
@@ -120,17 +569,32 @@ function Invoke-GovernorNativeProbe {
         $child.StartInfo.CreateNoWindow = $true
         $child.StartInfo.RedirectStandardOutput = $true
         $child.StartInfo.RedirectStandardError = $true
+        # Binding/epoch/state IO is inside this same cycle. Never spend the
+        # earlier timeout after those operations have consumed its budget.
+        $remaining = if ($script:governorNativeClock) { [int][math]::Min(1000, 5000 - $script:governorNativeClock.Elapsed.TotalMilliseconds) } else { 0 }
+        if ($remaining -le 0) {
+            $reason='CYCLE_DEADLINE'
+            return [pscustomobject]@{ok=$false;output='';reason=$reason}
+        }
+        # Start/setup consume the same per-probe and cycle allowance. The
+        # retained-child cleanup below remains mandatory after a late Start.
+        $probeClock = [Diagnostics.Stopwatch]::StartNew()
         $startAttempted = $true
         $started = $child.Start()
         if (-not $started) { throw 'PROBE_START_FAILED' }
+        if ($probeClock.Elapsed.TotalMilliseconds -ge $remaining -or
+            $script:governorNativeClock.Elapsed.TotalMilliseconds -ge 5000) {
+            $reason='PROBE_TIMEOUT'
+            return [pscustomobject]@{ok=$false;output='';reason=$reason}
+        }
         $outBuffer = New-Object char[] 4097
         $errBuffer = New-Object char[] 4097
         $outTask = $child.StandardOutput.ReadAsync($outBuffer, 0, $outBuffer.Length)
         $errTask = $child.StandardError.ReadAsync($errBuffer, 0, $errBuffer.Length)
         $outText = New-Object Text.StringBuilder
         $outDone = $false; $errDone = $false; $total = 0
-        $probeClock = [Diagnostics.Stopwatch]::StartNew()
-        while ($probeClock.Elapsed.TotalMilliseconds -lt $remaining) {
+        while ($probeClock.Elapsed.TotalMilliseconds -lt $remaining -and
+            $script:governorNativeClock.Elapsed.TotalMilliseconds -lt 5000) {
             if (-not $outDone -and $outTask.IsCompleted) {
                 $count = $outTask.GetAwaiter().GetResult(); $total += $count
                 if ($total -gt 32768) { $reason = 'OUTPUT_LIMIT'; break }
@@ -144,7 +608,10 @@ function Invoke-GovernorNativeProbe {
                 else { $errTask = $child.StandardError.ReadAsync($errBuffer, 0, $errBuffer.Length) }
             }
             if ($child.HasExited -and $outDone -and $errDone) {
+                if ($probeClock.Elapsed.TotalMilliseconds -ge $remaining -or
+                    $script:governorNativeClock.Elapsed.TotalMilliseconds -ge 5000) { $reason='PROBE_TIMEOUT';break }
                 if ($child.ExitCode -ne 0) { $reason = 'NONZERO_EXIT'; break }
+                $succeeded = $true
                 return [pscustomobject]@{ ok = $true; output = $outText.ToString(); reason = '' }
             }
             [void]$child.WaitForExit(10)
@@ -152,6 +619,9 @@ function Invoke-GovernorNativeProbe {
         if ($reason -eq 'PROBE_FAILED') { $reason = 'PROBE_TIMEOUT' }
     } catch { $reason = 'PROBE_FAILED' }
     finally {
+        $cpuRevocationFailed = $false
+        try { if (-not $succeeded) { Set-GovernorDependencyUnknown } } catch { $cpuRevocationFailed = $true }
+        # Revocation IO failure never skips mandatory retained-child cleanup.
         $exitProven = -not $startAttempted
         if ($startAttempted) {
             try { $exitProven = $child.HasExited } catch {}
@@ -166,15 +636,19 @@ function Invoke-GovernorNativeProbe {
             throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
         }
         $child.Dispose()
+        $script:governorNativeProbeExitProven = $true
         try { Set-GovernorNativeCustodyHold -Held $false }
         catch { throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN' }
+        if ($cpuRevocationFailed) { throw 'GOVERNOR_CPU_PROBE_REVOCATION_UNPROVEN' }
     }
     return [pscustomobject]@{ ok = $false; output = ''; reason = $reason }
 }
 
 function Set-GovernorNativeCustodyHold {
-    param([bool]$Held = $true)
+    param([bool]$Held = $true, [ValidateSet('GpuSnapshot','OllamaInventory','OllamaStop','GovernorRecycle','OwnerAbandoned')][string]$Operation='OwnerAbandoned',
+        [ValidatePattern('^[a-f0-9]{64}$')][string]$CommandSha256=('0'*64))
     Assert-GovernorMutationOwner -AllowAbandoned:$Held
+    if ($Held -and $Operation -notin @('GpuSnapshot','OllamaInventory')) { Revoke-GovernorCpuProbeContinuity }
     $heldState = Read-GovernorState
     if ($Held -and -not $script:governorNativeProbeOwnedHold -and $heldState -and
         $heldState.PSObject.Properties['nativeProbeCustodyHeld'] -and
@@ -184,11 +658,39 @@ function Set-GovernorNativeCustodyHold {
     if (-not $heldState -or $heldState -isnot [pscustomobject]) {
         $heldState = [pscustomobject]@{ schemaVersion = 'stephanos.vr-resource-governor.v1'; governorVersion = 3; phase = 'UNKNOWN'; active = $true }
     }
+    if (-not $Held) {
+        if (-not $script:governorNativeProbeOwnedHold -or
+            -not (Get-Variable -Name governorNativeProbeExitProven -Scope Script -ErrorAction SilentlyContinue) -or
+            $script:governorNativeProbeExitProven -ne $true -or
+            -not $heldState.PSObject.Properties['nativeProbeAttempt'] -or
+            (Get-GovernorBytesDigestV1 ([Text.UTF8Encoding]::new($false).GetBytes(($heldState.nativeProbeAttempt|ConvertTo-Json -Depth 8 -Compress)))) -cne $script:governorNativeAttemptDigest) {
+            throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'
+        }
+        $epoch=Get-GovernorNativeEpochV1
+        Assert-GovernorNativeEpochV1 $epoch
+        if($heldState.nativeProbeAttempt.machineHash -cne $epoch.machineHash -or $heldState.nativeProbeAttempt.bootIdentifier -cne $epoch.bootIdentifier -or
+            $heldState.nativeProbeAttempt.ownerProcessId -ne $epoch.ownerProcessId -or $heldState.nativeProbeAttempt.ownerCreationFileTime -ne $epoch.ownerCreationFileTime){throw 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN'}
+    } elseif (-not $script:governorNativeProbeOwnedHold) {
+        # Restrict first, then bind actual native identity before any launch.
+        # A failed observation leaves PREPARING/UNOBSERVED custody restrictive.
+        $attempt=[ordered]@{schemaVersion='stephanos.governor-probe-attempt.v1';attemptId=[Guid]::NewGuid().ToString('N');operation=$Operation;commandSha256=$CommandSha256;
+            phase='PREPARING';ownerProcessId=$PID;ownerCreationFileTime=[long]0;machineHash='UNOBSERVED';bootIdentifier='UNOBSERVED';preparedAtUtc=[DateTime]::UtcNow.ToString('o')}
+        $heldState|Add-Member -NotePropertyName nativeProbeAttempt -NotePropertyValue ([pscustomobject]$attempt) -Force
+    }
     foreach ($pair in @(@('nativeProbeCustodyHeld',$Held),@('heavyModelAllowed',$false),@('localModelAllowed',$false),@('evictionHealthy',$false),@('zeroLocalModelInvariant',$false),@('dependencyObservationKnown',$false),@('ollamaLoadMode','unknown'))) {
         $heldState | Add-Member -NotePropertyName $pair[0] -NotePropertyValue $pair[1] -Force
     }
     Ensure-StateRoot
     [IO.File]::WriteAllText($statePath, ($heldState | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    if($Held -and -not $script:governorNativeProbeOwnedHold){
+        $epoch=Get-GovernorNativeEpochV1
+        Assert-GovernorNativeEpochV1 $epoch
+        foreach($key in @('machineHash','bootIdentifier','ownerProcessId','ownerCreationFileTime')){$heldState.nativeProbeAttempt.$key=$epoch.$key}
+        $heldState.nativeProbeAttempt.phase='BOUND'
+        [IO.File]::WriteAllText($statePath, ($heldState|ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        $script:governorNativeAttemptDigest=Get-GovernorBytesDigestV1 ([Text.UTF8Encoding]::new($false).GetBytes(($heldState.nativeProbeAttempt|ConvertTo-Json -Depth 8 -Compress)))
+        $script:governorNativeProbeExitProven=$false
+    }
     $script:governorNativeProbeOwnedHold = $Held
 }
 
@@ -264,7 +766,7 @@ function Resolve-OllamaExecutable {
 function Get-GpuSnapshot {
     $command = Get-Command nvidia-smi.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) {
-        $script:governorDependencyHealthy = $false
+        Set-GovernorDependencyUnknown
         return [pscustomobject]@{
             available = $false
             memoryFreeMiB = $null
@@ -290,7 +792,7 @@ function Get-GpuSnapshot {
     }
     catch {
         if ($_.Exception.Message -eq 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN') { throw }
-        $script:governorDependencyHealthy = $false
+        Set-GovernorDependencyUnknown
         return [pscustomobject]@{
             available = $false
             memoryFreeMiB = $null
@@ -481,6 +983,16 @@ function Get-FlatGameSignal {
         if (-not $name -or $excludedNames -contains $name) { continue }
 
         $known = $allKnownNames -contains $name
+        # A non-known process can qualify only with a game-library path AND a
+        # window. On Windows PowerShell, Process.Path enumerates process modules
+        # and can consume the heartbeat budget across hundreds of background
+        # processes. Observe the cheap required window first, then resolve only
+        # candidates' paths. Known games remain active even without either.
+        $hasGameWindow = $false
+        if (-not $known) {
+            try { $hasGameWindow = [int64]$process.MainWindowHandle -ne 0 } catch { $hasGameWindow = $false }
+            if (-not $hasGameWindow) { continue }
+        }
         $path = ''
         try { $path = [string]$process.Path } catch { $path = '' }
 
@@ -493,9 +1005,6 @@ function Get-FlatGameSignal {
                 }
             }
         }
-
-        $hasGameWindow = $false
-        try { $hasGameWindow = [int64]$process.MainWindowHandle -ne 0 } catch { $hasGameWindow = $false }
 
         if ($known -or ($inGameLibrary -and $hasGameWindow)) {
             $parent = Get-ParentProcessInfo -ProcessId ([int]$process.Id)
@@ -792,7 +1301,7 @@ function Get-LoadedOllamaModels {
     }
     catch {
         if ($_.Exception.Message -eq 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN') { throw }
-        $script:governorDependencyHealthy = $false
+        Set-GovernorDependencyUnknown
         return @()
     }
 }
@@ -816,12 +1325,12 @@ function Stop-OllamaModel {
     if (-not $OllamaExecutable -or -not $Model) { return $false }
     try {
         $probe = Invoke-GovernorNativeProbe -Operation OllamaStop -Model $Model
-        if (-not $probe.ok) { $script:governorDependencyHealthy = $false }
+        if (-not $probe.ok) { Set-GovernorDependencyUnknown }
         return $probe.ok
     }
     catch {
         if ($_.Exception.Message -eq 'GOVERNOR_NATIVE_CHILD_EXIT_UNPROVEN') { throw }
-        $script:governorDependencyHealthy = $false
+        Set-GovernorDependencyUnknown
         return $false
     }
 }
@@ -845,7 +1354,7 @@ function Get-OllamaVrRuntimeProcesses {
                 )
                 $underOllamaRoot -and $isRuntime
             }
-    ) } catch { $script:governorDependencyHealthy = $false; return @() }
+    ) } catch { Set-GovernorDependencyUnknown; return @() }
 }
 
 function Stop-OllamaRuntimeForRealVr {
@@ -1062,11 +1571,15 @@ function Write-GovernorState {
         publisherProcessId = [int]$PID
         publisherStartedAtUtc = $publisherStartedAtUtc
     }
+    $publishedJson = $payload | ConvertTo-Json -Depth 8
     [System.IO.File]::WriteAllText(
         $statePath,
-        ($payload | ConvertTo-Json -Depth 8),
+        $publishedJson,
         (New-Object System.Text.UTF8Encoding($false))
     )
+    # Complete publication removes the bounded overlap record. It is never renewed here.
+    $script:governorCpuProbeCycleId = ''
+    $script:governorCpuPriorStateSha256 = Get-GovernorBytesDigestV1 ([Text.UTF8Encoding]::new($false).GetBytes($publishedJson))
     Append-TelemetryEvent -Payload ([pscustomobject]$payload)
     return [pscustomobject]$payload
 }
@@ -1199,6 +1712,8 @@ function Invoke-Reconcile {
     Assert-GovernorNativeCustodyUnheld
     $script:governorDependencyHealthy = $true
     $script:governorNativeClock = [Diagnostics.Stopwatch]::StartNew()
+    try {
+    Start-GovernorCpuProbeContinuity -Signal $Signal -Effective $Effective
     $gpuBefore = Get-GpuSnapshot
     $parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)
     $hardBlockRealVr = [bool]($parkAllModels -and $Signal.realAirLinkActive)
@@ -1337,6 +1852,11 @@ function Invoke-Reconcile {
         ParkAllModels = $parkAllModels
     }
     return Write-GovernorState @writeParams
+    } finally {
+        # Every early exception, including identity/publication/cleanup failure,
+        # retires the owned grant before the mutation owner is released.
+        Revoke-GovernorCpuProbeContinuity
+    }
 }
 
 function Invoke-CurrentReconcile {
@@ -1347,7 +1867,7 @@ function Invoke-CurrentReconcile {
     return Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
 }
 
-if ($Action -eq 'ObserveAdmission') {
+if ($MyInvocation.InvocationName -ne '.' -and $Action -eq 'ObserveAdmission') {
     # Fresh read-only admission for cooperative CPU workers. Leave the sole
     # watcher/reconciler in charge of persisted state, leases and model actions.
     # Do not call Resolve-EffectiveState: it can clear prepare-lease evidence.
@@ -1457,6 +1977,8 @@ function Invoke-GovernorWatchTick {
         $script:governorMutationOwner = $null
     }
 }
+
+if ($MyInvocation.InvocationName -eq '.') { return }
 
 if ($Action -ne 'Watch') {
     $result = Invoke-GovernorOneShot

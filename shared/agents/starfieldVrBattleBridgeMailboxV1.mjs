@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { STARFIELD_VR_NATIVE_BUILD_OPERATION, executeStarfieldVrNativeBuild } from './starfieldVrNativeBuildV1.mjs';
 
 export const STARFIELD_VR_DELIVERY_STATUS_OPERATION = 'READ_STARFIELD_VR_DELIVERY_STATUS';
 export const STARFIELD_VR_SHORTCUT_INSTALL_OPERATION = 'INSTALL_STARFIELD_VR_DESKTOP_SHORTCUT';
@@ -11,6 +12,7 @@ export const STARFIELD_VR_SIM_AIR_LINK_ON_OPERATION = 'SET_STARFIELD_VR_SIM_AIR_
 export const STARFIELD_VR_SIM_AIR_LINK_OFF_OPERATION = 'SET_STARFIELD_VR_SIM_AIR_LINK_OFF';
 export const STARFIELD_VR_SIM_AIR_LINK_STATUS_OPERATION = 'READ_STARFIELD_VR_SIM_AIR_LINK_STATUS';
 export const STARFIELD_VR_BATTLE_BRIDGE_OPERATIONS = Object.freeze([
+  STARFIELD_VR_NATIVE_BUILD_OPERATION,
   STARFIELD_VR_DELIVERY_STATUS_OPERATION,
   STARFIELD_VR_SHORTCUT_INSTALL_OPERATION,
   STARFIELD_VR_READINESS_OPERATION,
@@ -321,6 +323,7 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
   existsSyncFn = existsSync,
   readFileSyncFn = readFileSync,
   nodeExecutable = process.execPath,
+  nativeBuildOptions = {},
 } = {}) {
   const shape = validateStarfieldVrBattleBridgeCommandShape(command);
   if (!shape.ok) return shape;
@@ -339,6 +342,16 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
   }
   if (localHead !== shape.expectedHead) {
     return fail('STARFIELD_VR_LOCAL_HEAD_MISMATCH', { localHead, expectedHead: shape.expectedHead });
+  }
+
+  if (shape.operation === STARFIELD_VR_NATIVE_BUILD_OPERATION) {
+    const protectedMain = verifyCurrentProtectedMain(shape.expectedHead, paths, spawnSyncFn);
+    if (!protectedMain.ok) return protectedMain;
+    const buildAdapterPath = 'shared/agents/starfieldVrNativeBuildV1.mjs';
+    const buildAdapterIdentity = verifyWorkingScriptIdentity(buildAdapterPath,
+      win32.resolve(paths.repoRoot, buildAdapterPath), shape.expectedHead, paths, spawnSyncFn);
+    if (!buildAdapterIdentity.ok) return buildAdapterIdentity;
+    return executeStarfieldVrNativeBuild(command, paths, { spawnSyncFn, env, ...nativeBuildOptions });
   }
 
   if ([STARFIELD_VR_SIM_AIR_LINK_ON_OPERATION, STARFIELD_VR_SIM_AIR_LINK_OFF_OPERATION, STARFIELD_VR_SIM_AIR_LINK_STATUS_OPERATION].includes(shape.operation)) {

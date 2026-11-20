@@ -9,6 +9,7 @@ import {
   STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL,
   clearStephanosNativeCapacityStatus,
   publishStephanosNativeCapacityV1,
+  publishStephanosNativeCapacityObservationV1,
 } from '../shared/agents/stephanosNativeCapacityPublisherV1.mjs';
 import { readMissionWorkerQueue } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 import { summarizeNativePublisherDirt } from './stephanos-native-capacity-publisher-source-gate.mjs';
@@ -151,17 +152,23 @@ export async function runStephanosNativeCapacityPublisher(options = {}) {
   const refreshMs = Math.max(Number.parseInt(text(env.STEPHANOS_NATIVE_CAPACITY_REFRESH_MS) || String(STEPHANOS_NATIVE_CAPACITY_REFRESH_MS), 10) || STEPHANOS_NATIVE_CAPACITY_REFRESH_MS, 15_000);
   const initialIdentity = inspectStephanosNativeCapacitySourceIdentity({ env, spawnSyncFn: options.spawnSyncFn });
   if (!initialIdentity.ok) {
+    await publishStephanosNativeCapacityObservationV1({workspaceRoot:canonicalWorkspaceRoot(env),repoRoot:canonicalRepositoryRoot(env),sourceHead:initialIdentity.sourceHead},{phase:'BLOCKED',reason:initialIdentity.reason});
     stderr.write(`${JSON.stringify({ finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_BLOCKED', reason: initialIdentity.reason })}\n`);
     return 1;
   }
   const launchHead = initialIdentity.sourceHead;
-  const keys = await ensureStephanosNativeCapacityKeyPair({ env });
+  const diagnostic=(phase,reason,sourceHead=launchHead)=>publishStephanosNativeCapacityObservationV1({
+    workspaceRoot:initialIdentity.workspaceRoot,repoRoot:initialIdentity.repoRoot,sourceHead},{phase,reason});
+  const checking=await diagnostic('CHECKING','native-capacity-probe-in-progress');
+  if(!checking.ok){stderr.write(JSON.stringify({finalVerdict:'STEPHANOS_NATIVE_CAPACITY_BLOCKED',reason:'native-capacity-diagnostic-unwritable'})+'\n');return 1;}
+  let keys;try{keys=await ensureStephanosNativeCapacityKeyPair({env});}catch{keys={ok:false,reason:'native-capacity-signing-key-unavailable'};}
   if (!keys.ok) {
+    await diagnostic('BLOCKED',keys.reason);
     stderr.write(`${JSON.stringify({ finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_BLOCKED', reason: keys.reason })}\n`);
     return 1;
   }
 
-  let stopping = false;
+  let stopping = false;let terminalReason='native-capacity-publisher-stopped';
   const stop = () => { stopping = true; };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
@@ -174,6 +181,7 @@ export async function runStephanosNativeCapacityPublisher(options = {}) {
           repoRoot: identity.repoRoot || initialIdentity.repoRoot,
         }).catch(() => {});
         const reason = identity.ok ? 'native-capacity-canonical-reload-required' : identity.reason;
+        terminalReason=reason;
         stderr.write(`${JSON.stringify({ finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_RELOAD_REQUIRED', reason, launchHead, observedHead: identity.sourceHead || '' })}\n`);
         return STEPHANOS_NATIVE_CAPACITY_RELOAD_EXIT_CODE;
       }
@@ -186,8 +194,9 @@ export async function runStephanosNativeCapacityPublisher(options = {}) {
     } while (!stopping);
     return 0;
   } finally {
-    if (!once || stopping) {
+    if (!once || stopping || terminalReason!=='native-capacity-publisher-stopped') {
       await clearStephanosNativeCapacityStatus({ workspaceRoot: initialIdentity.workspaceRoot, repoRoot: initialIdentity.repoRoot }).catch(() => {});
+      await diagnostic(terminalReason==='native-capacity-publisher-stopped'?'STOPPED':'BLOCKED',terminalReason);
     }
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
