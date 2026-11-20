@@ -251,11 +251,11 @@ test('same-run game identity drift fails closed before foreground or confirmatio
 
 test('same-run null game frames retain the original witnessed identity', () => {
   const receiver = functionSource('Receive-MonitorEvent');
-  const initial = source.match(/\\$monitorState = \\[pscustomobject\\]@\\{([\\s\\S]*?)\\n\\}/)?.[1] || '';
-  assert.match(initial, /GameProcessIdentity = \\$null/);
-  assert.match(receiver, /\\$monitorState\\.GameProcessIdentity -and \\$event\\.process/);
-  assert.match(receiver, /if \\(\\$monitorState\\.RunId -cne \\$event\\.runId\\) \\{ \\$monitorState\\.GameProcessIdentity = \\$null \\}/);
-  assert.match(receiver, /if \\(\\$event\\.process -and -not \\$monitorState\\.GameProcessIdentity\\)/);
+  const initial = source.match(/\$monitorState = \[pscustomobject\]@\{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(initial, /GameProcessIdentity = \$null/);
+  assert.match(receiver, /\$monitorState\.GameProcessIdentity -and \$event\.process/);
+  assert.match(receiver, /if \(\$monitorState\.RunId -cne \$event\.runId\) \{ \$monitorState\.GameProcessIdentity = \$null \}/);
+  assert.match(receiver, /if \(\$event\.process -and -not \$monitorState\.GameProcessIdentity\)/);
   assert.ok(receiver.indexOf("throw 'monitor-state-game-identity-drift'") <
     receiver.indexOf('$monitorState.GameProcessIdentity = $event.process'));
   assert.ok(receiver.indexOf('$monitorState.GameProcessIdentity = $event.process') <
