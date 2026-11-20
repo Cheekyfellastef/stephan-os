@@ -651,4 +651,3 @@ test('mixed-case approved paths still reject intervening exact-path overlap', ()
   assert.equal(result.authorizationReusable, false);
   assert.ok(result.blockers.includes('main-movement:approved-path-overlap:src/windows/Witness/Program.cs'));
 });
-

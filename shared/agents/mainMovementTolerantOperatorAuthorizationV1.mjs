@@ -396,4 +396,3 @@ export function evaluateMainMovementTolerantOperatorAuthorizationV1(input = {}) 
       : MAIN_MOVEMENT_TOLERANT_AUTHORIZATION_VERDICT.REUSABLE_FRESH_EVIDENCE_REQUIRED,
   });
 }
-
