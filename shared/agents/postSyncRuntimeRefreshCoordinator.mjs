@@ -1,11 +1,16 @@
 import { types as nodeTypes } from 'node:util';
 import {
+  inspectPostSyncRefreshCompletion, collectPostSyncRefreshDebt, resolvePostSyncRefreshDebt,
+  POST_SYNC_GOVERNOR_PROOF_SCHEMA,
+  projectPostSyncGovernorProof,
   POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
   projectPostSyncSovereignRelayObservation,
   projectPostSyncSovereignRelayProof,
 } from '../../scripts/battle-bridge-github-sync-policy.mjs';
 export {
+  POST_SYNC_GOVERNOR_PROOF_SCHEMA,
+  projectPostSyncGovernorProof,
   POST_SYNC_SOVEREIGN_RELAY_OBSERVATION_SCHEMA,
   POST_SYNC_SOVEREIGN_RELAY_PROOF_SCHEMA,
   projectPostSyncSovereignRelayObservation,
@@ -97,6 +102,13 @@ const REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH = 'scripts/battle-bridge-githu
 const MISSION_WORKER_POST_SYNC_COORDINATOR_PATH = 'scripts/battle-bridge-post-sync-refresh.mjs';
 const GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH = 'scripts/battle-bridge-goal-discovery-heartbeat.mjs';
 const REQUIRED_LOCAL_LAUNCHER_PATH = 'windows/Launch-Stephanos-Local.ps1';
+// Fresh invocation owns this complete guarded chain; no resident process is
+// restarted by these source paths. The same inventory protects removals.
+export const LOCAL_LAUNCHER_FRESH_ENTRY_PATHS = Object.freeze([
+  'windows/Launch-Stephanos-Local.cmd',
+  REQUIRED_LOCAL_LAUNCHER_PATH,
+  'windows/Invoke-Stephanos-Ignite-With-Approval.ps1',
+]);
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
   POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF,
@@ -129,7 +141,50 @@ const SOVEREIGN_RELAY_RUNTIME_EXACT = new Set([
   'scripts/sovereign-commander-native-inspect.mjs',
 ]);
 
+// Exact source-activation model. The recipe/source-capture and complete Git
+// inventories are checked independently by regressions; no directory rule or
+// runtime recipe discovery can grant a new sibling an activation owner.
+export const STARFIELD_NATIVE_BUILD_ACTIVATION = Object.freeze({
+  freshCapture: Object.freeze([
+  'scripts/windows/starfield-native-build/native_build.py',
+  'scripts/windows/starfield-native-build/owned_job.py',
+  'scripts/windows/starfield-native-build/start_native_build.ps1',
+  'scripts/windows/starfield-native-build/pinned_python_runtime.ps1',
+  'scripts/windows/starfield-native-build/python_runtime_v1.json',
+  ]),
+  offlineBuild: Object.freeze([
+  'scripts/windows/starfield-native-build/.gitattributes',
+  'scripts/windows/starfield-native-build/governor_owner_fixture.py',
+  'scripts/windows/starfield-native-build/install_pinned_python_runtime.ps1',
+  'scripts/windows/starfield-native-build/owned_job_fixture.py',
+  'scripts/windows/starfield-native-build/runtime_filtered_user_fixture.ps1',
+  'scripts/windows/starfield-native-build/test_native_build.py',
+  'scripts/windows/starfield-native-build/test_owned_job.py',
+  'scripts/windows/starfield-native-build/test_pinned_python_runtime.py',
+  'scripts/windows/starfield-native-build/test_start_native_build.py',
+  ]),
+  offlinePackage: Object.freeze([
+  'VR-Research-Lab/native/starfield-paired-observer-v1/.gitattributes',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/README.md',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/build-recipe.json',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/analyze-paired-source-observation.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/build-paired-source-observe.cmd',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/native-paired-source-observer.h',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/paired-observer-recipe.json',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/paired-source-observation.h',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/reconstruct_paired_observer.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/reconstruct_paired_loader.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test_paired_loader_preparation.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/scoped-eye-ledger.h',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-scoped-eye-ledger.cpp',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observation.cpp',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observer-source.py',
+  'VR-Research-Lab/native/starfield-paired-observer-v1/test-scoped-eye-ledger.cpp',
+  ]),
+});
+const GOVERNOR_RUNTIME_PATH = 'scripts/windows/run-vr-resource-governor.ps1';
 const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
+  GOVERNOR_RUNTIME_PATH,
   ...SOVEREIGN_RELAY_RUNTIME_EXACT,
   'scripts/windows/status-stephanos-core-daemon.ps1',
   'scripts/stephanos-core-daemon.mjs',
@@ -167,6 +222,7 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 ]);
 
 const NATURAL_EXACT = new Set([
+  ...STARFIELD_NATIVE_BUILD_ACTIVATION.freshCapture,
   // The fixed Caravan bridge rereads and hash-checks this read-only probe in
   // a fresh bounded child. Adoption checks source only; it invokes no probe,
   // native PREPARE, enrollment or installer and never qualifies the helper.
@@ -183,6 +239,9 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/starfield-native-monitor/run_native_eye_output_monitor.py',
   'scripts/windows/starfield-native-monitor/start_native_eye_output_session.py',
   'scripts/windows/starfield-native-monitor/analyze_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/analyze_paired_source_session.py',
+  'scripts/windows/starfield-native-monitor/monitor_session_custody.py',
+  'scripts/windows/starfield-native-monitor/paired_session_adapter.py',
   'scripts/windows/launch-starfield-vr.ps1',
   'scripts/windows/new-vr-telemetry-session.ps1',
   'scripts/windows/read-starfield-vr-performance-diagnosis.ps1',
@@ -284,7 +343,7 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
   'scripts/windows/run-vr-virtual-airlink-acceptance.ps1',
-  REQUIRED_LOCAL_LAUNCHER_PATH,
+  ...LOCAL_LAUNCHER_FRESH_ENTRY_PATHS,
   'scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1',
   'scripts/windows/install-forge-shadow-podman-v1.ps1',
 ]);
@@ -317,11 +376,16 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  ...STARFIELD_NATIVE_BUILD_ACTIVATION.offlineBuild,
+  ...STARFIELD_NATIVE_BUILD_ACTIVATION.offlinePackage,
   'scripts/windows/Test-StarfieldMonitorSplash.ps1',
   'scripts/windows/starfield-native-monitor/test_splash_monitor_bridge.py',
   'scripts/windows/starfield-native-monitor/test_run_native_eye_output_monitor.py',
   'scripts/windows/starfield-native-monitor/test_start_native_eye_output_session.py',
   'scripts/windows/starfield-native-monitor/test_analyze_native_eye_output_session.py',
+  'scripts/windows/starfield-native-monitor/test_analyze_paired_source_session.py',
+  'scripts/windows/starfield-native-monitor/test_monitor_session_custody.py',
+  'scripts/windows/starfield-native-monitor/test_paired_session_adapter.py',
   // Existing GitHub Actions job loads this fixed artifact producer from its
   // exact checkout. It is never a resident Battle Bridge process or a local
   // submission adapter; activating the native reader belongs to the relay.
@@ -524,8 +588,8 @@ export function parseGitChangedPathStatus(stdout) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_MAILBOX_WRAPPER_REMOVED', paths: Object.freeze([]) });
     }
     const removesRequiredLocalLauncher = status === 'D'
-      ? parts[0] === REQUIRED_LOCAL_LAUNCHER_PATH
-      : /^R[0-9]*$/.test(status) && parts[0] === REQUIRED_LOCAL_LAUNCHER_PATH;
+      ? LOCAL_LAUNCHER_FRESH_ENTRY_PATHS.includes(parts[0])
+      : /^R[0-9]*$/.test(status) && LOCAL_LAUNCHER_FRESH_ENTRY_PATHS.includes(parts[0]);
     if (removesRequiredLocalLauncher) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_LOCAL_LAUNCHER_REMOVED', paths: Object.freeze([]) });
     }
@@ -631,7 +695,7 @@ function isNaturalReloadPath(path) {
 }
 
 export function classifyPostSyncRefresh(changedPaths = [], {
-  sovereignRelayRefreshRequired = false, spatialAdoptionRequired = false,
+  sovereignRelayRefreshRequired = false, governorRefreshRequired = false, spatialAdoptionRequired = false,
 } = {}) {
   const safePaths = [];
   const unsafePaths = [];
@@ -694,6 +758,8 @@ export function classifyPostSyncRefresh(changedPaths = [], {
 
   const relayRequired = sovereignRelayRefreshRequired === true
     || safePaths.some((path) => SOVEREIGN_RELAY_RUNTIME_EXACT.has(path));
+  const governorRequired = governorRefreshRequired === true || safePaths.includes(GOVERNOR_RUNTIME_PATH);
+  if (governorRequired) targets.add(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
   const spatialRequired = spatialAdoptionRequired === true || spatialAdoptionPaths.length > 0;
   // A later revert can remove a path from the net diff without proving that an
   // earlier partially refreshed relay stopped using it. Preserve its debt.
@@ -724,6 +790,7 @@ export function classifyPostSyncRefresh(changedPaths = [], {
     // physical acceptance requirement when either manifest changed.
     pluginHostActivationRequired: safePaths.some((path) => SOVEREIGN_COMMANDER_PLUGIN_MANIFESTS.has(path)),
     sovereignRelayRefreshRequired: relayRequired,
+    governorRefreshRequired: governorRequired,
     automaticExecutionAllowed: unsafePaths.length === 0 && unknownPaths.length === 0,
     internal: Object.freeze({
       safePaths: Object.freeze([...new Set(safePaths)]),
@@ -750,9 +817,11 @@ function resultPass(result, expectedHead) {
 export function postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead } = {}) {
   if (!resultPass(result, expectedHead)) return false;
   if (result?.targetId !== undefined && result.targetId !== targetId) return false;
-  if (targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER || plan?.sovereignRelayRefreshRequired !== true) return true;
-  return (result.blocker === undefined || result.blocker === '')
-    && projectPostSyncSovereignRelayProof(result.sovereignRelayProof, expectedHead) !== null;
+  if (targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER) return true;
+  return (plan?.sovereignRelayRefreshRequired !== true
+      || projectPostSyncSovereignRelayProof(result.sovereignRelayProof, expectedHead) !== null)
+    && (plan?.governorRefreshRequired !== true
+      || projectPostSyncGovernorProof(result.governorProof, expectedHead) !== null);
 }
 
 export const POST_SYNC_TARGET_FAILURE_HISTORY_SCHEMA = 'stephanos.post-sync-target-failure-history.v1';
@@ -769,7 +838,7 @@ const TARGET_FAILURE_CODES = new Set([
   'SOVEREIGN_COMMANDER_STALE_CONTRACT_RECYCLE_FAILED', 'SOVEREIGN_COMMANDER_START_FAILED',
   'SOVEREIGN_COMMANDER_NOT_HEALTHY', 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID',
   'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID', 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
-  'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
+  'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN', 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN',
   'GITHUB_MAILBOX_RESTART_FAILED', 'GITHUB_MAILBOX_RESTART_PROOF_INVALID', 'GITHUB_MAILBOX_EXACT_HEAD_PROOF_FAILED',
   'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', 'APPROVED_RUNTIME_RESTART_PROCESS_TIMEOUT',
   'UI_4173_EXACT_HEAD_PROOF_FAILED', 'VR_ATLAS_BROWSER_PROOF_RESPONSE_INVALID', 'VR_ATLAS_BROWSER_PROOF_BLOCKED',
@@ -842,7 +911,7 @@ export async function executePostSyncRefreshPlan({
   changedPaths,
   adapters = {},
   completedResults = [],
-  sovereignRelayRefreshRequired = false,
+  sovereignRelayRefreshRequired = false, governorRefreshRequired = false,
   spatialAdoptionRequired = false,
   onTargetComplete,
 } = {}) {
@@ -856,7 +925,7 @@ export async function executePostSyncRefreshPlan({
     });
   }
 
-  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired, spatialAdoptionRequired });
+  const plan = classifyPostSyncRefresh(changedPaths, { sovereignRelayRefreshRequired, governorRefreshRequired, spatialAdoptionRequired });
   if (!plan.automaticExecutionAllowed) {
     return Object.freeze({
       ok: false,
@@ -960,9 +1029,14 @@ export async function executePostSyncRefreshPlan({
     // reducing failure history. Such a result cannot clear relay refresh debt.
     if (targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired
       && resultPass(result, afterHead)
-      && !postSyncRefreshTargetResultPass(result, { targetId, plan, expectedHead: afterHead })) {
+      && !projectPostSyncSovereignRelayProof(result.sovereignRelayProof, afterHead)) {
       result = { ...result, ok: false, exactHeadProofOk: false, freshProcessLoaded: false,
         sovereignRelayProof: null, blocker: 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' };
+    }
+    if (targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.governorRefreshRequired
+      && resultPass(result, afterHead) && !projectPostSyncGovernorProof(result.governorProof, afterHead)) {
+      result = { ...result, ok: false, exactHeadProofOk: false, freshProcessLoaded: false,
+        governorProof: null, blocker: 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN' };
     }
     const completed = Object.freeze({ ...result, targetId });
     results.push(completed);
@@ -1079,11 +1153,14 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     spatialAdoptionRequired: plan.spatialAdoptionRequired === true,
     pluginHostActivationRequired: plan.pluginHostActivationRequired === true,
     sovereignRelayRefreshRequired: plan.sovereignRelayRefreshRequired === true,
+    governorRefreshRequired: plan.governorRefreshRequired === true,
     unknownPathCount: Number(plan.unknownPathCount || 0),
     unsafePathCount: Number(plan.unsafePathCount || 0),
     exactHeadProofOk: result.exactHeadProofOk === true,
     safeRefreshesCompleted: result.safeRefreshesCompleted === true,
     resultTargets: Array.isArray(result.results) ? result.results.map((entry) => {
+      const governorProof = projectPostSyncGovernorProof(entry.governorProof, afterHead);
+      const governorRequired = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.governorRefreshRequired === true;
       const relayProof = projectPostSyncSovereignRelayProof(entry.sovereignRelayProof, afterHead);
       const relayObservation = projectPostSyncSovereignRelayObservation(entry.sovereignRelayObservation, afterHead);
       const required = entry.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER && plan.sovereignRelayRefreshRequired === true;
@@ -1096,7 +1173,9 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
         exactHeadProofOk: entry.exactHeadProofOk === true && qualified,
         sourceHead: validHead(entry.sourceHead) ? String(entry.sourceHead).toLowerCase() : '',
         blocker: String(entry.blocker || (qualified ? '' : missingRelayProof
-          ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : 'REFRESH_TARGET_PROOF_FAILED')),
+          ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN' : governorRequired && !governorProof
+            ? 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN' : 'REFRESH_TARGET_PROOF_FAILED')),
+        ...(governorProof ? { governorProof } : {}),
         ...(relayProof ? { sovereignRelayProof: relayProof } : {}),
         ...(relayObservation ? { sovereignRelayObservation: relayObservation } : {}),
       };
@@ -1109,4 +1188,300 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     pathValuesPublished: false,
     finalVerdict: result.ok === true ? 'POST_SYNC_RUNTIME_REFRESH_PASS' : 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
   });
+}
+
+
+// Startup may waive one optional hold; a displayed blocker is not a complete
+// account of the canonical owner's remaining source-adoption obligations.
+export const IGNITION_REFRESH_OBLIGATION_SCHEMA_V1 = 'stephanos.ignition-refresh-obligations.v1';
+export const IGNITION_SETTLED_REFRESH_SCHEMA_V1 = 'stephanos.ignition-settled-refresh.v1';
+const IGNITION_REFRESH_COUNTS = Object.freeze(['changedPathCount', 'noRuntimePathCount', 'unknownPathCount',
+  'unsafePathCount', 'openClawPathCount', 'spatialAdoptionPathCount']);
+const IGNITION_REFRESH_REQUIREMENTS = Object.freeze(['spatialAdoptionRequired', 'pluginHostActivationRequired',
+  'sovereignRelayRefreshRequired', 'governorRefreshRequired']);
+const IGNITION_COMPLETION_KEYS = Object.freeze(['schemaVersion', 'kind', 'statusId', 'phase', 'beforeHead', 'afterHead',
+  'classification', 'finalVerdict', 'exactHeadProofOk', 'blocker', 'targetIds', 'resultTargets',
+  ...IGNITION_REFRESH_COUNTS, ...IGNITION_REFRESH_REQUIREMENTS]);
+
+function ignitionOwnData(value) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || nodeTypes.isProxy(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length > 128 || keys.some(key => typeof key !== 'string')) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string'
+      || !Object.hasOwn(descriptors[key], 'value'))) return null;
+    const data = Object.create(null);
+    // Normalize every own data field to enumerable, including hidden future
+    // authority fields. No inherited value or getter can fill a missing field.
+    for (const [key, row] of Object.entries(descriptors)) data[key] = row.value;
+    return data;
+  } catch { return null; }
+}
+// Snapshot only the evidence consumed by startup proof admission. Legacy policy
+// validators below receive this inert graph; no caller method, iterator, getter,
+// proxy or nested reference crosses the boundary. This is not a repository-wide
+// claim about every historical projection or executor.
+export function projectIgnitionInertEvidenceV1(value, fields = []) {
+  try {
+    const selected = ignitionArray(fields);
+    if (!selected || selected.length > 4 || selected.some(key => typeof key !== 'string')) return null;
+    let input = value;
+    for (const key of selected) {
+      const row = ignitionOwnData(input);
+      if (!row || !Object.hasOwn(row, key)) return null;
+      input = row[key];
+    }
+    let nodes = 0, bytes = 0;
+    const active = new Set();
+    const account = value => { bytes += Buffer.byteLength(value, 'utf8'); if (bytes > 128 * 1024) throw Error('bounded'); };
+    function copy(item, depth) {
+      if (++nodes > 4096 || depth > 16) throw Error('bounded');
+      if (item === null || typeof item === 'boolean') return item;
+      if (typeof item === 'number') { if (!Number.isFinite(item)) throw Error('finite'); return item; }
+      if (typeof item === 'string') { account(item); return item; }
+      if (!item || typeof item !== 'object' || nodeTypes.isProxy(item) || active.has(item)) throw Error('inert');
+      active.add(item);
+      let result;
+      if (Array.isArray(item)) {
+        const rows = ignitionArray(item);
+        if (!rows || rows.length > 256) throw Error('array');
+        result = [];
+        for (let index = 0; index < rows.length; index++) Object.defineProperty(result, index,
+          { value: copy(rows[index], depth + 1), enumerable: true, writable: false, configurable: false });
+      } else {
+        const row = ignitionOwnData(item);
+        if (!row || Object.keys(row).length > 128) throw Error('record');
+        result = Object.create(null);
+        for (const key of Object.keys(row)) { account(key); Object.defineProperty(result, key,
+          { value: copy(row[key], depth + 1), enumerable: true, writable: false, configurable: false }); }
+      }
+      active.delete(item);
+      return Object.freeze(result);
+    }
+    return copy(input, 0);
+  } catch { return null; }
+}
+
+// Outer execution/stdout payloads are not proof inputs. Select the closed frame
+// first using own descriptors, then snapshot every consumed nested field.
+export function projectIgnitionPreflightResultV1(value) {
+  try {
+    const row = ignitionOwnData(value);
+    if (!row) return null;
+    const frame = Object.create(null);
+    for (const key of ['ok', 'sourceHead', 'syncClassification', 'syncBlockerReason', 'blocker', 'finalVerdict',
+      'pendingRefreshObserved', 'sourceForwardedBeforeRefresh', 'refreshDebtCoalesced', 'controlPlaneRepairObserved',
+      'settledRefreshEvidence']) if (Object.hasOwn(row, key)) frame[key] = row[key];
+    for (const key of ['sourceHead', 'syncClassification', 'syncBlockerReason', 'blocker', 'finalVerdict'])
+      if (Object.hasOwn(frame, key) && typeof frame[key] !== 'string') return null;
+    for (const key of ['ok', 'pendingRefreshObserved', 'sourceForwardedBeforeRefresh', 'refreshDebtCoalesced', 'controlPlaneRepairObserved'])
+      if (Object.hasOwn(frame, key) && typeof frame[key] !== 'boolean') return null;
+    if (Object.hasOwn(row, 'controlPlaneRepair')) {
+      const control = ignitionOwnData(row.controlPlaneRepair);
+      if (!control) return null;
+      frame.controlPlaneRepair = Object.create(null);
+      for (const key of ['ok', 'classification', 'repairAttempted', 'sourceHead'])
+        if (Object.hasOwn(control, key)) frame.controlPlaneRepair[key] = control[key];
+      for (const key of ['ok', 'repairAttempted'])
+        if (Object.hasOwn(frame.controlPlaneRepair, key) && typeof frame.controlPlaneRepair[key] !== 'boolean') return null;
+      for (const key of ['classification', 'sourceHead'])
+        if (Object.hasOwn(frame.controlPlaneRepair, key) && typeof frame.controlPlaneRepair[key] !== 'string') return null;
+    }
+    if (Object.hasOwn(row, 'refreshes')) {
+      const refreshes = ignitionArray(row.refreshes);
+      if (!refreshes || refreshes.length > 256) return null;
+      frame.refreshes = [];
+      for (let index = 0; index < refreshes.length; index++) {
+        const refresh = ignitionOwnData(refreshes[index]);
+        if (!refresh) return null;
+        Object.defineProperty(frame.refreshes, index,
+          { value: Object.hasOwn(refresh, 'result') ? { result: refresh.result } : {}, enumerable: true });
+      }
+    }
+    return projectIgnitionInertEvidenceV1(frame);
+  } catch { return null; }
+}
+
+// Keep transport diagnostics outside the authority graph. Only these existing
+// child-result fields participate in startup/debt admission.
+export function projectIgnitionOwnerResultV1(value, kind = 'refresh') {
+  try {
+    if (!['sync', 'refresh'].includes(kind)) return null;
+    const row = ignitionOwnData(value);
+    if (!row) return null;
+    const frame = Object.create(null);
+    for (const key of ['ok', 'blocker', 'result']) if (Object.hasOwn(row, key)) frame[key] = row[key];
+    if ((Object.hasOwn(frame, 'ok') && typeof frame.ok !== 'boolean')
+      || (Object.hasOwn(frame, 'blocker') && typeof frame.blocker !== 'string')) return null;
+    if (kind === 'sync' && Object.hasOwn(row, 'result')) {
+      const result = ignitionOwnData(row.result);
+      if (!result) return null;
+      const selected = Object.create(null);
+      // Unknown root keys must still defeat the exact non-owner busy refusal.
+      // Their unused payloads, including fetch/merge stdout, are not authority.
+      for (const key of Object.keys(result)) selected[key] = null;
+      for (const key of ['ok', 'sourceUpdated', 'publication']) if (Object.hasOwn(result, key)) selected[key] = result[key];
+      for (const key of ['ok', 'sourceUpdated'])
+        if (Object.hasOwn(selected, key) && typeof selected[key] !== 'boolean') return null;
+      if (Object.hasOwn(selected, 'publication') && selected.publication !== null && selected.publication !== undefined)
+        selected.publication = false;
+      for (const [key, fields] of [['evaluation', ['classification', 'exactNextAction', 'performsGitMutation', 'performsShellExecution']],
+        ['facts', ['localHeadBefore', 'localHeadAfter', 'localHead', 'remoteHead', 'pendingRefresh']],
+        ['receipt', ['statusRecord']], ['lock', ['ok', 'reason']]]) {
+        if (!Object.hasOwn(result, key)) continue;
+        const source = ignitionOwnData(result[key]);
+        if (!source) return null;
+        const target = Object.create(null);
+        for (const field of fields) if (Object.hasOwn(source, field)) target[field] = source[field];
+        selected[key] = target;
+      }
+      for (const key of ['classification', 'exactNextAction'])
+        if (selected.evaluation && Object.hasOwn(selected.evaluation, key) && typeof selected.evaluation[key] !== 'string') return null;
+      for (const key of ['performsGitMutation', 'performsShellExecution'])
+        if (selected.evaluation && Object.hasOwn(selected.evaluation, key) && typeof selected.evaluation[key] !== 'boolean') return null;
+      for (const key of ['localHeadBefore', 'localHeadAfter', 'localHead', 'remoteHead'])
+        if (selected.facts && Object.hasOwn(selected.facts, key) && typeof selected.facts[key] !== 'string') return null;
+      if (selected.lock && ((Object.hasOwn(selected.lock, 'ok') && typeof selected.lock.ok !== 'boolean')
+        || (Object.hasOwn(selected.lock, 'reason') && typeof selected.lock.reason !== 'string'))) return null;
+      frame.result = selected;
+    }
+    if (Object.hasOwn(row, 'execution')) {
+      const execution = ignitionOwnData(row.execution);
+      if (!execution) return null;
+      frame.execution = Object.create(null);
+      for (const key of ['status', 'errorCode']) if (Object.hasOwn(execution, key)) frame.execution[key] = execution[key];
+      if ((Object.hasOwn(frame.execution, 'status') && frame.execution.status !== null && !Number.isSafeInteger(frame.execution.status))
+        || (Object.hasOwn(frame.execution, 'errorCode') && typeof frame.execution.errorCode !== 'string')) return null;
+    }
+    return projectIgnitionInertEvidenceV1(frame);
+  } catch { return null; }
+}
+
+function ignitionArray(value) {
+  try {
+    if (!Array.isArray(value) || nodeTypes.isProxy(value)) return null;
+    const length = Object.getOwnPropertyDescriptor(value, 'length');
+    if (!length || !Object.hasOwn(length, 'value') || !Number.isSafeInteger(length.value)
+      || length.value < 0 || length.value > 256) return null;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== length.value + 1) return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(descriptors).length !== value.length + 1) return null;
+    const data = [];
+    for (let index = 0; index < value.length; index++) {
+      if (!Object.hasOwn(descriptors, index)) return null;
+      const descriptor = descriptors[index];
+      if (!Object.hasOwn(descriptor, 'value')) return null;
+      Object.defineProperty(data, index, { value: descriptor.value, enumerable: true, writable: true, configurable: true });
+    }
+    return data;
+  } catch { return null; }
+}
+
+export function projectPostSyncRemainingIgnitionObligationsV1(value, expectedHead) {
+  const record = projectIgnitionInertEvidenceV1(value);
+  if (!record || typeof expectedHead !== 'string' || !/^[a-f0-9]{40}$/.test(expectedHead)
+    || ![POST_SYNC_REFRESH_SCHEMA, 'shared-agent-workspace-record.v1'].includes(record.schemaVersion)
+    || (record.schemaVersion === 'shared-agent-workspace-record.v1'
+      && (record.kind !== 'stephanos.shared_workspace.status' || record.statusId !== 'post-sync-runtime-refresh-current'))
+    || record.afterHead !== expectedHead || typeof record.beforeHead !== 'string' || !/^[a-f0-9]{40}$/.test(record.beforeHead)
+    || record.beforeHead === record.afterHead
+    || !Object.values(POST_SYNC_REFRESH_CLASSIFICATIONS).includes(record.classification)
+    || typeof record.exactHeadProofOk !== 'boolean' || typeof record.blocker !== 'string'
+    || !['POST_SYNC_RUNTIME_REFRESH_PASS', 'POST_SYNC_RUNTIME_REFRESH_BLOCKED'].includes(record.finalVerdict)
+    || (record.finalVerdict === 'POST_SYNC_RUNTIME_REFRESH_PASS') !== record.exactHeadProofOk
+    || (Object.hasOwn(record, 'ok') && (typeof record.ok !== 'boolean'
+      || record.ok !== (record.finalVerdict === 'POST_SYNC_RUNTIME_REFRESH_PASS')))
+    || IGNITION_REFRESH_REQUIREMENTS.some(key => typeof record[key] !== 'boolean')
+    || Object.keys(record).some(key => key.endsWith('Required') && !IGNITION_REFRESH_REQUIREMENTS.includes(key))
+    || Object.keys(record).some(key => key.endsWith('PathCount') && !IGNITION_REFRESH_COUNTS.includes(key))
+    || IGNITION_REFRESH_COUNTS.some(key => !Number.isSafeInteger(record[key]) || record[key] < 0
+      || (key !== 'changedPathCount' && record[key] > record.changedPathCount))
+    || record.spatialAdoptionPathCount > 2 || (record.spatialAdoptionPathCount > 0 && !record.spatialAdoptionRequired)) return null;
+  const targets = ignitionArray(record.targetIds), rawResults = ignitionArray(record.resultTargets);
+  if (!targets || !rawResults || targets.length > TARGET_ORDER.length || rawResults.length > targets.length
+    || new Set(targets).size !== targets.length || targets.some((id, index) => !TARGET_ORDER.includes(id)
+      || (index > 0 && TARGET_ORDER.indexOf(targets[index - 1]) >= TARGET_ORDER.indexOf(id)))
+    || ((record.governorRefreshRequired || record.sovereignRelayRefreshRequired)
+      && !targets.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER))) return null;
+  const results = rawResults.map(ignitionOwnData);
+  if (results.some((row, index) => !row || row.targetId !== targets[index]
+    || typeof row.ok !== 'boolean' || typeof row.exactHeadProofOk !== 'boolean'
+    || typeof row.blocker !== 'string' || typeof row.sourceHead !== 'string'
+    || (row.sourceHead !== '' && !/^[a-f0-9]{40}$/.test(row.sourceHead)))) return null;
+  for (const row of results) {
+    if (Object.hasOwn(row, 'governorProof') && (row.targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER
+      || !projectPostSyncGovernorProof(row.governorProof, expectedHead))) return null;
+    if (Object.hasOwn(row, 'sovereignRelayProof') && (row.targetId !== POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER
+      || nodeTypes.isProxy(row.sovereignRelayProof || {})
+      || !projectPostSyncSovereignRelayProof(row.sovereignRelayProof, expectedHead))) return null;
+  }
+  const remaining = [];
+  const pass = row => row?.ok === true && row.exactHeadProofOk === true && row.sourceHead === expectedHead && row.blocker === '';
+  for (let index = 0; index < targets.length; index++) if (!pass(results[index])) remaining.push('target:' + targets[index]);
+  const commander = results.find(row => row.targetId === POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
+  if (record.governorRefreshRequired && (!pass(commander)
+    || !projectPostSyncGovernorProof(commander.governorProof, expectedHead))) remaining.push('governor');
+  if (record.sovereignRelayRefreshRequired && (!pass(commander)
+    || nodeTypes.isProxy(commander.sovereignRelayProof || {})
+    || !projectPostSyncSovereignRelayProof(commander.sovereignRelayProof, expectedHead))) remaining.push('sovereign-relay');
+  if (record.spatialAdoptionRequired) remaining.push('spatial-resident');
+  if (record.pluginHostActivationRequired) remaining.push('desktop-plugin-host');
+  if (record.openClawPathCount) remaining.push('openclaw-approval');
+  if (record.unknownPathCount) remaining.push('unclassified-path');
+  if (record.unsafePathCount) remaining.push('unsafe-path');
+  return Object.freeze({ schemaVersion: IGNITION_REFRESH_OBLIGATION_SCHEMA_V1, sourceHead: expectedHead,
+    remaining: Object.freeze(remaining) });
+}
+
+// The wrapper supplies actual published canonical records and the bounded
+// ancestry observations from its existing Git adapter. Replaying this contract
+// grants no native, source, process, custody or refresh execution authority.
+export function projectIgnitionSettledRefreshEvidenceV1(value, expectedHead) {
+  const witness = projectIgnitionInertEvidenceV1(value);
+  if (!witness || Object.keys(witness).sort().join(',') !== 'ancestry,refreshCompletionRecord,schemaVersion,sourceHead,syncStatusRecord'
+    || witness.schemaVersion !== IGNITION_SETTLED_REFRESH_SCHEMA_V1 || witness.sourceHead !== expectedHead) return null;
+  const sync = ignitionOwnData(witness.syncStatusRecord), refresh = ignitionOwnData(witness.refreshCompletionRecord);
+  const ancestry = ignitionArray(witness.ancestry);
+  if (!sync || !refresh || !ancestry || ancestry.length > 64
+    || sync.schemaVersion !== 'shared-agent-workspace-record.v1' || sync.kind !== 'stephanos.shared_workspace.status'
+    || sync.statusId !== 'battle-bridge-github-sync-current' || sync.classification !== 'SYNC_NO_CHANGE'
+    || sync.localHeadBefore !== expectedHead || sync.remoteHeadObserved !== expectedHead || sync.pendingRefresh !== null
+    || refresh.schemaVersion !== 'shared-agent-workspace-record.v1' || refresh.kind !== 'stephanos.shared_workspace.status'
+    || refresh.statusId !== 'post-sync-runtime-refresh-current' || refresh.afterHead !== expectedHead) return null;
+  const map = new Map(), rows = [];
+  for (const input of ancestry) {
+    const row = ignitionOwnData(input);
+    if (!row || Object.keys(row).sort().join(',') !== 'afterHead,ancestor,beforeHead'
+      || typeof row.beforeHead !== 'string' || typeof row.afterHead !== 'string'
+      || !/^[a-f0-9]{40}$/.test(row.beforeHead) || !/^[a-f0-9]{40}$/.test(row.afterHead)
+      || typeof row.ancestor !== 'boolean' || map.has(row.beforeHead + ':' + row.afterHead)) return null;
+    map.set(row.beforeHead + ':' + row.afterHead, row.ancestor); rows.push(Object.freeze(row));
+  }
+  const obligations = projectPostSyncRemainingIgnitionObligationsV1(refresh, expectedHead);
+  if (!obligations || obligations.remaining.length) return null;
+  const completion = inspectPostSyncRefreshCompletion(refresh);
+  const evidence = collectPostSyncRefreshDebt({ syncRecord: sync, refreshRecord: refresh });
+  if (!completion.ok || !evidence.ok) return null;
+  const resolved = resolvePostSyncRefreshDebt({ ...evidence, currentHead: expectedHead, requireCurrentCoverage: true,
+    isAncestor(beforeHead, afterHead) {
+      const key = beforeHead + ':' + afterHead;
+      return map.has(key) ? { ok: true, ancestor: map.get(key) } : { ok: false, ancestor: false };
+    } });
+  if (!resolved.ok || resolved.debt !== null) return null;
+  const resultTargets = refresh.resultTargets.map(input => {
+    const row = ignitionOwnData(input);
+    const governorProof = projectPostSyncGovernorProof(row.governorProof, expectedHead);
+    const sovereignRelayProof = projectPostSyncSovereignRelayProof(row.sovereignRelayProof, expectedHead);
+    return Object.freeze({ targetId: row.targetId, ok: row.ok, exactHeadProofOk: row.exactHeadProofOk,
+      sourceHead: row.sourceHead, blocker: row.blocker, ...(governorProof ? { governorProof } : {}),
+      ...(sovereignRelayProof ? { sovereignRelayProof } : {}) });
+  });
+  return projectIgnitionInertEvidenceV1({ schemaVersion: IGNITION_SETTLED_REFRESH_SCHEMA_V1, sourceHead: expectedHead,
+    syncStatusRecord: Object.freeze(Object.fromEntries(['schemaVersion', 'kind', 'statusId', 'classification',
+      'localHeadBefore', 'remoteHeadObserved', 'pendingRefresh'].map(key => [key, sync[key]]))),
+    refreshCompletionRecord: Object.freeze({ ...Object.fromEntries(IGNITION_COMPLETION_KEYS.map(key => [key, refresh[key]])), resultTargets }),
+    ancestry: Object.freeze(rows) });
 }

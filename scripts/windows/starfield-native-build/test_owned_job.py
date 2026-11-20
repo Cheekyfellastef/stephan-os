@@ -6,6 +6,7 @@ descendant. A returned receipt alone is never the process-exclusion assertion.
 
 import base64
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import ctypes
 import hashlib
 import importlib.util
@@ -56,6 +57,11 @@ class PortableContractTests(unittest.TestCase):
         self.assertEqual(owned_job._validate_inputs(**self.inputs(parent_birth_filetime=birth)), int(birth))
         with self.assertRaises(ValueError):
             owned_job._validate_inputs(**self.inputs(parent_birth_filetime=float(birth)))
+
+    def test_untrusted_helper_policy_refuses_before_any_native_call(self):
+        for value in (True, {}, {"image": "vctip.exe"}, "pinned-msvc-telemetry-v1", lambda: True):
+            with self.subTest(value=type(value).__name__), self.assertRaisesRegex(ValueError, "COMPLETED_HELPER_PIN_UNPROVEN"):
+                owned_job.run_owned_stage(**self.inputs(), completed_helper=value)
 
     def test_windows_x64_structures_have_expected_abi_sizes(self):
         if ctypes.sizeof(ctypes.c_void_p) != 8:
@@ -183,6 +189,44 @@ class WindowsOwnedJobTests(unittest.TestCase):
         self.assertEqual(len(raw), result["output_captured_bytes"])
         self.assertIn(b"owned-job-normal", raw)
 
+    def test_running_permission_cannot_bypass_first_prelaunch_refusal(self):
+        running_calls = []
+        result = self.run_stage(cancel_requested=lambda: True,
+            running_cancel_requested=lambda: running_calls.append(True) or False)
+        self.assertTrue(result["cancelled"], result)
+        self.assertFalse(result["root_created"])
+        self.assertFalse(result["resume_confirmed"])
+        self.assertTrue(result["prelaunch_excluded"])
+        self.assertEqual(running_calls, [])
+        self.assertFalse(self.witness.exists())
+
+    def test_suspended_root_still_requires_ordinary_admission_before_resume(self):
+        suspended = [False];running_calls = []
+        def bind(proof):
+            self.bound(proof);suspended[0] = True
+            return True
+        result = self.run_stage(cancel_requested=lambda: suspended[0], on_suspended=bind,
+            running_cancel_requested=lambda: running_calls.append(True) or False)
+        self.assertTrue(result["cancelled"], result)
+        self.assertTrue(result["root_created"])
+        self.assertFalse(result["resume_confirmed"])
+        self.assertEqual(running_calls, [])
+        self.assertFalse(self.witness.exists(), "Suspended fixture executed despite ordinary admission refusal")
+        self.assert_excluded(result)
+
+    def test_running_policy_is_selected_only_after_native_resume_confirmation(self):
+        ordinary = [];running = []
+        def before():
+            ordinary.append(True)
+            return len(ordinary) > 3  # ordinary policy would withdraw after resume
+        result = self.run_stage(cancel_requested=before,
+            running_cancel_requested=lambda: running.append(True) or False)
+        self.assertTrue(result["operation_ok"], result)
+        self.assertTrue(result["resume_confirmed"])
+        self.assertEqual(len(ordinary), 3)
+        self.assertGreater(len(running), 0)
+        self.assert_excluded(result)
+
     def test_nonzero_exit_is_preserved_despite_job_zero(self):
         result = self.run_stage("failed")
         self.assertFalse(result["operation_ok"])
@@ -240,6 +284,95 @@ class WindowsOwnedJobTests(unittest.TestCase):
         self.assert_excluded(result)
         self.observer.exit(child_handle)
         self.assertTrue(result["output_complete"], result)
+
+    def helper_fixture(self, fault=None):
+        # Only this test substitutes the harmless Python fixture for the exact
+        # source-qualified MSVC binary. Production accepts no supplied path/hash.
+        spec = importlib.util.spec_from_file_location("helper_native_pins", SOURCE.with_name("native_build.py"))
+        build = importlib.util.module_from_spec(spec);spec.loader.exec_module(build)
+        pins = build.NativePins()
+        image = str(Path(sys.executable).resolve())
+        if fault == "foreign_image":
+            foreign = self.root / "unexecuted-helper.exe"
+            foreign.write_bytes(Path(image).read_bytes())
+            image = str(foreign)
+        real_api = owned_job._Win32
+        retired = [False]
+        def fault_api():
+            api = real_api()
+            query, terminate = api.k.QueryInformationJobObject, api.k.TerminateJobObject
+            def terminate_observed(*args):
+                retired[0] = True
+                return terminate(*args)
+            def query_observed(*args):
+                ok = query(*args)
+                if ok and args[1] == 1 and retired[0] and fault == "new_member":
+                    ctypes.cast(args[2], ctypes.POINTER(owned_job._ACCOUNTING)).contents.total_processes += 1
+                if ok and args[1] == 3 and fault == "extra_member":
+                    ctypes.cast(args[2], ctypes.POINTER(owned_job._JOB_PROCESS_IDS)).contents.assigned = 2
+                if args[1] == 3 and fault == "membership_failure":return 0
+                return ok
+            api.k.QueryInformationJobObject = query_observed
+            api.k.TerminateJobObject = terminate_observed
+            return api
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(owned_job, "COMPLETED_HELPER_IMAGE", image))
+                stack.enter_context(patch.object(owned_job, "COMPLETED_HELPER_SHA256", hashlib.sha256(Path(image).read_bytes()).hexdigest()))
+                helper = owned_job.pin_completed_toolchain_helper(pins)
+                stack.enter_context(patch.object(owned_job, "_Win32", side_effect=fault_api))
+                cancelled = threading.Event()
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    mode = {"two_members":"two-orphans", "root_failure":"orphan-failed"}.get(fault, "orphan")
+                    future = pool.submit(self.run_stage, mode, completed_helper=helper,
+                        cancel_requested=cancelled.is_set)
+                    child = self.wait_json(self.descendant)
+                    child_handle, _ = self.observer.capture(child["pid"], child["birth"])
+                    second_handle = None
+                    if fault == "two_members":
+                        second = self.wait_json(Path(str(self.descendant) + ".second"))
+                        second_handle, _ = self.observer.capture(second["pid"], second["birth"])
+                    if fault == "closed_pin":pins.close()
+                    if fault == "cancel":cancelled.set()
+                    self.ack.write_text("ack", encoding="ascii")
+                    result = future.result(timeout=15)
+                self.assert_excluded(result)
+                self.observer.exit(child_handle)
+                if second_handle:self.observer.exit(second_handle)
+                self.assertTrue(result["output_complete"], result)
+                return result
+        finally:
+            pins.close()
+
+    def test_pinned_sole_helper_retirement_requires_native_zero_and_complete_output(self):
+        result = self.helper_fixture()
+        self.assertTrue(result["operation_ok"], result)
+        self.assertTrue(result["termination_requested"])
+        self.assertEqual(result["root_exit_code"], 0)
+        self.assertTrue(result["completed_helper_retirement"]["sole_native_job_member_observed"])
+
+    def test_unknown_image_extra_member_closed_pin_and_unknown_membership_refuse_retirement(self):
+        for fault in ("foreign_image", "extra_member", "closed_pin", "membership_failure", "two_members", "root_failure"):
+            with self.subTest(fault=fault):
+                # Each real fixture needs fresh witness names and independent handles.
+                directory = self.root / fault;directory.mkdir()
+                self.witness = directory / "root.json";self.descendant = directory / "child.json";self.ack = directory / "ack"
+                result = self.helper_fixture(fault)
+                self.assertFalse(result["operation_ok"], result)
+                self.assertIsNone(result["completed_helper_retirement"])
+
+    def test_helper_retirement_cannot_erase_cancellation_or_process_set_growth(self):
+        for fault in ("cancel", "new_member"):
+            with self.subTest(fault=fault):
+                directory = self.root / fault;directory.mkdir()
+                self.witness = directory / "root.json";self.descendant = directory / "child.json";self.ack = directory / "ack"
+                result = self.helper_fixture(fault)
+                self.assertFalse(result["operation_ok"], result)
+                if fault == "cancel":
+                    self.assertTrue(result["cancelled"])
+                    self.assertIsNone(result["completed_helper_retirement"])
+                else:
+                    self.assertIn("HELPER_RETIREMENT_PROCESS_SET_CHANGED", result["failures"])
 
     def test_output_overflow_is_bounded_and_never_complete(self):
         result = self.run_stage("overflow", output_limit=4096)

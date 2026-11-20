@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyPostSyncRefresh, executePostSyncRefreshPlan } from './postSyncRuntimeRefreshCoordinator.mjs';
+import { classifyPostSyncRefresh, executePostSyncRefreshPlan, parseGitChangedPathStatus, LOCAL_LAUNCHER_FRESH_ENTRY_PATHS } from './postSyncRuntimeRefreshCoordinator.mjs';
 
 const onDemand = [
   'scripts/report-starfield-vr-telemetry.mjs',
@@ -150,4 +151,71 @@ test('complete owner-comment rollout retains existing relay adoption and refuses
   assert(plan.targetIds.includes('sovereign-commander'));
   assert.equal(classifyPostSyncRefresh([...controlTowerOwnerCommentRollout, 'scripts/unclassified-current-debt.mjs']).classification,
     'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+});
+
+const unattendedIgnitionRollout = [
+  'windows/Launch-Stephanos-Local.ps1',
+  'windows/Launch-Stephanos-Local.cmd',
+  'windows/Invoke-Stephanos-Ignite-With-Approval.ps1',
+  'shared/agents/stephanosChatUpdate.mjs',
+  'shared/agents/stephanosChatUpdate.test.mjs',
+  'scripts/run-battle-bridge-ignition.mjs',
+  'scripts/run-battle-bridge-ignition.test.mjs',
+  'scripts/windows-ignition-browser-surfaces.test.mjs',
+  'scripts/windows-ignition-preflight-recovery.test.mjs',
+  'scripts/windows-launcher-defaults.test.mjs',
+  'docs/architecture/ignition-source-activation-routing.md',
+  'scripts/battle-bridge-github-sync-and-refresh.mjs',
+  'scripts/battle-bridge-ignition-sync-preflight.mjs',
+  'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+  'shared/agents/postSyncRuntimeRefreshActivationOwners.test.mjs',
+];
+
+test('one exact fresh launcher owner covers the real guarded invocation chain', () => {
+  assert.deepEqual(LOCAL_LAUNCHER_FRESH_ENTRY_PATHS, [
+    'windows/Launch-Stephanos-Local.cmd',
+    'windows/Launch-Stephanos-Local.ps1',
+    'windows/Invoke-Stephanos-Ignite-With-Approval.ps1',
+  ]);
+  const cmd = readFileSync(new URL('../../windows/Launch-Stephanos-Local.cmd', import.meta.url), 'utf8');
+  const launcher = readFileSync(new URL('../../windows/Launch-Stephanos-Local.ps1', import.meta.url), 'utf8');
+  const helper = readFileSync(new URL('../../windows/Invoke-Stephanos-Ignite-With-Approval.ps1', import.meta.url), 'utf8');
+  assert(cmd.includes('POWERSHELL_TARGET=%SCRIPT_DIR%Launch-Stephanos-Local.ps1'));
+  assert(launcher.includes('windows/Invoke-Stephanos-Ignite-With-Approval.ps1'));
+  assert(helper.includes('npm run stephanos:ignite'));
+  for (const member of LOCAL_LAUNCHER_FRESH_ENTRY_PATHS) {
+    const plan = classifyPostSyncRefresh([member]);
+    assert.equal(plan.classification, 'REFRESH_READY', member);
+    assert.deepEqual(plan.targetIds, ['natural-reload'], member);
+  }
+});
+
+test('the complete unattended ignition source increment has canonical activation owners', () => {
+  assert.equal(unattendedIgnitionRollout.length, 15);
+  const plan = classifyPostSyncRefresh(unattendedIgnitionRollout);
+  assert.equal(plan.classification, 'REFRESH_READY');
+  assert.equal(plan.unknownPathCount, 0);
+  assert(plan.targetIds.includes('natural-reload'));
+  for (const neighbor of [
+    'windows/Launch-Stephanos-Local-copy.cmd',
+    'windows/Invoke-Stephanos-Ignite-With-Approval-override.ps1',
+    'windows/Unattended-Launcher.ps1',
+  ]) {
+    assert.equal(classifyPostSyncRefresh([...unattendedIgnitionRollout, neighbor]).classification,
+      'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+  }
+});
+
+test('every essential launcher-chain member remains protected against removal or rename', () => {
+  for (const member of LOCAL_LAUNCHER_FRESH_ENTRY_PATHS) {
+    for (const line of ['D\t' + member, 'R100\t' + member + '\twindows/unqualified-launcher.ps1']) {
+      const parsed = parseGitChangedPathStatus(line);
+      assert.equal(parsed.ok, false, line);
+      assert.equal(parsed.blocker, 'POST_SYNC_REQUIRED_LOCAL_LAUNCHER_REMOVED', line);
+    }
+  }
+  const copied = parseGitChangedPathStatus(
+    'C100\twindows/Launch-Stephanos-Local.cmd\twindows/unqualified-copy.cmd');
+  assert.equal(copied.ok, true);
+  assert.equal(classifyPostSyncRefresh(copied.paths).classification, 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
 });

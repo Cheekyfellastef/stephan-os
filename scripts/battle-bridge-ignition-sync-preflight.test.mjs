@@ -8,6 +8,26 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const CANONICAL_REPO = '/canonical/stephan-os';
+function canonicalRefreshFields() {
+  return { schemaVersion: 'stephanos.post-sync-runtime-refresh.v1', beforeHead: 'b'.repeat(40), afterHead: HEAD,
+    changedPathCount: 1, noRuntimePathCount: 0, unknownPathCount: 0, unsafePathCount: 0, openClawPathCount: 0,
+    spatialAdoptionPathCount: 0, spatialAdoptionRequired: false, pluginHostActivationRequired: false,
+    governorRefreshRequired: false, sovereignRelayRefreshRequired: false,
+    exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' };
+}
+function canonicalSettledRefresh() {
+  const beforeHead = 'b'.repeat(40);
+  return { schemaVersion: 'stephanos.ignition-settled-refresh.v1', sourceHead: HEAD,
+    syncStatusRecord: { schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.status',
+      statusId: 'battle-bridge-github-sync-current', classification: 'SYNC_NO_CHANGE', localHeadBefore: HEAD,
+      remoteHeadObserved: HEAD, pendingRefresh: null },
+    refreshCompletionRecord: { ...canonicalRefreshFields(), schemaVersion: 'shared-agent-workspace-record.v1',
+      kind: 'stephanos.shared_workspace.status', statusId: 'post-sync-runtime-refresh-current', phase: 'complete',
+      classification: 'NO_RUNTIME_REFRESH_REQUIRED', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',
+      exactHeadProofOk: true, blocker: '', noRuntimePathCount: 1, targetIds: [], resultTargets: [] },
+    ancestry: [{ beforeHead, afterHead: HEAD, ancestor: true }, { beforeHead: HEAD, afterHead: beforeHead, ancestor: false }] };
+}
+
 
 function canonicalWindowsOptions(overrides = {}) {
   return {
@@ -107,11 +127,13 @@ test('Windows ignition keeps core startup moving when only auxiliary control-pla
       sourceHead: HEAD,
       syncClassification: 'SYNC_NO_CHANGE',
       refreshes: [],
+      settledRefreshEvidence: canonicalSettledRefresh(),
       controlPlaneRepair: {
         ok: false,
         classification: 'CONTROL_PLANE_REPAIR_BLOCKED',
         blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
         repairAttempted: true,
+        sourceHead: HEAD,
       },
       finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
     }),
@@ -139,10 +161,11 @@ test('Windows ignition proceeds degraded when only Sovereign Commander is held b
         beforeHead: 'b'.repeat(40),
         afterHead: HEAD,
         result: {
+          ...canonicalRefreshFields(),
           ok: false,
           classification: 'BLOCKED_REFRESH_FAILED',
           blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
-          targetIds: ['stephanos-ui-4173','stephanos-backend-8787','mission-orchestrator-worker','github-command-mailbox','sovereign-commander','natural-reload'],
+          targetIds: ['stephanos-ui-4173','stephanos-backend-8787','mission-orchestrator-worker','github-command-mailbox','sovereign-commander'],
           resultTargets: [
             { targetId:'stephanos-ui-4173', ok:true, exactHeadProofOk:true, sourceHead:HEAD, blocker:'' },
             { targetId:'stephanos-backend-8787', ok:true, exactHeadProofOk:true, sourceHead:HEAD, blocker:'' },
@@ -179,6 +202,7 @@ test('Windows ignition proceeds degraded when only desktop plugin-host activatio
       syncClassification: 'SYNC_NO_CHANGE',
       refreshes: [{
         result: {
+          ...canonicalRefreshFields(),
           ok: false,
           classification: 'BLOCKED_REFRESH_FAILED',
           blocker: 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN',

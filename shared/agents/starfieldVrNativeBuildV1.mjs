@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { execFile, spawnSync } from 'node:child_process';
 import { win32 } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { setTimeout as delay } from 'node:timers/promises';
 import { inspectStephanosNativeCapacityGamingAdmissionV1 } from './stephanosNativeCapacityGamingAdmissionV1.mjs';
 
 export const STARFIELD_VR_NATIVE_BUILD_OPERATION = 'BUILD_STARFIELD_VR_PAIRED_OBSERVER';
@@ -34,6 +36,20 @@ const FALSE_CLAIMS = Object.freeze({
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, finalVerdict: 'STARFIELD_VR_NATIVE_BUILD_BLOCKED', blocker,
     schemaVersion: STARFIELD_VR_NATIVE_BUILD_SCHEMA, ...FALSE_CLAIMS, ...details });
+}
+async function awaitOrdinaryGamingAdmission(inspect, clock, pause) {
+  // Observation only: a hold never grants permission. Wait before launch for
+  // a fresh ordinary admission, without changing the shared policy predicate.
+  const started = clock();
+  for (let attempt = 0; attempt < 11; attempt++) {
+    if (clock() - started >= 1000) return false;
+    const current = inspect();
+    if (clock() - started >= 1000) return false;
+    if (current?.ok === true) return true;
+    if (current?.ok !== false || current.reason !== 'native-capacity-gaming-permission-denied') return false;
+    if (attempt < 10) await pause(100);
+  }
+  return false;
 }
 function options(cwd, timeout = 30_000) {
   return { cwd, shell: false, windowsHide: true, timeout, encoding: 'utf8', maxBuffer: MAX_MEMBER + 8192 };
@@ -192,6 +208,7 @@ export function projectStarfieldVrNativeBuildReceipt(value, expectedHead, reques
 export async function executeStarfieldVrNativeBuild(command, paths, {
   spawnSyncFn = spawnSync, runLauncherFn = runLauncher, env = process.env, parentPid = process.pid,
   admissionFn = inspectStephanosNativeCapacityGamingAdmissionV1,
+  admissionClockFn = () => performance.now(), admissionDelayFn = delay,
 } = {}) {
   const head = command?.expectedHead;
   const requestId = command?.requestId;
@@ -201,8 +218,9 @@ export async function executeStarfieldVrNativeBuild(command, paths, {
   // not select the code that is sent to the build interpreter.
   if (!protectedHeadMatches(head, paths.repoRoot, spawnSyncFn, env)) return fail('STARFIELD_VR_NATIVE_BUILD_PROTECTED_HEAD_UNPROVEN');
   const workspaceRoot = win32.resolve(paths.userProfile, 'Documents', 'Stephanos-openclaw-workspace');
-  const admission = admissionFn({ env, repoRoot: paths.repoRoot, workspaceRoot });
-  if (!admission?.ok) return fail('STARFIELD_VR_NATIVE_BUILD_GAMING_HOLD');
+  const ordinaryAdmission = () => awaitOrdinaryGamingAdmission(
+    () => admissionFn({ env, repoRoot: paths.repoRoot, workspaceRoot }), admissionClockFn, admissionDelayFn);
+  if (!await ordinaryAdmission()) return fail('STARFIELD_VR_NATIVE_BUILD_GAMING_HOLD');
   let recipe, records, closureSha256;
   try {
     const readBlob = verifiedSourceReader(head, paths.repoRoot, spawnSyncFn, env);
@@ -220,13 +238,16 @@ export async function executeStarfieldVrNativeBuild(command, paths, {
     closureSha256 = createHash('sha256').update(Object.keys(records).sort().map(path => `${path}\0${records[path].sha256}\n`).join('')).digest('hex');
   } catch { return fail('STARFIELD_VR_NATIVE_BUILD_SOURCE_UNAVAILABLE'); }
   // Recheck admission immediately before the owned build process starts.
-  if (!admissionFn({ env, repoRoot: paths.repoRoot, workspaceRoot })?.ok) return fail('STARFIELD_VR_NATIVE_BUILD_GAMING_HOLD');
+  if (!await ordinaryAdmission()) return fail('STARFIELD_VR_NATIVE_BUILD_GAMING_HOLD');
   if (!protectedHeadMatches(head, paths.repoRoot, spawnSyncFn, env)) return fail('STARFIELD_VR_NATIVE_BUILD_PROTECTED_HEAD_UNPROVEN');
   const packet = { schemaVersion: 'stephanos.starfield-native-build-input.v1', sourceHead: head,
     requestId, stage: STARFIELD_VR_NATIVE_BUILD_STAGE, sourceClosureSha256: closureSha256,
     parentPid, files: records };
   const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-  if (paths.powershellExe !== powershell) return fail('STARFIELD_VR_NATIVE_BUILD_LAUNCHER_PATH_INVALID');
+  // The mailbox preserves SystemRoot casing (commonly C:\WINDOWS). Admit only
+  // that fixed Windows path, then launch the source-owned literal below.
+  if (typeof paths.powershellExe !== 'string'
+    || paths.powershellExe.toLowerCase() !== powershell.toLowerCase()) return fail('STARFIELD_VR_NATIVE_BUILD_LAUNCHER_PATH_INVALID');
   const launcher = Buffer.from(records[LAUNCHER].base64, 'base64').toString('utf8');
   const encoded = Buffer.from(launcher, 'utf16le').toString('base64');
   if (encoded.length > 32000) return fail('STARFIELD_VR_NATIVE_BUILD_LAUNCHER_BOUND');

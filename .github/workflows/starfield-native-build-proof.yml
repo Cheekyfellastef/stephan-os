@@ -7,6 +7,9 @@ on:
     paths:
       - 'VR-Research-Lab/native/starfield-paired-observer-v1/**'
       - 'scripts/windows/starfield-native-build/**'
+      - 'scripts/windows/run-vr-resource-governor.ps1'
+      - 'scripts/windows/run-sovereign-commander-hidden.ps1'
+      - 'scripts/governor-progress-repair.test.mjs'
       - 'shared/agents/starfieldVrNativeBuildV1*'
       - 'shared/agents/starfieldVrBattleBridgeMailboxV1*'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
@@ -40,6 +43,7 @@ jobs:
           node --test shared/agents/starfieldVrNativeBuildV1.test.mjs shared/agents/starfieldVrBattleBridgeMailboxV1.test.mjs shared/agents/battleBridgeGitHubCommandMailboxStarfieldVr.test.mjs scripts/battle-bridge-starfield-native-build-projection.test.mjs
           python -I -S -B -m unittest discover -s scripts/windows/starfield-native-build -p 'test_*.py' -v
           python -I -S -B VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observer-source.py -v
+          python -I -S -B VR-Research-Lab/native/starfield-paired-observer-v1/test_paired_loader_preparation.py -v
       - name: Compile and run the portable eye models
         working-directory: VR-Research-Lab/native/starfield-paired-observer-v1
         run: |
@@ -57,10 +61,18 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.13'
           architecture: 'x64'
+      - name: Verify canonical governor progress, custody and CPU continuation
+        shell: pwsh
+        run: |
+          node --test scripts/governor-progress-repair.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'STARFIELD_GOVERNOR_CONTINUATION_TEST_FAILED' }
       - name: Run real Windows process, descendant, parent-death and file-pin fixtures
         shell: pwsh
         run: |
@@ -72,6 +84,8 @@ jobs:
         run: |
           python -I -S -B VR-Research-Lab/native/starfield-paired-observer-v1/test-paired-source-observer-source.py -v
           if ($LASTEXITCODE -ne 0) { throw 'STARFIELD_OBSERVER_WINDOWS_SOURCE_TEST_FAILED' }
+          python -I -S -B VR-Research-Lab/native/starfield-paired-observer-v1/test_paired_loader_preparation.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'STARFIELD_PAIRED_LOADER_PREPARATION_TEST_FAILED' }
       - name: Parse the fixed Windows PowerShell bootstrap
         if: ${{ !cancelled() }}
         shell: powershell

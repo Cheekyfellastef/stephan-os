@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { win32 } from 'node:path';
 import test from 'node:test';
 import { executeStarfieldVrNativeBuild, projectStarfieldVrNativeBuildReceipt,
   STARFIELD_VR_NATIVE_BUILD_OPERATION as OP, STARFIELD_VR_NATIVE_BUILD_RECIPE as RECIPE,
@@ -118,7 +119,7 @@ function host(f = fixture(), changes = {}) {
   };
   return { f, calls, invoke, launch, get packet() { return packet; }, execute: (extra = {}) => executeStarfieldVrNativeBuild({
     operation: OP, expectedHead: f.head, requestId: REQUEST,
-  }, PATHS, { spawnSyncFn: invoke, runLauncherFn: launch, parentPid: 123, admissionFn: () => ({ ok: true }),
+  }, changes.paths ?? PATHS, { spawnSyncFn: invoke, runLauncherFn: launch, parentPid: 123, admissionFn: () => ({ ok: true }),
     env: { USERPROFILE: USER, SystemRoot: 'C:\\Windows', GIT_DIR: 'C:\\wrong', GIT_CONFIG_COUNT: '9',
       NODE_OPTIONS: '--require=C:\\untrusted.js', PATH: 'C:\\untrusted' }, ...extra }) };
 }
@@ -141,6 +142,29 @@ test('committed root, trees and blobs bind the bytes passed to the fixed build',
   assert.equal(result.headsetPlaytestReady, false); assert.equal(result.launchAllowed, false);
 });
 
+test('mailbox-normalized Windows root casing preserves the fixed executable', async () => {
+  for (const systemRoot of ['C:\\WINDOWS', 'c:\\windows']) {
+    const powershellExe = win32.resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const h = host(fixture(), { paths: { ...PATHS, powershellExe } });
+    const result = await h.execute();
+    assert.equal(result.ok, true, `${systemRoot}: ${result.blocker}`);
+    const launch = h.calls.find(call => call.asynchronousLauncher);
+    assert.equal(launch.exe, PATHS.powershellExe, 'the admitted path never selects the executable');
+  }
+});
+
+test('launcher path substitutions remain blocked before execution', async () => {
+  for (const powershellExe of [undefined, '', 'powershell.exe',
+    win32.resolve('D:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    win32.resolve('C:\\Windows', 'SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    `${PATHS.powershellExe}.exe`, `${PATHS.powershellExe} `]) {
+    const h = host(fixture(), { paths: { ...PATHS, powershellExe } });
+    const result = await h.execute();
+    assert.equal(result.blocker, 'STARFIELD_VR_NATIVE_BUILD_LAUNCHER_PATH_INVALID');
+    assert.equal(h.calls.some(call => call.asynchronousLauncher), false);
+  }
+});
+
 for (const type of ['commit', 'tree', 'blob']) test(`substituted ${type} bytes cannot execute`, async () => {
   const h = host(fixture(), { corruptType: type }); const result = await h.execute();
   assert.equal(result.ok, false); assert.equal(result.blocker, 'STARFIELD_VR_NATIVE_BUILD_SOURCE_UNAVAILABLE');
@@ -159,6 +183,67 @@ test('gaming holds prevent any compiler stage and recheck holds remain binding',
     const result = await h.execute({ admissionFn: () => ({ ok: changedLater && ++admitted === 1 }) });
     assert.equal(result.blocker, 'STARFIELD_VR_NATIVE_BUILD_GAMING_HOLD'); assert.equal(h.packet, undefined);
   }
+});
+
+test('ordinary admission waits for a fresh pass at both prelaunch gates', async () => {
+  const h = host(); let now = 0; let observations = 0; let pauses = 0;
+  const result = await h.execute({ admissionClockFn: () => now,
+    admissionDelayFn: async ms => { assert.equal(h.packet, undefined); now += ms; pauses++; },
+    admissionFn: () => (++observations === 2 || observations === 4
+      ? { ok: true } : { ok: false, reason: 'native-capacity-gaming-permission-denied' }),
+  });
+  assert.equal(result.ok, true); assert.equal(observations, 4); assert.equal(pauses, 2);
+});
+
+test('ordinary admission state model never promotes hold or unknown evidence', async () => {
+  const states = ['held', 'allowed', 'unknown'];
+  for (const a of states) for (const b of states) for (const c of states) {
+    const trace = [a, b, c]; const h = host(); let now = 0; let calls = 0;
+    const result = await h.execute({ admissionClockFn: () => now,
+      admissionDelayFn: async ms => { now += ms; assert.equal(h.packet, undefined); },
+      admissionFn: () => {
+        const state = trace[Math.min(calls++, trace.length - 1)];
+        return state === 'allowed' ? { ok: true } : { ok: false, reason: state === 'held'
+          ? 'native-capacity-gaming-permission-denied' : 'native-capacity-gaming-evidence-unavailable' };
+      } });
+    // The same sequence must reach an ordinary pass for both gates, with any
+    // unknown ending that gate immediately and persistent holds exhausting it.
+    let at = 0; let expected = true;
+    for (let gate = 0; gate < 2; gate++) {
+      let passed = false;
+      for (let read = 0; read < 10; read++) {
+        const state = trace[Math.min(at++, 2)];
+        if (state === 'allowed') { passed = true; break; }
+        if (state === 'unknown') break;
+      }
+      if (!passed) { expected = false; break; }
+    }
+    assert.equal(result.ok, expected, trace.join(','));
+    assert.equal(Boolean(h.packet), expected, trace.join(','));
+    assert(calls <= 20);
+  }
+});
+
+test('ordinary admission has finite attempts and refuses a late successful observation', async () => {
+  for (const mode of ['clock-stalled', 'expired-before-read', 'expired-during-read']) {
+    const h = host(); let now = 0; let calls = 0; let pauses = 0;
+    const result = await h.execute({ admissionClockFn: () => now,
+      admissionDelayFn: async () => { pauses++; if (mode === 'expired-before-read') now = 1000; },
+      admissionFn: () => {
+        calls++;
+        if (mode === 'expired-during-read') { now = 1000; return { ok: true }; }
+        return { ok: false, reason: 'native-capacity-gaming-permission-denied' };
+      } });
+    assert.equal(result.blocker, 'STARFIELD_VR_NATIVE_BUILD_GAMING_HOLD');
+    assert.equal(h.packet, undefined);
+    assert.equal(calls, mode === 'clock-stalled' ? 11 : 1);
+    assert.equal(pauses, mode === 'clock-stalled' ? 10 : mode === 'expired-before-read' ? 1 : 0);
+  }
+  const h = host(fixture(), { mainMoves: true }); let now = 0; let calls = 0;
+  const result = await h.execute({ admissionClockFn: () => now, admissionDelayFn: async ms => { now += ms; },
+    admissionFn: () => ++calls === 1 ? { ok: false, reason: 'native-capacity-gaming-permission-denied' } : { ok: true } });
+  assert.equal(result.blocker, 'STARFIELD_VR_NATIVE_BUILD_PROTECTED_HEAD_UNPROVEN');
+  assert.equal(h.packet, undefined);
 });
 
 test('missing terminal proof retains custody without exposing raw errors', async () => {
