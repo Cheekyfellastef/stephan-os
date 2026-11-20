@@ -369,7 +369,11 @@ export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options 
         continue;
       }
       const pinnedStatus = basename(dirname(targetPath)) === 'status'
-        && ['controller-lane-status-current.json', 'stephanos-build-truth-current.json'].includes(basename(targetPath));
+        && [
+          'controller-lane-status-current.json',
+          'stephanos-build-truth-current.json',
+          'post-sync-runtime-refresh-current.json',
+        ].includes(basename(targetPath));
       if (transient && platform === 'win32' && pinnedStatus) {
         await replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options);
         return attempts;

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+// Preserve original #2002 handoff custody proof in the existing #1557
+// terminal-reconciliation leg of hosted Goal-to-Builder CI, not a new workflow.
+import './goalBuildingAgentV1.shared-workspace.test.mjs';
+
 import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
 } from './programmeAuthorityV1.mjs';

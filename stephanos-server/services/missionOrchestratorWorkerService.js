@@ -197,17 +197,42 @@ export async function assertMissionWorkerPendingCapacityCurrent(item, bytes, opt
   if (history.entries.length && history.entries.at(-1).record.admittedEnvelopeSha256 !== digest(bytes)) {
     throw capacityRefusal('RECOVERY_REQUIRED');
   }
+  // The original pending envelope is just as exclusive as a renewed one.
+  // Previously the exact caller/persisted grant check ran only after a capacity
+  // refresh. A different controller grant could therefore claim a first-issue
+  // pending item while still matching its advisory mission/action identifier.
+  // Keep legacy *identical* old grants valid, but refuse any changed authority.
+  if (options.actionGrant && !(
+    missionWorkerActionGrantsMatchV1(item.actionGrant, options.actionGrant)
+    || isDeepStrictEqual(item.actionGrant, options.actionGrant)
+  )) {
+    throw capacityRefusal('GRANT_MISMATCH');
+  }
   if (history.entries.length && !missionWorkerActionGrantsMatchV1(item.actionGrant, options.actionGrant)) {
     throw capacityRefusal('GRANT_MISMATCH');
   }
   if (item.actionGrant) {
     const grant = item.actionGrant;
     const action = buildMissionWorkerAction(state, { ...options, actionGrant: grant });
+    // The first published envelope has no renewal journal yet, but the full
+    // modern grant, action payload and execution binding must ALREADY agree.
+    // Older partial pre-contract envelopes remain eligible only when their
+    // stored binding and exact caller identity agree; a malformed modern grant
+    // cannot silently fall back to the legacy compatibility path.
+    const fullyBoundGrant = missionWorkerActionGrantsMatchV1(grant, grant);
+    const isSourceCapacityGrant = ['codex', 'foundry-forge', 'chatgpt-github',
+      'openclaw-standalone', 'openclaw-local', 'desktop-commander',
+      'sovereign-commander', 'stephanos-native'].includes(grant.adapter)
+      || Boolean(text(grant.capacityRoute) || text(item.payload.capacityRoute));
     if (!state || state.missionId !== grant.missionId || state.revision !== grant.missionRevision
         || state.currentPhase !== grant.currentPhase || state.dispatch?.status !== 'pending'
         || action.executable !== true || action.actionId !== grant.actionId
         || action.actionKind !== grant.actionKind || adapterForAction(action) !== grant.adapter
         || item.payload.actionId !== action.actionId || item.payload.missionId !== state.missionId
+        || !isDeepStrictEqual(item.executionBinding, durableQueueExecutionBinding(grant))
+        || (isSourceCapacityGrant && Object.hasOwn(grant, 'grantId') && !fullyBoundGrant)
+        || (fullyBoundGrant && (!validateExactActionGrant(state, action, grant, options).valid
+          || !isDeepStrictEqual(item.payload, action)))
         || (history.entries.length && (!validateExactActionGrant(state, action, grant, options).valid
           || !isDeepStrictEqual(item.payload, action)))) throw capacityRefusal('MISSION_CHANGED');
   }
@@ -266,6 +291,24 @@ async function reconcilePendingCapacity(state, path, proposed, root, options) {
       await replacePendingBytes(path, last.after.bytes);
       bytes = last.after.bytes; item = last.after.item; recovered = true;
     } else if (digest(bytes) !== last.record.admittedEnvelopeSha256) throw capacityRefusal('ENVELOPE_CHANGED');
+  }
+  // The first published envelope owns this action's advisory memory snapshot.
+  // A later controller observation may select different lessons or a new pack
+  // timestamp, but cannot rewrite the context of an already admitted action.
+  // Retain the complete validated original pack; all authority fields remain
+  // exact, and only the existing journal may admit a new capacity receipt.
+  const originalGrant = item.actionGrant, candidateGrant = proposed.actionGrant;
+  if (missionWorkerActionGrantsMatchV1(originalGrant, originalGrant)
+      && missionWorkerActionGrantsMatchV1(candidateGrant, candidateGrant)) {
+    const retainedGrant = { ...candidateGrant,
+      engineeringMemoryPack: originalGrant.engineeringMemoryPack ?? null,
+      engineeringMemoryPackId: originalGrant.engineeringMemoryPackId ?? null };
+    if (!missionWorkerActionGrantsMatchV1({ ...retainedGrant,
+      capacityReceiptId: originalGrant.capacityReceiptId,
+      capacityProofRefs: originalGrant.capacityProofRefs }, originalGrant)) {
+      throw capacityRefusal('CONTRACT_CHANGED');
+    }
+    proposed = { ...proposed, actionGrant: retainedGrant };
   }
   const next = { ...proposed, createdAt: item.createdAt,
     ...(Object.hasOwn(item, 'pendingCapacityAdmission') ? { pendingCapacityAdmission: item.pendingCapacityAdmission } : {}) };
@@ -747,7 +790,11 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     }
   }
   const published = admission?.reused !== true && await createImmutableJson(path, queueItem);
+  const admittedGrant = admission?.item?.actionGrant;
   const capacityAdmission = {
+    // Canonical context adoption applies only to the complete capacity-grant
+    // contract. Read-only investigation handoffs retain their existing schema.
+    publishedActionGrant: missionWorkerActionGrantsMatchV1(admittedGrant, admittedGrant) ? admittedGrant : null,
     queueItemRefreshed: admission?.refreshed === true,
     capacityAdmissionRecovered: admission?.recovered === true,
     capacityAdmission: admission?.admission || null,
@@ -789,6 +836,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       reason: 'action-already-published',
       action,
       path,
+      ...capacityAdmission,
     };
   }
   let fabricPublication = null;
@@ -815,6 +863,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     adapter,
     fabricPublication,
     handoffResponsibility,
+    ...capacityAdmission,
   };
 }
 

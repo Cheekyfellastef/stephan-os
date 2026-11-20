@@ -140,6 +140,91 @@ test('same-base exact-head path remains backward compatible', () => {
   assert.deepEqual(result.interveningMainChangedPaths, []);
 });
 
+test('malformed comparison envelopes produce structured refusal without throwing', () => {
+  for (const key of [
+    'authorizationBaseToApprovedSourceComparison',
+    'authorizationBaseToCurrentBaseComparison',
+  ]) {
+    for (const value of [null, undefined, false, 0, '', [], [compare(authorizationBase, sourceHead, changedPaths)]]) {
+      let result;
+      assert.doesNotThrow(() => {
+        result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+          authorization,
+          observed: observed({ [key]: value }),
+        });
+      }, `${key}: ${JSON.stringify(value)}`);
+      assert.equal(result.finalVerdict, MAIN_MOVEMENT_TOLERANT_AUTHORIZATION_VERDICT.BLOCKED);
+      assert.equal(result.authorizationReusable, false);
+      assert.equal(result.protectedExecutionReady, false);
+      assert.equal(result.mergeAuthority, false);
+      assert.equal(result.deploymentAuthority, false);
+      assert.equal(result.runtimeMutationAuthority, false);
+      assert.ok(result.blockers.some((blocker) => blocker.startsWith(
+        key === 'authorizationBaseToApprovedSourceComparison' ? 'approved-change:' : 'main-movement:',
+      )));
+    }
+  }
+});
+
+test('same-base comparison is optional only when its field is absent', () => {
+  const omitted = observed({ currentBase: authorizationBase });
+  delete omitted.authorizationBaseToCurrentBaseComparison;
+  const accepted = evaluateMainMovementTolerantOperatorAuthorizationV1({ authorization, observed: omitted });
+  assert.equal(accepted.authorizationReusable, true);
+  assert.equal(accepted.protectedExecutionReady, true);
+
+  for (const value of [null, undefined, false, 0, '', [], {}]) {
+    const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+      authorization,
+      observed: observed({
+        currentBase: authorizationBase,
+        authorizationBaseToCurrentBaseComparison: value,
+      }),
+    });
+    assert.equal(result.finalVerdict, MAIN_MOVEMENT_TOLERANT_AUTHORIZATION_VERDICT.BLOCKED, JSON.stringify(value));
+    assert.equal(result.authorizationReusable, false);
+    assert.equal(result.protectedExecutionReady, false);
+    assert.equal(result.mergeAuthority, false);
+    assert.ok(result.blockers.some((blocker) => blocker.startsWith('main-movement:')));
+  }
+});
+
+test('an inherited malformed same-base comparison cannot masquerade as absent', () => {
+  for (const value of [{ invalid: true }, null, false]) {
+    const evidence = observed({ currentBase: authorizationBase });
+    delete evidence.authorizationBaseToCurrentBaseComparison;
+    const inherited = Object.assign(Object.create({
+      authorizationBaseToCurrentBaseComparison: value,
+    }), evidence);
+    const result = evaluateMainMovementTolerantOperatorAuthorizationV1({ authorization, observed: inherited });
+    assert.equal(result.finalVerdict, MAIN_MOVEMENT_TOLERANT_AUTHORIZATION_VERDICT.BLOCKED);
+    assert.equal(result.authorizationReusable, false);
+    assert.equal(result.protectedExecutionReady, false);
+    assert.ok(result.blockers.some((blocker) => blocker.startsWith('main-movement:')));
+  }
+});
+
+test('an inherited malformed head_commit cannot be replaced by the final-commit fallback', () => {
+  for (const key of ['authorizationBaseToApprovedSourceComparison', 'authorizationBaseToCurrentBaseComparison']) {
+    for (const head_commit of [null, undefined, {}, { sha: 'not-a-sha' }, { sha: '9'.repeat(40) }]) {
+      const approved = key === 'authorizationBaseToApprovedSourceComparison';
+      const comparison = Object.assign(Object.create({ head_commit }), restCompare(
+        authorizationBase,
+        approved ? sourceHead : currentBase,
+        approved ? changedPaths : ['docs/unrelated.md'],
+      ));
+      const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+        authorization,
+        observed: observed({ [key]: comparison }),
+      });
+      assert.equal(result.finalVerdict, MAIN_MOVEMENT_TOLERANT_AUTHORIZATION_VERDICT.BLOCKED);
+      assert.equal(result.authorizationReusable, false);
+      assert.equal(result.protectedExecutionReady, false);
+      assert.ok(result.blockers.includes(`${approved ? 'approved-change' : 'main-movement'}:comparison-head-mismatch`));
+    }
+  }
+});
+
 test('real GitHub compare payload shape without head_commit preserves exact-head authorization', () => {
   const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
     authorization,
@@ -566,3 +651,4 @@ test('mixed-case approved paths still reject intervening exact-path overlap', ()
   assert.equal(result.authorizationReusable, false);
   assert.ok(result.blockers.includes('main-movement:approved-path-overlap:src/windows/Witness/Program.cs'));
 });
+

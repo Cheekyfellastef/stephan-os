@@ -1,9 +1,94 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readControlTowerBuildRequestV1, isAuthenticatedControlTowerBuildRequestV1 } from './controlTowerBuildReaderV1.mjs';
-import { fixture, inputs, HEAD, NOW, SIGNED } from './fixtures/controlTowerBuildV1.mjs';
+import { createHash } from 'node:crypto';
+import { readControlTowerBuildRequestV1, readHistoricalControlTowerBuildRequestV1,
+  isAuthenticatedControlTowerBuildRequestV1 } from './controlTowerBuildReaderV1.mjs';
+import { fixture, inputs, zip, API, HEAD, NOW, SIGNED } from './fixtures/controlTowerBuildV1.mjs';
 import { createControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
 const read = (f, extra = {}) => readControlTowerBuildRequestV1({ token: 'test-only', fetchImpl: f.fetchImpl, now: () => NOW, ...extra });
+
+test('owner-comment artifact gains a native brand only after exact live comment and mailbox API readback', async () => {
+  for (const operation of ['BUILD_NEXT_ELIGIBLE_GOAL', 'OBSERVE_CONTROL_SYSTEM']) {
+    const f = fixture({ ownerComment: true, operation }), result = await read(f);
+    assert.equal(result.ok, true, result.blocker);
+    assert.equal(result.request.requestId, 'control-tower-comment-700-1');
+    assert.equal(result.request.runId, 100); assert.equal(result.request.ownerCommentId, 700);
+    assert.equal(result.request.operation, operation);
+    assert.equal(isAuthenticatedControlTowerBuildRequestV1(result.request), true);
+    assert.equal(isAuthenticatedControlTowerBuildRequestV1({ ...result.request }), false);
+    assert(f.calls.some(call => call.url === API + '/issues/comments/700'));
+    assert(f.calls.some(call => call.url === f.issue.url));
+    for (const { url, init } of f.calls) {
+      assert.equal(init.method, 'GET');
+      assert.equal(init.headers.Authorization, url === SIGNED ? undefined : 'Bearer test-only');
+    }
+  }
+});
+
+test('post-artifact comment edits, owner substitution, expired consent and wrong provenance never mint authority', async () => {
+  const cases = [
+    ['edited comment', f => { f.comment.updated_at = NOW; }],
+    ['same-time body substitution', f => { f.comment.body = f.comment.body.replace('BUILD_NEXT_ELIGIBLE_GOAL', 'OBSERVE_CONTROL_SYSTEM'); }],
+    ['wrong comment ID', f => { f.comment.id = 701; }],
+    ['wrong author ID', f => { f.comment.user.id = 1; }],
+    ['bot type', f => { f.comment.user.type = 'Bot'; }],
+    ['wrong issue', f => { f.comment.issue_url = API + '/issues/3149'; }],
+    ['PR issue', f => { f.issue.pull_request = {}; }],
+    ['saturated issue', f => { f.issue.comments = 2200; }],
+    ...[undefined, null, '10', false].map(value => ['unproven comment count ' + value, f => { f.issue.comments = value; }]),
+    ['artifact hash substitution', f => { f.repack({ ...f.request, ownerCommentSha256: 'b'.repeat(64) }); }],
+    ['artifact consent renewal', f => { f.repack({ ...f.request,
+      createdAtUtc: '2026-10-28T12:00:00Z', expiresAtUtc: '2026-10-28T12:10:00.000Z' }); }],
+    ['extra artifact field', f => { f.repack({ ...f.request, authenticated: true }); }],
+    ['wrong actor', f => { f.run.actor = { login: 'github-actions[bot]', id: 41898282, type: 'Bot' }; }],
+    ['wrong triggering actor', f => { f.run.triggering_actor = { login: 'github-actions[bot]', id: 41898282, type: 'Bot' }; }],
+    ['wrong workflow head', f => { f.run.head_sha = 'b'.repeat(40); }],
+    ['main moved', f => { f.moved = { ...f.main, object: { sha: 'b'.repeat(40) } }; }],
+  ];
+  for (const [label, mutate] of cases) {
+    const f = fixture({ ownerComment: true }); mutate(f);
+    const result = await read(f); assert.equal(result.ok, false, label);
+    assert.equal(result.request, null, label);
+  }
+  const expired = fixture({ ownerComment: true });
+  assert.equal((await read(expired, { now: () => '2026-10-28T12:10:00.000Z' })).ok, false);
+  const historical = await readHistoricalControlTowerBuildRequestV1({ token: 'test-only', fetchImpl: expired.fetchImpl,
+    runId: 100, now: () => '2026-10-28T12:10:00.000Z' });
+  assert.equal(historical.ok, true); assert.equal(historical.request.ownerCommentId, 700);
+  assert.equal(isAuthenticatedControlTowerBuildRequestV1(historical.request), false);
+  const deleted = fixture({ ownerComment: true });
+  const gone = await read(deleted, { fetchImpl: (url, init) => url === API + '/issues/comments/700'
+    ? new Response(null, { status: 404 }) : deleted.fetchImpl(url, init) });
+  assert.equal(gone.ok, false); assert.equal(gone.request, null);
+});
+
+test('original-ledger comment identity filters a redelivery through a different authentic run', async () => {
+  const f = fixture({ ownerComment: true, runId: 101 }), seen = [];
+  const result = await read(f, { isRequestRecorded: id => { seen.push(id); return id === 'control-tower-comment-700-1'; } });
+  assert.equal(result.ok, false); assert.equal(result.blocker, 'NO_CONTROL_TOWER_BUILD_REQUEST');
+  assert.deepEqual(seen, ['control-tower-comment-700-1']);
+  assert(f.calls.some(call => call.url === API + '/issues/comments/700'), 'record lookup cannot substitute for authentication');
+});
+
+test('more than ten unrelated skipped comment runs cannot hide the successful owner request', async () => {
+  const f = fixture({ ownerComment: true });
+  const allRuns = [...Array.from({ length: 25 }, (_, index) => ({ ...f.run, id: 200 + index,
+    conclusion: 'skipped', created_at: '2026-10-28T12:00:10Z' })), f.run];
+  const queried = [];
+  const fetchImpl = async (url, init) => {
+    if (url.startsWith(API + '/actions/workflows/stephanos-control-tower-build.yml/runs?')) {
+      queried.push(url);
+      const selected = new URL(url).searchParams.get('status') === 'success'
+        ? allRuns.filter(run => run.conclusion === 'success') : allRuns;
+      return Response.json({ total_count: selected.length, workflow_runs: selected.slice(0, 10) });
+    }
+    return f.fetchImpl(url, init);
+  };
+  const result = await read(f, { fetchImpl });
+  assert.equal(result.ok, true, result.blocker);
+  assert.equal(result.request.requestId, 'control-tower-comment-700-1');
+  assert.equal(queried.length, 1); assert.equal(new URL(queried[0]).searchParams.get('status'), 'success');
+});
 
 test('fixed GET, owner run, full job estate and archive digest mint a frozen native intent', async () => {
   const f = fixture(), result = await read(f);
@@ -16,6 +101,87 @@ test('fixed GET, owner run, full job estate and archive digest mint a frozen nat
     assert.equal(init.method, 'GET');
     assert.equal(init.headers.Authorization, url === SIGNED ? undefined : 'Bearer test-only');
   }
+});
+
+test('historical reader rehydrates an expired owner artifact without minting live execution authority', async () => {
+  const f = fixture();
+  const result = await readHistoricalControlTowerBuildRequestV1({
+    token: 'test-only', fetchImpl: f.fetchImpl, runId: 100,
+    now: () => '2026-10-28T12:11:00.000Z',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.request.requestId, 'control-tower-build-100-1');
+  assert.equal(result.request.operation, 'BUILD_NEXT_ELIGIBLE_GOAL');
+  assert.equal(isAuthenticatedControlTowerBuildRequestV1(result.request), false);
+  for (const flag of ['admissionGranted', 'mergeAuthority', 'runtimeMutationAuthority', 'leaseSeizureAllowed', 'arbitraryShellAllowed'])
+    assert.equal(result.request[flag], false);
+  assert.equal((await readHistoricalControlTowerBuildRequestV1({
+    token: 'test-only', fetchImpl: f.fetchImpl, runId: 100, now: () => NOW,
+  })).ok, false);
+});
+
+test('read-only inspection uses the same authenticated artifact without widening transport authority', async () => {
+  const f = fixture();
+  const { event, env } = inputs();
+  event.inputs = { operation: 'OBSERVE_CONTROL_SYSTEM' };
+  const minted = createControlTowerBuildRequestV1(event, env, HEAD, '2026-10-28T12:00:05.000Z');
+  assert.equal(minted.ok, true);
+  f.repack(minted.request);
+  const result = await read(f);
+  assert.equal(result.ok, true);
+  assert.equal(result.request.operation, 'OBSERVE_CONTROL_SYSTEM');
+  assert.equal(isAuthenticatedControlTowerBuildRequestV1(result.request), true);
+  assert.equal(result.request.runtimeMutationAuthority, false);
+  assert.equal(result.request.arbitraryShellAllowed, false);
+  assert.equal(result.request.admissionGranted, false);
+  assert.equal(f.calls.length, 9);
+});
+
+test('a held build cannot starve a later authenticated inspection or become falsely recorded', async () => {
+  const f = fixture();
+  const { event, env } = inputs();
+  event.inputs = { operation: 'OBSERVE_CONTROL_SYSTEM' }; env.GITHUB_RUN_ID = '101';
+  const request = createControlTowerBuildRequestV1(event, env, HEAD, '2026-10-28T12:00:05.000Z').request;
+  const archive = zip(request);
+  const run = { ...f.run, id: 101 };
+  f.list.workflow_runs.unshift(run); f.list.total_count = 2;
+  const observed = [];
+  const fetchImpl = async (url, init) => {
+    observed.push(url);
+    if (url === API + '/actions/runs/101') return Response.json(run);
+    if (url === API + '/actions/runs/101/jobs?per_page=100') return Response.json({
+      total_count: 2, jobs: f.jobs.jobs.map(job => ({ ...job, run_id: 101 })),
+    });
+    if (url === API + '/actions/runs/101/artifacts?per_page=100') return Response.json({ total_count: 1, artifacts: [{
+      ...f.artifacts.artifacts[0], id: 201, name: 'stephanos-control-tower-build-101', size_in_bytes: archive.length,
+      digest: 'sha256:' + createHash('sha256').update(archive).digest('hex'),
+      workflow_run: { ...f.artifacts.artifacts[0].workflow_run, id: 101 },
+    }] });
+    if (url === API + '/actions/artifacts/201/zip') return new Response(null, { status: 302, headers: { location: SIGNED + '/observe' } });
+    if (url === SIGNED + '/observe') {
+      assert.equal(init.headers.Authorization, undefined);
+      return new Response(archive);
+    }
+    return f.fetchImpl(url, init);
+  };
+  const queriedIds = [];
+  const result = await readControlTowerBuildRequestV1({ token: 'test-only', now: () => NOW,
+    fetchImpl, observationOnly: true, isRecorded: id => { queriedIds.push(id); return false; } });
+  assert.equal(result.ok, true);
+  assert.equal(result.request.runId, 101);
+  assert.equal(result.request.operation, 'OBSERVE_CONTROL_SYSTEM');
+  assert.equal(isAuthenticatedControlTowerBuildRequestV1(result.request), true);
+  assert.ok(observed.indexOf(API + '/actions/artifacts/200/zip') < observed.indexOf(API + '/actions/artifacts/201/zip'));
+  assert.ok(queriedIds.includes(100) && queriedIds.includes(101));
+  assert.equal((await read(f)).request.runId, 100, 'restrictive observation selection does not consume or mark the build');
+});
+
+test('observation-only selection rejects ambiguous configuration and never returns a build', async () => {
+  for (const observationOnly of ['true', [], {}, 1, null])
+    assert.equal((await read(fixture(), { observationOnly })).blocker, 'CONTROL_TOWER_REQUEST_OPERATION_FILTER_INVALID');
+  const result = await read(fixture(), { observationOnly: true });
+  assert.equal(result.ok, false);
+  assert.equal(result.request, null);
 });
 test('read-only discovery artifacts, foreign workflows and incomplete jobs never become a build command', async () => {
   for (const mutate of [f => { f.definition.path = '.github/workflows/stephanos-mailbox-free-readonly.yml'; },
@@ -84,7 +250,7 @@ test('current-head authenticated owner push run is accepted from the same bounde
   assert.equal(value.ok, true);
   assert.equal(value.request.runId, 100);
   assert.equal(isAuthenticatedControlTowerBuildRequestV1(value.request), true);
-  assert.ok(f.calls.some(c => c.url.includes('runs?per_page=10&head_sha=' + HEAD)));
+  assert.ok(f.calls.some(c => c.url.includes('runs?status=success&per_page=10&head_sha=' + HEAD)));
 });
 
 test('other event classes and wrong owner cannot wake through unfiltered run inventory', async () => {

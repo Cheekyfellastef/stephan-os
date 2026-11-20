@@ -3,13 +3,15 @@
 import {
   FLEET_SUPERVISOR_ACTION, FLEET_SUPERVISOR_SCHEMA, FLEET_SUPERVISOR_MARKER,
 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { SPATIAL_PREPARE_ACTION, SPATIAL_PREPARE_SCHEMA, SPATIAL_PREPARE_MARKER } from './sovereignSpatialWorkspaceV1.mjs';
 const READ_ONLY_ACTIONS = new Set([
-  'battle-bridge-status', 'battle-bridge-observe', 'meter-status',
+  'battle-bridge-status', 'battle-bridge-observe', 'diagnose-ignition', 'meter-status',
   'controller-lane-status', 'rescue-island-readonly-boundary', 'visibility-snapshot',
   'cpu-pressure-snapshot', 'status-recovery-mesh', 'status-worker-watchdog',
   'status-stephanos-core-daemon',
   'status-mission-orchestrator-worker', 'status-stephanos-backend',
   'starfield-vr-telemetry-archive',
+  'observe-open-stephanos-tabs', // fixed --native-receipt-only; no CDP or writes
 ]);
 // Names do not prove observation-only behavior. Gaming Status can reconcile
 // missing state and evict Ollama; the opaque OpenClaw CLI can load plugins.
@@ -39,6 +41,8 @@ export function isSovereignMaintenanceObservationV1(processId) {
 
 // Closed wire contracts: a descendant's receipt cannot substitute for its parent.
 const TERMINAL_PROTOCOLS = Object.freeze({
+  [SPATIAL_PREPARE_ACTION]: Object.freeze({ schema: SPATIAL_PREPARE_SCHEMA,
+    marker: SPATIAL_PREPARE_MARKER, failedExit: 2, uniqueMarker: true, canonicalJson: true }),
   [FLEET_SUPERVISOR_ACTION]: Object.freeze({ schema: FLEET_SUPERVISOR_SCHEMA,
     marker: FLEET_SUPERVISOR_MARKER, failedExit: 2, uniqueMarker: true, canonicalJson: true }),
   'repair-stephanos': Object.freeze({ schema: 'stephanos.sovereign-commander-stephanos-repair.v1', marker: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=', failedExit: 2 }),
@@ -97,3 +101,23 @@ export function readSovereignMaintenanceTerminalReceiptV1(stdout = '', processId
   } catch {}
   return hold();
 }
+
+// Keep the established admission API while the pure continuation contract also
+// remains inside the existing maintenance installer source closure.
+export {
+  CORE_REPAIR_CONTINUATION_SCHEMA_V1,
+  CORE_REPAIR_REQUEST_STATUS_SCHEMA_V1,
+  CORE_REPAIR_OWNER_PROTOCOL_V1,
+  CORE_REPAIR_REQUEST_ID_V1,
+  CORE_REPAIR_ACTIONS_V1,
+  CORE_REPAIR_MISSIONS_V1,
+  CORE_REPAIR_REQUEST_STATES_V1,
+  CORE_REPAIR_CONTINUATION_INPUT_SCHEMA_V1,
+  captureCoreRepairContinuationV1,
+  captureCoreRepairStatusRequestV1,
+  captureCoreRepairPrepareRequestV1,
+  sameCoreRepairContinuationV1,
+  captureCoreRepairContinuationStatusV1,
+  unknownCoreRepairRequestStatusV1,
+  projectGoalBuilderChildBlockerV1
+} from './sovereignMaintenanceSourceDiagnosticV1.mjs';

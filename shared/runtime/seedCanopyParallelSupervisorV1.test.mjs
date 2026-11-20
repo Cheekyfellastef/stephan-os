@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { makeParallelSeedReceiptV1 } from './seedCanopyParallelForgeV1.mjs';
 import {
   parallelSeedManifestHashV1,
   makeParallelSeedExactApprovalV1,
@@ -159,15 +160,15 @@ test('bounded model-free inventory selector moves past one blocked lane without 
 
 test('supervisor status marks stale unfinished task, never claims merging or deployment', () => {
   const claims = [
-    { taskId: 'blocked-one', seedId: request.seedId, targetPath: request.targetPath,
+    { ...request, taskId: 'blocked-one',
       createdAtUtc: '2026-10-13T12:00:00.000Z' },
-    { taskId: 'finished-two', seedId: request.seedId, targetPath: 'docs/architecture/success.md',
+    { ...request, taskId: 'finished-two', targetPath: 'docs/architecture/success.md',
       createdAtUtc: '2026-10-13T15:30:00.000Z' },
   ];
   const receipts = [
-    { taskId: 'blocked-one', stage: 'CLAIMED', recordedAtUtc: '2026-10-13T12:05:00.000Z' },
-    { taskId: 'finished-two', stage: 'COMMITTED', recordedAtUtc: '2026-10-13T15:40:00.000Z',
-      commitSha: 'b'.repeat(40), independentGitHeadVerified: true },
+    makeParallelSeedReceiptV1(claims[0], 'CLAIMED', { recordedAtUtc: '2026-10-13T12:05:00.000Z' }),
+    makeParallelSeedReceiptV1(claims[1], 'COMMITTED', { recordedAtUtc: '2026-10-13T15:40:00.000Z',
+      commitSha: 'b'.repeat(40), independentGitHeadVerified: true }),
   ];
   const projected = projectParallelSeedReceiptStatusV1(claims, receipts, NOW);
   assert.equal(projected.taskCount, 2);
@@ -192,16 +193,16 @@ test('supervisor status marks stale unfinished task, never claims merging or dep
 });
 
 test('ambiguous duplicate receipt or claim cannot manufacture local commit proof or jam disjoint tasks', () => {
-  const first = { taskId: 'ambiguous-one', seedId: request.seedId,
-    targetPath: request.targetPath, createdAtUtc: '2026-10-13T15:30:00.000Z' };
-  const second = { taskId: 'independent-two', seedId: request.seedId,
+  const first = { ...request, taskId: 'ambiguous-one',
+    createdAtUtc: '2026-10-13T15:30:00.000Z' };
+  const second = { ...request, taskId: 'independent-two',
     targetPath: 'docs/architecture/independent.md', createdAtUtc: '2026-10-13T15:30:00.000Z' };
-  const committed = (taskId) => ({ taskId, stage: 'COMMITTED',
+  const committed = (claim) => makeParallelSeedReceiptV1(claim, 'COMMITTED', {
     recordedAtUtc: '2026-10-13T15:40:00.000Z',
     commitSha: 'c'.repeat(40), independentGitHeadVerified: true });
-  const receipts = [committed(first.taskId),
-    { ...committed(first.taskId), commitSha: 'd'.repeat(40) },
-    committed(second.taskId)];
+  const receipts = [committed(first),
+    { ...committed(first), commitSha: 'd'.repeat(40) },
+    committed(second)];
   const projected = projectParallelSeedReceiptStatusV1([first, second], receipts, NOW);
   assert.equal(projected.tasks[0].stage, 'AMBIGUOUS_SOURCE_CUSTODY');
   assert.equal(projected.tasks[0].sourceTruth, 'STALE_OR_UNKNOWN');
@@ -214,10 +215,75 @@ test('ambiguous duplicate receipt or claim cannot manufacture local commit proof
 
   const duplicateClaim = projectParallelSeedReceiptStatusV1(
     [first, { ...first, targetPath: 'docs/architecture/other.md' }, second],
-    [committed(first.taskId), committed(second.taskId)], NOW);
+    [committed(first), committed(second)], NOW);
   assert.equal(duplicateClaim.tasks[0].stage, 'AMBIGUOUS_SOURCE_CUSTODY');
   assert.equal(duplicateClaim.tasks[1].stage, 'AMBIGUOUS_SOURCE_CUSTODY');
   assert.equal(duplicateClaim.tasks[2].localCommitReadbackMatched, true);
   assert.equal(projectParallelSeedReceiptStatusV1(null, null, NOW).taskCount, 0,
     'malformed optional arrays must not jam the independent supervisor');
+});
+
+test('status requires the complete producer receipt identity before projecting task progress', () => {
+  const claim = { ...request, createdAtUtc: '2026-10-13T15:30:00.000Z' };
+  const disjoint = { ...claim, taskId: 'disjoint-status-task',
+    targetPath: 'docs/architecture/disjoint-status-task.md' };
+  const receipt = makeParallelSeedReceiptV1(claim, 'COMMITTED', {
+    recordedAtUtc: '2026-10-13T15:40:00.000Z',
+    commitSha: 'b'.repeat(40), independentGitHeadVerified: true,
+  });
+  const disjointReceipt = makeParallelSeedReceiptV1(disjoint, 'CLAIMED', {
+    recordedAtUtc: receipt.recordedAtUtc,
+  });
+  const mutations = {
+    schemaVersion: 'another.receipt.v1', seedId: 'another-seed', ownerIssue: '#2968',
+    exactBaseSha: 'c'.repeat(40), targetPath: 'docs/architecture/another-task.md',
+    branch: 'seed-parallel/another-seed/another-task', stage: 'COMMISSIONED',
+  };
+  for (const [field, changed] of Object.entries(mutations)) {
+    for (const value of [changed, undefined, null, 17]) {
+      const result = projectParallelSeedReceiptStatusV1([claim, disjoint],
+        [{ ...receipt, [field]: value }, disjointReceipt], NOW);
+      assert.equal(result.tasks[0].stage, 'INVALID_SOURCE_RECEIPT', field + ': ' + value);
+      assert.equal(result.tasks[0].sourceTruth, 'STALE_OR_UNKNOWN');
+      assert.equal(result.tasks[0].recovery, 'INSPECT_TASK_WORKTREE_NO_AUTO_RELEASE');
+      assert.equal(result.tasks[0].localCommitReadbackMatched, false);
+      assert.equal(result.tasks[1].stage, 'CLAIMED');
+      assert.equal(result.tasks[1].sourceTruth, 'CURRENT');
+      assert.equal(result.localCommitReadbackMatchedUntrusted, false);
+      assert.equal(result.localSourceCandidateProven, false);
+      assert.equal(result.liveBuildProven, false);
+      assert.equal(result.tasks[0].candidateCommitted, false);
+      assert.equal(result.tasks[0].merged, false);
+      assert.equal(result.tasks[0].deployed, false);
+    }
+  }
+  const unrelatedReceipt = { ...receipt, taskId: 'another-task' };
+  const unrelated = projectParallelSeedReceiptStatusV1([claim], [unrelatedReceipt], NOW);
+  assert.equal(unrelated.tasks[0].stage, 'CLAIM_ONLY_UNKNOWN');
+  assert.equal(unrelated.tasks[0].localCommitReadbackMatched, false);
+});
+
+test('missing or malformed claim identity cannot bind even an equally malformed receipt', () => {
+  const claim = { ...request, createdAtUtc: '2026-10-13T15:30:00.000Z' };
+  const receipt = makeParallelSeedReceiptV1(claim, 'COMMITTED', {
+    recordedAtUtc: '2026-10-13T15:40:00.000Z',
+    commitSha: 'b'.repeat(40), independentGitHeadVerified: true,
+  });
+  for (const [field, receiptField] of [['seedId', 'seedId'], ['ownerIssue', 'ownerIssue'],
+    ['baseSha', 'exactBaseSha'], ['targetPath', 'targetPath']]) {
+    for (const value of [undefined, null, '', ' ' + claim[field], 19]) {
+      const result = projectParallelSeedReceiptStatusV1([{ ...claim, [field]: value }],
+        [{ ...receipt, [receiptField]: value }], NOW);
+      assert.equal(result.tasks[0].stage, 'INVALID_SOURCE_CLAIM', field + ': ' + value);
+      assert.equal(result.tasks[0].sourceTruth, 'STALE_OR_UNKNOWN');
+      assert.equal(result.tasks[0].localCommitReadbackMatched, false);
+      assert.equal(result.tasks[0].recovery, 'INSPECT_TASK_WORKTREE_NO_AUTO_RELEASE');
+    }
+  }
+  for (const invalidNow of [NaN, Infinity, 'invalid', null]) {
+    const result = projectParallelSeedReceiptStatusV1([claim], [receipt], invalidNow);
+    assert.equal(result.tasks[0].sourceTruth, 'STALE_OR_UNKNOWN');
+    assert.equal(result.localCommitReadbackMatchedUntrusted, false);
+    assert.equal(result.liveBuildProven, false);
+  }
 });

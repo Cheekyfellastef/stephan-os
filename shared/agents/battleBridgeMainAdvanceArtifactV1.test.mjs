@@ -39,7 +39,10 @@ test('changed, replayable or caller-expanded source signal cannot be projected',
   const signal = valid();
   for (const changed of [
     { ...signal, mainHead: 'f'.repeat(40), arbitraryShellAllowed: true },
-    { ...signal, issueNumber: 3258 },
+    // #3258 is the source-declared successor in this activation PR. Both
+    // its retired #3149 predecessor and an arbitrary future issue must fail.
+    { ...signal, issueNumber: 3149 },
+    { ...signal, issueNumber: signal.issueNumber + 1 },
     { ...signal, syncAuthorityGranted: true },
     { ...signal, runtimeMutationAuthorityGranted: true },
     { ...signal, extraOperation: 'run shell' },

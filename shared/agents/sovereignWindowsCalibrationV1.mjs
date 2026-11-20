@@ -81,10 +81,11 @@ const cases = Object.freeze([
 // Public finite vocabulary, deliberately shuffled in each prompt. Correct labels
 // are never paired with patches. This is a meaningful exam: a real model cannot
 // guess private answer-key strings that were never defined to it.
-const FINDING_CODES = Object.freeze(cases
+export const SOVEREIGN_WINDOWS_CALIBRATION_FINDING_CODES = Object.freeze(cases
   .filter(sample => sample.unsafe)
   .map(sample => sample.expectedCode)
   .sort());
+const FINDING_CODES = SOVEREIGN_WINDOWS_CALIBRATION_FINDING_CODES;
 
 const held = (reason, details = {}) => Object.freeze({
   schemaVersion: SOVEREIGN_WINDOWS_CALIBRATION_SCHEMA,
@@ -149,7 +150,7 @@ export async function evaluateSovereignWindowsCalibrationV1(input = {}, { invoke
     let raw;
     try {
       raw = await invokeModel(prompt, Object.freeze({
-        caseId: challengeId, patchSha256, sourceHead, baseSha,
+        caseId: challengeId, patchSha256, path, sourceHead, baseSha,
       }));
     } catch {
       return held('LOCAL_MODEL_EXECUTION_FAILED', { completedCases: observations.length });

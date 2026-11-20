@@ -326,6 +326,132 @@ test('retained migration archives stale IDLE but only creates ACTIVE and require
   assert.equal((await successor.recoverAfterBoot(approved(r.digest))).ok, true);
   assert.equal(successor.status().held, false);
 });
+test('prepared retained migration auto-recovers after successor full boot without a second approval token', async t => {
+  const root = fixture(t), first = store(root);
+  first.prepareIncident(reservation); first.release(); first.close();
+  const p = join(root, 'status', 'sovereign-commander-maintenance-custody.json');
+  const original = readFileSync(p);
+  const expectedDigest = createHash('sha256').update(original).digest('hex');
+  anchors.get(root).lose();
+  const owner = heldOwner(newBoot);
+  const migration = store(root, newBoot, { observeMigrationOwner: () => owner });
+  const prepared = await migration.prepareRetainedMigration({
+    ...approved(expectedDigest),
+    expectedReservationId: reservation.reservationId,
+    expectedOwnerDigest: owner.digest,
+    expectedMain: 'c'.repeat(40),
+  });
+  assert.equal(prepared.ok, true);
+  migration.close();
+
+  const later = { ...newBoot,
+    bootStartedAtUtc: new Date(clock + 30_000).toISOString(),
+    observedAtUtc: new Date(clock + 60_000).toISOString() };
+  const successor = store(root, later, { now: () => later.observedAtUtc, readBootWitness: () => later });
+  const recovered = await successor.recoverPreparedAfterBoot();
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.custodyReleased, true);
+  assert.equal(successor.status().held, false);
+});
+
+test('unprepared ACTIVE custody never auto-recovers merely because a later boot exists', async t => {
+  const root = fixture(t), original = store(root);
+  original.prepareIncident(reservation);
+  original.close();
+  const successor = store(root, newBoot);
+  const result = await successor.recoverPreparedAfterBoot();
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAINTENANCE_PREPARED_RECOVERY_UNPROVEN');
+  assert.equal(successor.status().held, true);
+});
+
+test('guardian startup resumes scheduling only after prepared custody auto-recovery succeeds', async () => {
+  const timers = [];
+  let recoverCalls = 0;
+  const timerFactory = (fn, delay) => {
+    const timer = { fn, delay, unref() {} };
+    timers.push(timer);
+    return timer;
+  };
+  const custodyStore = {
+    status: () => ({ held: true, digest: 'a'.repeat(64), reservationId: 'prepared-cycle' }),
+    preparedRecoveryEligible: () => true,
+    recoverPreparedAfterBoot: async () => {
+      recoverCalls += 1;
+      return { ok: true, custodyReleased: true, reservationId: 'prepared-cycle' };
+    },
+    close() {},
+  };
+  const guardian = startActualGuardian({
+    custodyStore,
+    enabled: true,
+    spawnImpl: () => assert.fail('startup recovery must not spawn before the scheduled repair tick'),
+    startDelayMs: 5000,
+    setTimeoutImpl: timerFactory,
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(recoverCalls, 1);
+  assert.equal(guardian.status().timeoutCustodyHeld, false);
+  assert.equal(guardian.status().maintenanceInFlight, false);
+  assert.equal(guardian.status().scheduled, true);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 5000);
+  guardian.stop();
+
+  const blockedTimers = [];
+  const held = startActualGuardian({
+    custodyStore: {
+      status: () => ({ held: true, digest: 'b'.repeat(64), reservationId: 'unprepared-cycle' }),
+      preparedRecoveryEligible: () => false,
+      recoverPreparedAfterBoot: async () => ({ ok: false, blocker: 'MAINTENANCE_PREPARED_RECOVERY_UNPROVEN' }),
+      close() {},
+    },
+    enabled: true,
+    spawnImpl: () => assert.fail('unprepared custody must not spawn'),
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      blockedTimers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(held.status().timeoutCustodyHeld, true);
+  assert.equal(held.status().scheduled, false);
+  assert.equal(blockedTimers.length, 0);
+  held.stop();
+
+  let disabledRecoverCalls = 0;
+  const disabledTimers = [];
+  const disabled = startActualGuardian({
+    custodyStore: {
+      status: () => ({ held: true, digest: 'c'.repeat(64), reservationId: 'prepared-disabled-cycle' }),
+      preparedRecoveryEligible: () => true,
+      recoverPreparedAfterBoot: async () => {
+        disabledRecoverCalls += 1;
+        return { ok: true, custodyReleased: true, reservationId: 'prepared-disabled-cycle' };
+      },
+      close() {},
+    },
+    enabled: false,
+    spawnImpl: () => assert.fail('disabled repair scheduler must not spawn'),
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      disabledTimers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl() {},
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(disabledRecoverCalls, 1);
+  assert.equal(disabled.status().timeoutCustodyHeld, false);
+  assert.equal(disabled.status().enabled, false);
+  assert.equal(disabled.status().scheduled, false);
+  assert.equal(disabledTimers.length, 0);
+  disabled.stop();
+});
+
 test('retained migration refuses legacy authority, owner drift, wrong source binding and changed projection', async t => {
   for (const scenario of ['legacy-present', 'legacy-unreadable', 'owner-drift', 'owner-running',
     'missing-owner-binding', 'source-invalid', 'projection-changed', 'anchor-append-failed']) {
@@ -418,7 +544,7 @@ test('closed capacity refusal admits no reservation and preserves the prior nati
 
 
 test('native failed operation retains signed terminal evidence before releasing proven zero', t => {
-  const root=fixture(t), owner=store(root); owner.prepareIncident(reservation);
+  const root=fixture(t), owner=store(root); owner.prepareIncident({...reservation,operation:'repair-goal-builder-flow'});
   const state=owner.status();
   const common={RequestId:reservation.reservationId,OwnerPid:process.pid,
     CustodyRecordSha256:state.digest,NativeRecordId:state.anchorRecordId,
@@ -440,7 +566,7 @@ test('native failed operation retains signed terminal evidence before releasing 
 
 test('foreign native terminal and failed archive preserve the original hold', t => {
   for(const scenario of ['foreign','archive']) {
-    const root=fixture(t), owner=store(root); owner.prepareIncident(reservation);
+    const root=fixture(t), owner=store(root); owner.prepareIncident({...reservation,operation:'repair-goal-builder-flow'});
     const state=owner.status();
     if(scenario==='archive') writeFileSync(join(root,'events','sovereign-maintenance-custody'),'retain');
     const result=owner.releaseNativeTerminal({SchemaVersion:'stephanos.fixed-runtime-job.v1',
@@ -449,5 +575,46 @@ test('foreign native terminal and failed archive preserve the original hold', t 
       ExecutionCustodyReleased:true,TaskStage:{ExecutionCustodyReleased:true,ZeroActiveProcessesObserved:true,ActiveProcesses:0}});
     assert.equal(result.ok,false);assert.equal(owner.status().held,true);assert.equal(owner.status().digest,state.digest);
     owner.close();
+  }
+});
+
+test('native maintenance profile is bound to the exact owned operation at root and terminal', t => {
+  for(const [operation,profile] of [['repair-goal-builder-flow','MAINTENANCE_GOAL_BUILDER_V1'],
+    ['prepare-spatial-workspace','SPATIAL_WORKSPACE_PREPARE_V1']]) {
+    const root=fixture(t),owner=store(root);
+    assert.equal(owner.prepareIncident({...reservation,operation}).ok,true);
+    const state=owner.status();
+    const common={RequestId:reservation.reservationId,OwnerPid:process.pid,
+      CustodyRecordSha256:state.digest,NativeRecordId:state.anchorRecordId,Profile:profile};
+    const prepared={...common,SchemaVersion:'stephanos.fixed-runtime-prepared.v1',RootPid:1234,RootCreatedAtUtc:oldNow};
+    const terminal={...common,SchemaVersion:'stephanos.fixed-runtime-job.v1',ExecutionCustodyReleased:true,
+      TaskStage:{ExecutionCustodyReleased:true,ZeroActiveProcessesObserved:true,ActiveProcesses:0}};
+    const foreign=profile==='MAINTENANCE_GOAL_BUILDER_V1'?'SPATIAL_WORKSPACE_PREPARE_V1':'MAINTENANCE_GOAL_BUILDER_V1';
+    for(const candidate of [foreign,'SOURCE_TASK_V1','UNKNOWN_PROFILE','']) {
+      assert.equal(owner.recordNativeRoot({...prepared,Profile:candidate}).ok,false,operation+' root '+candidate);
+      assert.equal(owner.releaseNativeTerminal({...terminal,Profile:candidate}).ok,false,operation+' terminal '+candidate);
+      assert.equal(owner.status().digest,state.digest);assert.equal(owner.status().held,true);
+    }
+    assert.equal(owner.recordNativeRoot(prepared).ok,true);
+    assert.equal(owner.releaseNativeTerminal({...terminal,TaskStage:{...terminal.TaskStage,ActiveProcesses:1}}).ok,false);
+    assert.equal(owner.status().held,true);
+    assert.equal(owner.releaseNativeTerminal(terminal).ok,true);
+    assert.equal(owner.status().held,false);
+  }
+});
+
+test('a broad or unknown maintenance reservation cannot borrow either native profile', t => {
+  for(const operation of ['repair-stephanos','unknown-maintenance']) {
+    const root=fixture(t),owner=store(root);owner.prepareIncident({...reservation,operation});
+    const state=owner.status();
+    for(const profile of ['MAINTENANCE_GOAL_BUILDER_V1','SPATIAL_WORKSPACE_PREPARE_V1']) {
+      const common={RequestId:reservation.reservationId,OwnerPid:process.pid,
+        CustodyRecordSha256:state.digest,NativeRecordId:state.anchorRecordId,Profile:profile};
+      assert.equal(owner.recordNativeRoot({...common,SchemaVersion:'stephanos.fixed-runtime-prepared.v1',
+        RootPid:1234,RootCreatedAtUtc:oldNow}).ok,false);
+      assert.equal(owner.releaseNativeTerminal({...common,SchemaVersion:'stephanos.fixed-runtime-job.v1',
+        ExecutionCustodyReleased:true,TaskStage:{ExecutionCustodyReleased:true,ZeroActiveProcessesObserved:true,ActiveProcesses:0}}).ok,false);
+    }
+    assert.equal(owner.status().held,true);assert.equal(owner.status().digest,state.digest);owner.close();
   }
 });

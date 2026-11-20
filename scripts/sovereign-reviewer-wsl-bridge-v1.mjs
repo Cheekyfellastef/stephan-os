@@ -6,7 +6,8 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { sovereignExactCommitLoaderV1 } from '../shared/agents/sovereignExactCommitLoaderV1.mjs';
-import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 
 const SOURCE_ROOT = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
 const REVIEWER = path.join(SOURCE_ROOT, 'scripts', 'sovereign-reviewer-v1.mjs');
@@ -109,7 +110,9 @@ export function planWindowsSovereignReviewerV1(env, {
 export const REVIEWER_CRITICAL_SOURCE_PATHS = Object.freeze([
   'scripts/sovereign-reviewer-v1.mjs',
   'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+  'scripts/battle-bridge-github-sync-policy.mjs',
   'shared/agents/sovereignReviewerV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'shared/agents/sovereignCalibrationV1.mjs',
   'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
   'shared/agents/battleBridgeWindowsHosts.mjs',
@@ -131,21 +134,34 @@ export function verifyWslReviewerExecutableBytesV1({ run, reviewerPath, reviewEn
   }
   const root = reviewerPath.slice(0, -suffix.length);
   if (!root || root === '/') return error('REVIEWER_SOURCE_BYTES_UNVERIFIED');
-  const git = args => {
-    // No shell, user Git aliases, inherited Git config or mutable helper script.
-    const result = run(['/usr/bin/env', '-i',
-      'PATH=/usr/bin:/bin', 'HOME=/tmp', 'GIT_CONFIG_NOSYSTEM=1',
-      'GIT_CONFIG_GLOBAL=/dev/null', 'GIT_NO_REPLACE_OBJECTS=1',
-      'GIT_GRAFT_FILE=/dev/null', '/usr/bin/git', '-C', root,
-      ...args], 12_000);
+  const execution = resolveBattleBridgeGitExecution({ platform: 'linux', environment: {} });
+  const gitEnvironment = Object.entries(execution.environment).map(([key, value]) => key + '=' + value);
+  const git = (args, raw = false) => {
+    // Environment clearing alone does not disable repository-local fsmonitor
+    // or helpers. Apply the same fixed Git boundary as every other reviewer.
+    const result = run(['/usr/bin/env', '-i', 'HOME=/tmp', ...gitEnvironment,
+      execution.executable, ...execution.fixedConfigArgs, '-C', root, ...args], 12_000);
     if (result?.error || result?.status !== 0 || typeof result.stdout !== 'string'
       || result.stdout.length > 4096) throw Error('REVIEWER_SOURCE_GIT_UNVERIFIED');
-    return safe(result.stdout);
+    return raw ? result.stdout : safe(result.stdout);
   };
   try {
+    const localConfig = git(['config', '--local', '--null', '--list', '--no-includes'], true);
+    if (!validateBattleBridgeLocalGitConfiguration(localConfig).ok) {
+      return error('REVIEWER_SOURCE_GIT_UNVERIFIED');
+    }
     if (git(['rev-parse', 'HEAD']) !== reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD
-      || git(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== reviewEnv.STEPHANOS_REVIEW_EXACT_BRANCH
-      || git(['status', '--porcelain', '--untracked-files=normal']) !== '') {
+      || git(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== reviewEnv.STEPHANOS_REVIEW_EXACT_BRANCH) {
+      return error('REVIEWER_SOURCE_HEAD_OR_WORKTREE_UNVERIFIED');
+    }
+    // Do not trim porcelain's status columns or collapse a staged rename:
+    // source dirt still holds, while the canonical runtime-only policy applies.
+    const statusOutput = git(['-c', 'status.renames=false', 'status', '--porcelain', '--untracked-files=normal'], true);
+    const statusLines = statusOutput === '' ? [] : statusOutput.replace(/\r?\n$/, '').split(/\r?\n/);
+    if (statusLines.some(line => !/^(?:[ MADTU]{2}|\?\?) [^\x00-\x1f\x7f]+$/.test(line)
+      || line.startsWith('  ') || line.slice(3) !== line.slice(3).trim()
+      || line.slice(3).split('/').some(part => part === '.' || part === '..'))
+      || classifyDirt(statusLines).blocksSync) {
       return error('REVIEWER_SOURCE_HEAD_OR_WORKTREE_UNVERIFIED');
     }
     git(['merge-base', '--is-ancestor', reviewEnv.STEPHANOS_REVIEW_EXACT_BASE,

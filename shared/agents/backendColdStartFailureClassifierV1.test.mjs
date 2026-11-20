@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -18,7 +19,7 @@ function command() {
     requestId: 'backend-cold-start-proof-0001',
     operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,

@@ -680,9 +680,10 @@ test('standalone supervisor housekeeping ignores hostile PATH and uses only the 
   assert.equal(receivedOptions.preserveRuntimeDirt, true);
   assert.equal(calls.length, 2);
   assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_WINDOWS_HOST.git), true);
-  assert.deepEqual(calls[0].args.slice(0, BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length), [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS]);
+  const fixedConfig = battleBridgeGitFixedConfigArgs('win32');
+  assert.deepEqual(calls[0].args.slice(0, fixedConfig.length), fixedConfig);
   assert.deepEqual(
-    calls[0].args.slice(BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length, BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length + 2),
+    calls[0].args.slice(fixedConfig.length, fixedConfig.length + 2),
     [...battleBridgeCanonicalRepositoryArgs(cwd)],
   );
   assert.equal(calls.every((call) => call.options.env.PATH !== 'C:\\attacker'), true);
@@ -882,6 +883,49 @@ test('backend missing plus UI missing does not enter browser/runtime proof and s
   });
   assert.equal(calls[0], 'npm run stephanos:battle-bridge:repair');
   assert.equal(result.status.blockerId, 'stephanos-ui-4173-missing');
+});
+
+test('cold Ignition starts backend, OpenClaw and UI before proving the served runtime', async () => {
+  const expectedHead = 'a'.repeat(40);
+  const calls = [];
+  const services = { backend: false, openclaw: false, ui: false };
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor(services),
+    plannerFn: facts => facts,
+    backendStartFn: async ({ expectedHead: head }) => {
+      assert.equal(head, expectedHead);
+      calls.push('backend');
+      services.backend = true;
+      return { started: true };
+    },
+    openClawStartFn: async ({ expectedHead: head }) => {
+      assert.equal(head, expectedHead);
+      calls.push('openclaw');
+      services.openclaw = true;
+      return { started: true, ready: true };
+    },
+    repairFn: async ({ expectedHead: head, stdout }) => {
+      assert.equal(head, expectedHead);
+      calls.push('ui');
+      services.ui = true;
+      stdout.write(JSON.stringify({ ready: true }));
+      return 0;
+    },
+    runtimeProofFn: async ({ currentHead }) => {
+      assert.deepEqual(services, { backend: true, openclaw: true, ui: true });
+      assert.equal(currentHead, expectedHead);
+      calls.push('served-proof');
+      return { ready: true, currentHead };
+    },
+    openClawCompanionStartFn: async () => ({ targets: [] }),
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['backend', 'openclaw', 'ui', 'served-proof']);
+  assert.equal(result.status.services.openClaw18789.ready, true);
 });
 
 test('backend missing has deterministic backend blocker and no empty blockerId when approved start fails proof', async () => {

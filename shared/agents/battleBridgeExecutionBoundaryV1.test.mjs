@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {
-  mkdirSync, mkdtempSync, symlinkSync, writeFileSync,
+  mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,6 +13,7 @@ import {
   createBattleBridgeMinimalChildEnvironment,
   inspectBattleBridgeGitTopology,
   resolveBattleBridgeGitExecution,
+  resolveBattleBridgePhysicalPathV1,
   resolveBattleBridgeGitExecutable,
   validateBattleBridgeLocalGitConfiguration,
 } from './battleBridgeExecutionBoundaryV1.mjs';
@@ -32,13 +33,21 @@ test('fixed Git executable is absolute and platform-canonical', () => {
     environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
   });
   assert.equal(posix.executable, BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE);
+  assert.equal(posix.fixedConfigArgs.includes('core.autocrlf=false'), true);
   assert.equal(posix.fixedConfigArgs.includes('core.hooksPath=/dev/null'), true);
   assert.equal(posix.fixedConfigArgs.includes('core.attributesFile=/dev/null'), true);
+  assert.equal(posix.fixedConfigArgs.includes('core.excludesFile=/dev/null'), true);
   assert.equal(posix.environment.PATH, '/usr/bin:/bin');
   assert.equal(posix.environment.GIT_CONFIG_GLOBAL, '/dev/null');
   assert.equal(posix.environment.GIT_GRAFT_FILE, '/dev/null');
   assert.equal(posix.environment.NODE_OPTIONS, undefined);
-  assert.deepEqual(battleBridgeGitFixedConfigArgs('win32').slice(0, 2), ['-c', 'core.hooksPath=NUL']);
+  const windowsArgs = battleBridgeGitFixedConfigArgs('win32');
+  assert.deepEqual(windowsArgs.slice(0, 2), ['-c', 'core.autocrlf=true']);
+  assert.equal(windowsArgs.includes('core.hooksPath=NUL'), true);
+  assert.equal(windowsArgs.includes('core.attributesFile='), true);
+  assert.equal(windowsArgs.includes('core.excludesFile='), true);
+  assert.equal(windowsArgs.includes('core.attributesFile=NUL'), false);
+  assert.equal(windowsArgs.includes('core.excludesFile=NUL'), false);
 });
 
 test('minimal child environment removes Node/Git/shell injection variables', () => {
@@ -62,6 +71,8 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   assert.equal(Number(result.GIT_CONFIG_COUNT) > 0, true);
   const fixedKeys = Array.from({ length: Number(result.GIT_CONFIG_COUNT) }, (_, index) => result[`GIT_CONFIG_KEY_${index}`]);
   const fixedValues = Array.from({ length: Number(result.GIT_CONFIG_COUNT) }, (_, index) => result[`GIT_CONFIG_VALUE_${index}`]);
+  assert.equal(fixedKeys.includes('core.autocrlf'), true);
+  assert.equal(fixedValues[fixedKeys.indexOf('core.autocrlf')], 'true');
   assert.equal(fixedKeys.includes('core.hooksPath'), true);
   assert.equal(fixedValues[fixedKeys.indexOf('core.hooksPath')], 'NUL');
   assert.equal(fixedValues[fixedKeys.indexOf('commit.gpgSign')], 'false');
@@ -70,6 +81,8 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   assert.equal(fixedValues[fixedKeys.indexOf('core.checkStat')], 'default');
   assert.equal(fixedValues[fixedKeys.indexOf('core.ignoreStat')], 'false');
   assert.equal(fixedValues[fixedKeys.indexOf('core.untrackedCache')], 'false');
+  assert.equal(fixedValues[fixedKeys.indexOf('core.attributesFile')], '');
+  assert.equal(fixedValues[fixedKeys.indexOf('core.excludesFile')], '');
   assert.equal(fixedValues.includes('attacker.exe'), false);
   assert.equal(result.GIT_NO_REPLACE_OBJECTS, '1');
   assert.equal(result.GIT_GRAFT_FILE, 'NUL');
@@ -93,7 +106,7 @@ test('Git topology rejects graft, common-dir, and object-alternate redirects', (
     ['commondir', 'GIT_COMMON_DIRECTORY_REDIRECT_PRESENT'],
     [path.join('objects', 'info', 'alternates'), 'GIT_OBJECT_ALTERNATES_PRESENT'],
   ]) {
-    const root = mkdtempSync(path.join(tmpdir(), 'battle-bridge-git-topology-'));
+    const root = mkdtempSync(path.join(resolveBattleBridgePhysicalPathV1(tmpdir()), 'battle-bridge-git-topology-'));
     mkdirSync(path.join(root, '.git', 'objects'), { recursive: true });
     mkdirSync(path.join(root, '.git', 'refs'), { recursive: true });
     writeFileSync(path.join(root, '.git', 'config'), '[core]\n\trepositoryformatversion = 0\n');
@@ -106,8 +119,8 @@ test('Git topology rejects graft, common-dir, and object-alternate redirects', (
 });
 
 test('Git topology rejects linked critical metadata descendants', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'battle-bridge-git-reparse-'));
-  const target = mkdtempSync(path.join(tmpdir(), 'battle-bridge-git-objects-target-'));
+  const root = mkdtempSync(path.join(resolveBattleBridgePhysicalPathV1(tmpdir()), 'battle-bridge-git-reparse-'));
+  const target = mkdtempSync(path.join(resolveBattleBridgePhysicalPathV1(tmpdir()), 'battle-bridge-git-objects-target-'));
   mkdirSync(path.join(root, '.git', 'refs'), { recursive: true });
   mkdirSync(path.join(root, '.git'), { recursive: true });
   writeFileSync(path.join(root, '.git', 'config'), '[core]\n\trepositoryformatversion = 0\n');
@@ -117,7 +130,7 @@ test('Git topology rejects linked critical metadata descendants', () => {
 });
 
 test('Git topology can bind the canonical index identity for read-only source proofs', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'battle-bridge-git-index-'));
+  const root = mkdtempSync(path.join(resolveBattleBridgePhysicalPathV1(tmpdir()), 'battle-bridge-git-index-'));
   mkdirSync(path.join(root, '.git', 'objects'), { recursive: true });
   mkdirSync(path.join(root, '.git', 'refs'), { recursive: true });
   writeFileSync(path.join(root, '.git', 'config'), '[core]\n\trepositoryformatversion = 0\n');
@@ -258,4 +271,49 @@ test('configuration diagnostics preserve allowed hooks, disabled signing and har
   assert.deepEqual(result.riskyKeys, []);
   assert.deepEqual(result.diagnostic, { originCount: 'ONE', originMatch: 'CANONICAL', riskCategories: [] });
   assert.doesNotMatch(JSON.stringify(result.diagnostic), /PRIVATE|SECRET|https|value/);
+});
+
+function physicalTopologyFixture(t) {
+  const base = mkdtempSync(path.join(resolveBattleBridgePhysicalPathV1(tmpdir()), 'git-physical-path-fixture-'));
+  const root = path.join(base, 'main');
+  mkdirSync(path.join(root, '.git', 'objects'), { recursive: true });
+  mkdirSync(path.join(root, '.git', 'refs'), { recursive: true });
+  writeFileSync(path.join(root, '.git', 'config'), '[core]\n\trepositoryformatversion = 0\n');
+  writeFileSync(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  writeFileSync(path.join(root, '.git', 'index'), 'original-index-bytes');
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  return { base, root };
+}
+
+test('physical resolution keeps a real regular topology and its stable index evidence', t => {
+  const f = physicalTopologyFixture(t), index = path.join(f.root, '.git', 'index');
+  const bytes = readFileSync(index);
+  const first = inspectBattleBridgeGitTopology(f.root, { stabilizeIndex: true });
+  assert.equal(first.ok, true); assert.equal(typeof first.stableIdentities.index, 'string');
+  assert.equal(resolveBattleBridgePhysicalPathV1(index), process.platform === 'win32' ? realpathSync.native(index) : realpathSync(index));
+  const second = inspectBattleBridgeGitTopology(f.root, { stabilizeIndex: true });
+  assert.deepEqual(second.stableIdentities, first.stableIdentities);
+  assert.deepEqual(readFileSync(index), bytes);
+});
+
+for (const metadataRoot of ['refs', 'objects', 'worktrees', 'logs', 'info']) {
+  test(`full metadata traversal rejects a nested physical redirect beneath ${metadataRoot}`, t => {
+    const f = physicalTopologyFixture(t), nested = path.join(f.root, '.git', metadataRoot, 'deep');
+    const outside = path.join(f.base, 'outside');
+    mkdirSync(nested, { recursive: true }); mkdirSync(outside);
+    writeFileSync(path.join(outside, 'sentinel'), 'preserve');
+    assert.equal(inspectBattleBridgeGitTopology(f.root).ok, true);
+    symlinkSync(outside, path.join(nested, 'redirect'), process.platform === 'win32' ? 'junction' : 'dir');
+    const result = inspectBattleBridgeGitTopology(f.root);
+    assert.equal(result.ok, false); assert.equal(result.blocker, 'CANONICAL_GIT_REPARSE_POINT_PRESENT');
+    assert.equal(readFileSync(path.join(outside, 'sentinel'), 'utf8'), 'preserve');
+  });
+}
+
+test('physical comparison rejects a redirected repository ancestor with ordinary final metadata', t => {
+  const f = physicalTopologyFixture(t), redirect = path.join(f.base, 'redirected-ancestor');
+  symlinkSync(f.root, redirect, process.platform === 'win32' ? 'junction' : 'dir');
+  const result = inspectBattleBridgeGitTopology(redirect);
+  assert.equal(result.ok, false); assert.equal(result.blocker, 'CANONICAL_GIT_REPARSE_POINT_PRESENT');
+  assert.equal(inspectBattleBridgeGitTopology(f.root).ok, true);
 });

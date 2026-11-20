@@ -81,6 +81,12 @@ function metaAirLinkIsolationHelperClean(source, {
 }) {
   const helper = extractPowerShellFunction(source, signature);
   if (!helper) return false;
+  // Exact current-main child-only telemetry contract. This is deliberately a
+  // byte-closed alternative, not a general permission for environment changes.
+  // Any helper edit requires a new independently reviewed contract digest.
+  const environmentSets = value => value.match(/\[Environment\]::SetEnvironmentVariable\(/g)?.length ?? 0;
+  if (environmentSets(source) !== environmentSets(helper)) return false;
+  if (createHash('sha256').update(helper).digest('hex') === 'c01ffa6d92b40028e6e2e5e948a13977be727231d2fbb9ae8900673182394576') return true;
   const executableLines = helper.split(/\r?\n/)
     .map((line) => line.replace(/#.*$/, '').trim())
     .filter(Boolean);
@@ -248,7 +254,7 @@ function requireClosedProcessEstate(findings, rows, path, source) {
     && starts.some((row) => row.code === isolatedGameStart && row.depthBefore === 2)
     && isolationUses.length === 2
     && isolationUses.some((row) => row.code === 'function Start-StarfieldWithMetaAirLinkIsolation {' && row.depthBefore === 0)
-    && isolationUses.some((row) => row.code === '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory' && row.depthBefore === 1)
+    && isolationUses.some((row) => ["$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory", "$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory -VisualTelemetry $(if ($performanceMode) { $performanceMode.visualTelemetry } else { $null })"].includes(row.code) && row.depthBefore === 1)
     && source.includes("$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'")
     && metaAirLinkIsolationHelperClean(source, {
       signature: 'function Start-StarfieldWithMetaAirLinkIsolation {',
@@ -271,6 +277,19 @@ function requireClosedProcessEstate(findings, rows, path, source) {
     ['$guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String', 2],
     ['& $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null', 3],
   ];
+  // Admit only the complete fixed application lookup/read-head block. Merely
+  // matching the call line would permit an arbitrary executable rebinding.
+  const sourceHeadBlock = extractPowerShellFunction(source, "$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {");
+  if (createHash('sha256').update(sourceHeadBlock).digest('hex') === 'ece043bf80990b5c7d03c76dfbefb1b93b7621cd4b77df504d27a624e3cff2d7') {
+    requireUniqueExecutableAssignment(findings, rows, 'sourceHead', "$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {",
+      'starfield-launcher-source-head-binding-not-immutable', 'The read-head decision must remain one executable assignment.', path);
+    requireExecutableStatement(findings, rows, "$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {", 0,
+      'starfield-launcher-source-head-not-top-level', 'The fixed source-head observation must remain executable at the top level.', path);
+    requireUniqueExecutableAssignment(findings, rows, 'gitCommand',
+      "$gitCommand = Get-Command -Name 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1",
+      'starfield-launcher-git-observation-binding-not-immutable', 'The read-head Git application binding must remain unique and fixed.', path);
+    expectedCalls.push(['$candidateHead = (& $gitCommand.Source -C $repositoryRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()', 3]);
+  }
   const calls = rows.filter((row) => /(^|[=;(]\s*)&\s+\$/i.test(row.structural));
   const actualEstate = calls.map((row) => `${row.depthBefore}:${row.code}`).sort();
   const expectedEstate = expectedCalls.map(([code, depth]) => `${depth}:${code}`).sort();
@@ -367,7 +386,8 @@ function reviewLauncher(source, path, findings) {
     && row.enclosingBlocks.at(-1) === 'try {'
     && (
       row.code === '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru'
-      || row.code === '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory'
+      || "$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory" === row.code
+      || "$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory -VisualTelemetry $(if ($performanceMode) { $performanceMode.visualTelemetry } else { $null })" === row.code
     ));
   if (!gameStartAtReviewedBoundary) {
     findings.push(finding(

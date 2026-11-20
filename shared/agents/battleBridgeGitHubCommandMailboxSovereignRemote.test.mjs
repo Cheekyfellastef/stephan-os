@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -19,7 +20,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-remote-1001',
     operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -32,7 +33,7 @@ function command(overrides = {}) {
 function comment(payload = command()) {
   return {
     id: 501,
-    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/3149#issuecomment-501',
+    html_url: `https://github.com/Cheekyfellastef/stephan-os/issues/${activeMailboxIssueForTest}#issuecomment-501`,
     created_at: now.toISOString(),
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(payload)}\n\`\`\``,

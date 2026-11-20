@@ -14,7 +14,7 @@
         <div class="brand-mark">✦</div>
         <div><strong>Stephanos</strong><small>HUMAN + AI OPERATING SYSTEM</small></div>
       </div>
-      <div class="rail-heading"><span>AGENTS</span><span class="truth-pill">live route</span></div>
+      <div class="rail-heading"><span>AGENTS</span><span class="truth-pill">shared conversation</span></div>
       <nav id="agentList" class="agent-list" aria-label="Project agents"></nav>
       <div class="rail-heading group-heading"><span>GROUP CHATS</span></div>
       <nav id="groupList" class="agent-list groups" aria-label="Project groups"></nav>
@@ -30,15 +30,24 @@
         <div class="route-badge"><span class="pulse"></span><span id="routeLabel">Canonical AI route</span></div>
       </header>
 
+      <div class="control-toolbar" aria-label="Sovereign control shortcuts">
+        <label class="target-picker" for="targetSelect">Talk to <select id="targetSelect" aria-label="Conversation target"></select></label>
+        <div class="control-shortcuts">
+          <button type="button" data-control-target="sovereign-commander" data-prompt="Show me control status and why anything is blocked.">Control status</button>
+          <button type="button" data-control-target="control-tower" data-prompt="Inspect the native control system.">Inspect</button>
+          <button type="button" data-control-target="control-tower" data-prompt="Prepare the existing guarded goal-building repair request.">Prepare repair</button>
+        </div>
+      </div>
+
       <section id="welcome" class="welcome">
         <div class="orbit"></div>
         <p class="kicker">STEPHANOS AI</p>
         <h2>Talk to <span>everyone.</span></h2>
-        <p class="lede">One quiet surface over the project’s agents, knowledge, goals, tools, and governed execution paths.</p>
+        <p class="lede">Talk to Sovereign Commander and Control Tower, see what is actually happening, and prepare the next guarded action.</p>
         <div class="action-grid">
-          <button data-prompt="Show me the current project status and what needs attention next."><b>Get Status</b><span>Ask for the project truth</span></button>
+          <button data-control-target="sovereign-commander" data-prompt="Show me Sovereign Commander and Control Tower status and what needs attention next."><b>Control Status</b><span>Observed facts · no model needed</span></button>
           <button data-prompt="@Flywheel what have you learned recently and what should improve next?"><b>Learn</b><span>Talk to the Flywheel</span></button>
-          <button data-prompt="@Sovereign Commander show me the latest Battle Bridge telemetry."><b>Command</b><span>Address Sovereign Commander</span></button>
+          <button data-control-target="control-tower" data-prompt="Inspect the native control system."><b>Inspect</b><span>Prepare a native observation</span></button>
           <button data-prompt="Ask the builders what is merge-ready and what is blocked."><b>Coordinate</b><span>Bring the build fabric together</span></button>
         </div>
       </section>
@@ -61,9 +70,9 @@
         <div class="card-title"><span>PROJECT CONTEXT</span><span class="live-dot"></span></div>
         <dl>
           <div><dt>Conversation surface</dt><dd>Stephanos AI</dd></div>
-          <div><dt>Backend path</dt><dd>/api/ai/chat</dd></div>
+          <div><dt>Control replies</dt><dd>No model required</dd></div>
           <div><dt>Target</dt><dd id="contextTarget">Everyone</dd></div>
-          <div><dt>Shared continuity</dt><dd>backend-governed</dd></div>
+          <div><dt>Actions</dt><dd>Existing guarded routes</dd></div>
         </dl>
       </section>
       <section class="context-card">
@@ -75,12 +84,12 @@
         </dl>
       </section>
       <section class="context-card">
-        <div class="card-title"><span>IDENTITY FABRIC</span></div>
-        <p class="context-copy">Agent tabs change the addressed project identity while preserving the same Stephanos conversation route. No separate pretend chatbot is created for each tab.</p>
+        <div class="card-title"><span>SOVEREIGN CONTROL</span></div>
+        <p class="context-copy">Ask Commander or Control Tower for status, an inspection, or a guarded repair request. Control replies use bounded observations without an RDC or Codex control session. Other conversations use your configured AI route.</p>
       </section>
       <section class="context-card accent">
-        <div class="card-title"><span>SPATIAL READY</span></div>
-        <p class="context-copy">These identities are intended to map to the same agents in the future Spatial Workspace, so 2D chat and 3D embodiment remain two surfaces over one identity.</p>
+        <div class="card-title"><span>REQUESTS YOU CAN TRACE</span></div>
+        <p class="context-copy">A prepared action is not submitted. An accepted request is not a completed build. Follow the original request and its recorded outcome in the control reply.</p>
       </section>
     </aside>
   </main>

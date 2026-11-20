@@ -99,14 +99,32 @@ test('#1291-shaped source repair is not Windows-bound merely because it edits a 
     mission: watchdogMission(),
     codexStatus: stalledCodex(),
     forgeLaneReceipt: lane6Receipt(),
+    githubLaneReceipt: githubReceipt({ supportedTaskClasses: ['MULTI_MODULE_IMPLEMENTATION'] }),
   });
 
   assert.equal(result.task.windowsBound, false);
   assert.equal(result.task.taskClass, 'MULTI_MODULE_IMPLEMENTATION');
-  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
-  assert.equal(result.workerId, FORGE_LIFEBOAT_WORKER_ID);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+  assert.equal(result.workerId, 'shared-fabric-chatgpt-github-builder-01');
   assert.equal(result.dispatchAllowed, true);
   assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY');
+});
+
+test('a misadvertised local Forge receipt cannot accept the same multi-module PowerShell source repair', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: watchdogMission(),
+    codexStatus: stalledCodex(),
+    forgeLaneReceipt: lane6Receipt(),
+  });
+
+  assert.equal(result.task.windowsBound, false, 'source type does not imply runtime authority');
+  assert.equal(result.task.taskClass, 'MULTI_MODULE_IMPLEMENTATION');
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-build-fallback-unavailable'));
+  assert.equal(result.blockers.includes('proven-windows-capable-fallback-unavailable'), false);
 });
 
 test('an explicit Windows runtime task remains Windows-bound and cannot leak into a source-only lane', () => {

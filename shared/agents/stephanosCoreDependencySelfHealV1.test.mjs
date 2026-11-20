@@ -9,7 +9,7 @@ import { unqualifiedCoreWindowsRepairV1 } from './sovereignMaintenanceAdmissionV
 
 const HEAD = 'a'.repeat(40);
 const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
-const start = source.indexOf('async function maybeRepairCoreDependencies(');
+const start = source.indexOf('async function resumeOriginalCoreMaintenance(');
 const end = source.indexOf('async function runBoundedOctopusMaintenance(', start);
 assert.ok(start >= 0 && end > start);
 
@@ -23,6 +23,13 @@ test('actual late Core reconciliation rechecks worker evidence after awaited mai
     readCanonicalMissionWorkerHeartbeatAgeMs: () => age,
     markFlywheelStage: () => {}, sourceHead: HEAD, repoRoot: 'repo', workspaceRoot: 'workspace', process: { env: {} },
     runDurableFlywheelStartupCycle: async () => { dispatches++; return {}; },
+    // This fixture isolates the current worker recheck. The real durable
+    // controller and its admission/restart behavior have dedicated coverage.
+    coreAffectedWorkAdmitted: async () => true,
+    coreRepairAttempts: { runAffectedWork: async ({ admit, run }) => {
+      assert.equal(await admit(), true);
+      return { ok: true, result: await run() };
+    } },
   });
   const run = vm.runInContext(`(async () => { ${source.slice(a, b)} })`, context);
   await run();
@@ -68,7 +75,7 @@ test('each actual Octopus maintenance edge re-samples worker evidence before aut
     buildStephanosExecutionCommandEnvelopeV1: input => input,
     STEPHANOS_EXECUTION_SURFACE: { SOVEREIGN_COMMANDER: 'SOVEREIGN_COMMANDER' },
     SOVEREIGN_COMMANDER_OPERATION: { MAINTENANCE_ACTION: 'MAINTENANCE_ACTION' },
-    OCTOPUS_SELF_HEAL_RELATED_ISSUE: '#2961', PROOF_REF: 'proof-fixture', lastOctopusSelfHealAttemptCount: 1,
+    PROOF_REF: 'proof-fixture', lastOctopusSelfHealAttemptCount: 1,
     executeSovereignCommanderCommandV1: async () => { dispatches++; return { ok: true }; },
   });
   vm.runInContext(source.slice(maintenanceStart, maintenanceEnd), context);
@@ -99,6 +106,10 @@ function isolatedRepair({ verifiedAge = null, repairOk = true } = {}) {
     lastDependencySelfHealVerdict: 'NOT_RUN', lastDependencySelfHealBlocker: '',
     lastDependencySelfHealAttemptCount: 0, lastDependencySelfHealProofHashes: [],
     canonicalMissionWorkerEvidenceAllowsWork,
+    coreRepairAttempts: {
+      pendingAttempt: () => null,
+      reconcile: async () => { throw new Error('NO_PENDING_DEPENDENCY_MUST_NOT_ACQUIRE_OWNER'); },
+    },
     DEPENDENCY_SELF_HEAL_COOLDOWN_MS: 120_000,
     BATTLE_BRIDGE_SELF_HEAL_ACTION_ID: 'repair-battle-bridge',
     workerHeartbeatPath: 'test-worker-heartbeat',
@@ -107,7 +118,7 @@ function isolatedRepair({ verifiedAge = null, repairOk = true } = {}) {
     readCanonicalMissionWorkerHeartbeatAgeMs: () => verifiedAge,
     runBoundedDependencyMaintenance: async (actionId, head, missionId) => {
       actions.push({ actionId, head, missionId });
-      return { ok: repairOk, proofHash: 'b'.repeat(64), blocker: repairOk ? '' : 'BACKEND_REPAIR_HELD' };
+      return { ok: repairOk, custodyReleased: true, proofHash: 'b'.repeat(64), blocker: repairOk ? '' : 'BACKEND_REPAIR_HELD' };
     },
   });
   vm.runInContext(source.slice(start, end), context);
@@ -187,7 +198,7 @@ test('worker custody hold preserves completed independent backend repair evidenc
   assert.equal(h.context.lastDependencySelfHealProofHashes[0], 'b'.repeat(64));
 });
 
-test('unchanged backend failure respects existing cooldown before retrying the same repair', async () => {
+test('settled backend failure respects existing cooldown before another eligible repair', async () => {
   const h = isolatedRepair({ repairOk: false });
   await h.run(workerState({ age: 1000, backendHealthy: false }));
   assert.equal(h.context.lastDependencySelfHealBlocker, 'BACKEND_REPAIR_HELD');

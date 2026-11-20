@@ -71,7 +71,7 @@ import { createBuildParitySnapshot } from '../../shared/runtime/buildParity.mjs'
 import { buildAgentRegistry } from '../../shared/agents/agentRegistry.mjs';
 import { adjudicateAgents } from '../../shared/agents/agentAdjudicator.mjs';
 import { buildFinalAgentView } from '../../shared/agents/finalAgentView.mjs';
-import { buildAgentSurfaceProjection, resolveAgentSurfaceMode } from '../../shared/agents/agentSurfaceProjection.mjs';
+import { buildAgentSurfaceProjection, resolveWorkspaceBoundSurfaceMode } from '../../shared/agents/agentSurfaceProjection.mjs';
 import { buildAgentTaskProjection } from '../../shared/agents/agentTaskProjection.mjs';
 import { recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
 import { OPENCLAW_READONLY_VALIDATION_ENDPOINT } from '../../shared/agents/openClawReadonlyValidationEndpoint.mjs';
@@ -120,7 +120,15 @@ function readSurfaceModeFromLocation(windowRef = globalThis.window) {
     return 'mission-control';
   }
   const params = new URLSearchParams(windowRef.location.search || '');
-  return resolveAgentSurfaceMode(params.get('surface') || params.get('app'));
+  // A same-origin iframe is owned by the canonical launcher. The frame's tile
+  // identity is authoritative across history navigation and runtime reloads.
+  let workspaceId = '';
+  try {
+    workspaceId = windowRef.frameElement?.getAttribute?.('data-stephanos-workspace-id') || '';
+  } catch {
+    // Direct launch / cross-origin frames retain explicit query routing.
+  }
+  return resolveWorkspaceBoundSurfaceMode(params.get('surface') || params.get('app'), workspaceId);
 }
 
 function clearLauncherSurfaceQuery(windowRef = globalThis.window) {

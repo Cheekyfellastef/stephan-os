@@ -65,8 +65,8 @@ export function normalizeExternalMindSource(input = {}) {
 export function normalizeMindRecord(input = {}) {
   const mind = input && typeof input === 'object' ? input : {};
   const approvalState = normalizeEnum(mind.approvalState, ['discovered','profiled','tested','sandboxed','recommended','approved','blocked'], 'discovered');
-  const blocked = approvalState === 'blocked';
-  const routeEligibility = mind.routeEligibility === true && !blocked;
+  // A proposed, discovered or sandboxed model cannot make itself route-eligible.
+  const routeEligibility = mind.routeEligibility === true && approvalState === 'approved';
   return {
     mindId: asText(mind.mindId) || 'unknown-mind',
     displayName: asText(mind.displayName) || asText(mind.mindId) || 'Unknown Mind',
@@ -92,7 +92,8 @@ export function discoverLocalOllamaMinds({ providerHealth = {} } = {}) {
   const ollama = providerHealth?.ollama || {};
   const rawModels = Array.isArray(ollama.models) ? ollama.models : Array.isArray(ollama.catalog) ? ollama.catalog : [];
   return rawModels.map((model) => {
-    const modelId = asText(model?.name || model?.model || model?.id);
+    // Real checkOllamaHealth returns a string[]; retain object-shaped catalog support.
+    const modelId = typeof model === 'string' ? asText(model) : asText(model?.name || model?.model || model?.id);
     if (!modelId) return null;
     return normalizeMindRecord({
       mindId: `ollama:${modelId}`,
@@ -116,14 +117,25 @@ export function discoverLocalOllamaMinds({ providerHealth = {} } = {}) {
 
 export function buildAIMindRegistry({ providerHealth = {}, runtimeContext = {}, registry = [] } = {}) {
   const discovered = discoverLocalOllamaMinds({ providerHealth });
-  const merged = [...registry.map(normalizeMindRecord), ...discovered].reduce((acc, mind) => {
+  // Discovery supplies unapproved defaults; canonical registered qualifications must not
+  // be silently erased when the same local Ollama model is rediscovered.
+  // This retains existing approval data; it never manufactures a new approval.
+  const merged = [...discovered, ...registry.map(normalizeMindRecord)].reduce((acc, mind) => {
     acc.set(mind.mindId, mind);
     return acc;
   }, new Map());
   const minds = [...merged.values()];
   const missionPrivacy = asText(runtimeContext?.providerExecutionIntent?.answerMode).toLowerCase();
   const privateMission = missionPrivacy === 'local-private';
-  const filteredEligible = minds.filter((mind) => mind.routeEligibility && !(privateMission && mind.privacyClass === 'cloud'));
+  // Approval is durable configuration. Readiness is a separate *live* fact:
+  // a saved local model may be absent, renamed, or have an unreachable Ollama.
+  // Never revoke its approval on an outage, but never recommend it as runnable.
+  const ollamaModelsObserved = providerHealth?.ollama?.ok === true;
+  const observedOllamaMindIds = new Set(discovered.map((mind) => mind.mindId));
+  const filteredEligible = minds.filter((mind) => mind.routeEligibility
+    && !(privateMission && mind.privacyClass === 'cloud')
+    && (mind.providerId !== 'ollama'
+      || (ollamaModelsObserved && observedOllamaMindIds.has(mind.mindId))));
   const recommended = minds.find((m) => m.approvalState === 'recommended') || minds.find((m) => m.approvalState === 'sandboxed') || minds[0] || null;
   const counts = {
     discoveredMindCount: minds.length,

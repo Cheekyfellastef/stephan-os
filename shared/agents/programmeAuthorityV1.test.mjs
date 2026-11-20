@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import { createExecutionReceipt } from './executionReceiptV1.mjs';
 import {
@@ -42,6 +43,7 @@ import {
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
+import { createMissionOrchestratorState, applyMissionOrchestratorEvent } from './missionOrchestrator.mjs';
 import {
   CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
   DEFAULT_CRITICAL_BACKLOG,
@@ -51,6 +53,7 @@ import {
 const NOW = '2026-07-30T10:00:00.000Z';
 const HEAD = 'a'.repeat(40);
 const MERGE = 'b'.repeat(40);
+const ADVANCED_HEAD = 'c'.repeat(40);
 const LANE_ID = 'goal-1497-pr-1617';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const BRANCH = 'feat/canonical-programme-authority-contracts';
@@ -177,6 +180,73 @@ test('canonical lane binds lane ID, issue, PR, exact head, receipts, proofs and 
   assert.deepEqual(projection.executionReceiptRefs, ['execution-1617-1']);
   assert.equal(projection.mutationLeaseIdentity.leaseId, 'lease-goal-1497-pr-1617');
   assert.equal(projection.chatMemoryAuthoritative, false);
+});
+
+test('terminal lane preserves exact lease identity while accepting only a proven descendant merged head', () => {
+  const merged = github({
+    headSha: ADVANCED_HEAD,
+    prState: 'closed',
+    merged: true,
+    mergedAt: '2026-07-30T09:59:00.000Z',
+    mergeCommitSha: MERGE,
+  });
+  const terminal = lane({
+    headSha: ADVANCED_HEAD,
+    github: merged,
+    executionReceipt: null,
+    terminalHeadAdvance: {
+      leaseHeadSha: HEAD,
+      mergedHeadSha: ADVANCED_HEAD,
+      leaseHeadIsAncestor: true,
+    },
+  });
+  assert.equal(terminal.valid, true);
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.headSha, ADVANCED_HEAD);
+  assert.deepEqual(terminal.terminalHeadAdvance, {
+    leaseHeadSha: HEAD,
+    mergedHeadSha: ADVANCED_HEAD,
+    leaseHeadIsAncestor: true,
+  });
+
+  const plan = buildTerminalLaneFinalizationPlan({
+    lane: terminal,
+    mutationLease: lease(),
+    github: merged,
+    leaseId: 'lease-goal-1497-pr-1617',
+    ownerId: OWNER,
+    nowUtc: NOW,
+  });
+  assert.equal(plan.valid, true);
+  const records = createTerminalLaneEvidenceRecords(plan, { timestampUtc: NOW });
+  assert.equal(records.proof.headSha, HEAD);
+  assert.equal(records.proof.leaseHeadSha, HEAD);
+  assert.equal(records.proof.mergedHeadSha, ADVANCED_HEAD);
+  assert.equal(records.proof.leaseHeadIsAncestor, true);
+  assert.equal(records.receipt.headSha, HEAD);
+
+  const withoutProof = lane({
+    headSha: ADVANCED_HEAD,
+    github: merged,
+    executionReceipt: null,
+  });
+  assert.equal(withoutProof.valid, false);
+  assert.ok(withoutProof.blockers.includes('head-identity-conflict'));
+
+  for (const terminalHeadAdvance of [
+    { leaseHeadSha: HEAD, mergedHeadSha: ADVANCED_HEAD, leaseHeadIsAncestor: false },
+    { leaseHeadSha: 'd'.repeat(40), mergedHeadSha: ADVANCED_HEAD, leaseHeadIsAncestor: true },
+    { leaseHeadSha: HEAD, mergedHeadSha: 'd'.repeat(40), leaseHeadIsAncestor: true },
+  ]) {
+    const refused = lane({
+      headSha: ADVANCED_HEAD,
+      github: merged,
+      executionReceipt: null,
+      terminalHeadAdvance,
+    });
+    assert.equal(refused.valid, false);
+    assert.ok(refused.blockers.includes('terminal-head-advance-unproven'));
+  }
 });
 
 test('open PR and unrelated source lease cannot fabricate a material builder', () => {
@@ -1314,6 +1384,101 @@ test('malformed parked backlog authority cannot suppress scheduler-visible ready
 
   assert.equal(goals.valid, true, goals.blockers.join(','));
   assert.deepEqual(goals.goals.map(({ issue }) => issue), [1284, 1286, 1287]);
+});
+
+test('observed source integration parks acceptance while unrelated construction remains scheduler-admissible', () => {
+  const entry = DEFAULT_CRITICAL_BACKLOG.find(({ itemId }) => itemId === 'programme-completion-controller');
+  const original = createMissionOrchestratorState({
+    ...entry.mission,
+    repositoryRoot: '/fixture/repo',
+    worktreePath: '/fixture/worktree',
+  }, { now: NOW });
+  original.revision = 55;
+  original.currentPhase = 'AWAITING_OPERATOR_APPROVAL';
+  original.git.commitSha = HEAD;
+  original.git.worktreeReady = true;
+  original.git.pushed = true;
+  original.git.clean = true;
+  original.dispatch.status = 'complete';
+  original.activeWriter = 'none';
+  original.approval.status = 'pending';
+  original.pullRequest.number = 2463;
+  original.pullRequest.headSha = HEAD;
+  const observation = {
+    schemaVersion: 'stephanos.external-merge-observation.v1',
+    source: 'github-api', repository: REPOSITORY,
+    missionId: original.missionId, expectedRevision: 55, prNumber: 2463,
+    headSha: HEAD, branch: original.git.branch, baseBranch: 'main',
+    merged: true, prState: 'closed', mergeCommitSha: MERGE,
+    mergedAtUtc: '2026-07-30T09:58:00.000Z',
+    mainHead: ADVANCED_HEAD, ancestorCommit: MERGE,
+    ancestryMainHead: ADVANCED_HEAD, mainRecheckHead: ADVANCED_HEAD,
+    mergeAncestorOfMain: true, observedAtUtc: NOW,
+  };
+  const accepted = applyMissionOrchestratorEvent(original, {
+    eventType: 'EXTERNAL_PULL_REQUEST_MERGE_OBSERVED',
+    eventId: 'external-merge-programme-capacity-fixture',
+    expectedRevision: 55, expectedCurrentPhase: 'AWAITING_OPERATOR_APPROVAL',
+    observation, timestamp: NOW,
+    receipt: {
+      receiptId: 'external-merge-programme-capacity-fixture',
+      requirement: 'source integration observation only',
+      source: 'completion-guardian-github-observation',
+      evidenceType: 'github-merged-observation', verified: true, exitCode: 0,
+      createdAt: NOW,
+      commandOutputHash: createHash('sha256').update(JSON.stringify(observation)).digest('hex'),
+    },
+  }, { now: NOW });
+  const retained = structuredClone(accepted);
+  assert.equal(accepted.currentPhase, 'VERIFYING');
+  assert.equal(accepted.revision, 56);
+  assert.equal(accepted.nextAction.type, 'RECONCILE_GOAL_ACCEPTANCE');
+
+  const criticalBacklog = buildCriticalBacklogProjection({ backlog: [entry], missionRecords: [accepted] });
+  assert.equal(criticalBacklog.decision, 'PARKED_ACCEPTANCE_ONLY');
+  assert.deepEqual(criticalBacklog.parkedAcceptanceMissionIds, [accepted.missionId]);
+  assert.deepEqual(criticalBacklog.completedItemIds, []);
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW, criticalBacklog,
+    goalRecords: [
+      goalRecord({ goalId: 'goal-1284', issueNumber: 1284, route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1286', issueNumber: 1286, route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1287', issueNumber: 1287, route: 'OPENCLAW_LOCAL' }),
+    ],
+  });
+  assert.equal(goals.valid, true, goals.blockers.join(','));
+  assert.deepEqual(goals.goals.map(({ issue }) => issue), [1287]);
+  const scheduler = buildMissionScheduler({ now: NOW, goals: goals.goals });
+  assert.equal(scheduler.failClosed, false);
+  assert.equal(scheduler.selectedGoal, '#1287');
+  assert.equal(scheduler.selectedLifecycle, 'READY');
+  const input = {
+    nowUtc: NOW, workspaceFeed: { state: 'ready' },
+    lane: null, mutationLease: null, executionReceipt: null,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'RECONCILING' },
+    workerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0 },
+    battleBridgeProofs: [], runtimeHealthRecords: [],
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+    scheduler, criticalBacklog,
+  };
+  const ready = buildAuthoritativeProgrammeProjection(input);
+  assert.equal(ready.status, 'READY', ready.blockers.join(','));
+  assert.deepEqual(ready.blockers, []);
+  assert.equal(ready.lane, null);
+  assert.equal(ready.mutationLease, null);
+  assert.equal(ready.executionReceipt, null);
+  assert.equal(ready.projectionReceipt.mergeAuthority, false);
+
+  const conflictingLease = lease();
+  assert.equal(validateSourceMutationLease(conflictingLease, { nowUtc: NOW }).valid, true);
+  const held = buildAuthoritativeProgrammeProjection({ ...input, mutationLease: conflictingLease });
+  assert.equal(held.status, 'HOLD');
+  assert.ok(held.blockers.includes('mutation-lease-without-lane-projection'));
+  assert.deepEqual(held.mutationLease, conflictingLease);
+  assert.deepEqual(accepted, retained);
+  assert.equal(accepted.externalMergeObservation.goalAcceptanceProven, false);
+  assert.equal(accepted.externalMergeObservation.runtimeMutationAuthority, false);
+  assert.equal(accepted.approval.status, 'pending');
 });
 
 test('critical backlog scheduler admission preserves and rejects a conflicting active goal', () => {

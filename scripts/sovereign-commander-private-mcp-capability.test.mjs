@@ -45,7 +45,9 @@ test('scheduled S4U launcher and post-sync refresh explicitly require same gener
   ]);
   assert.ok(launcher.includes('Case "sovereign-commander-watchdog"'));
   assert.ok(launcher.includes('Quote(targetPath) & " -RequireCapabilityVersion 2026-10-18-island-action-contract-v6"'));
-  const refresh = postSync.slice(postSync.indexOf('refreshSovereignCommander({ afterHead, paths })'), postSync.indexOf('restartGitHubMailbox({ afterHead, paths })'));
+  const start = postSync.indexOf('refreshSovereignCommander('), end = postSync.indexOf('restartGitHubMailbox(');
+  assert.ok(start >= 0 && end > start, 'The fixed adapter must retain both named lifecycle methods');
+  const refresh = postSync.slice(start, end);
   assert.ok(refresh.includes("'-RequireCapabilityVersion', '2026-10-18-island-action-contract-v6'"));
 });
 
