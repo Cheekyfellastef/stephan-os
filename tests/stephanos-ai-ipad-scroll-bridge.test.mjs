@@ -71,7 +71,7 @@ test('long conversations window the UI and keep operator context on canonical ba
 test('Stephanos AI landing-page conversations select only local Ollama even if cloud and mock are healthy', () => {
   // This is a bounded front-door default. A server-wide hard meter-off policy
   // and physical zero-credit blackout drill are separately required.
-  assert.match(js, /provider: 'ollama',[\\s\\S]*?routeMode: 'explicit',[\\s\\S]*?fallbackEnabled: false,[\\s\\S]*?fallbackOrder: \\['ollama'\\]/);
+  assert.match(js, /provider: 'ollama',[\s\S]*?routeMode: 'explicit',[\s\S]*?fallbackEnabled: false,[\s\S]*?fallbackOrder: \['ollama'\]/);
   for (const localAvailable of [true, false]) {
     const route = resolveRoutingPlan(buildRouterConfig({
       provider: 'ollama',
