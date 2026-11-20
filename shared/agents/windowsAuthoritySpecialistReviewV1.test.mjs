@@ -91,7 +91,7 @@ test('router preserves exact governor specialist source pin after metadata fail-
   assert.equal(gitBlobSha(reviewerSource), '5298a049df1ecb22658cd891f69cadf1db2d4f22');
   assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = '5298a049df1ecb22658cd891f69cadf1db2d4f22';"));
   assert.ok(reviewerSource.includes('counts.P0 === 1'));
-  assert.ok(reviewerSource.includes("analysis?.verdict === 'findings'"));
+  assert.ok(reviewerSource.includes("analysis.verdict === 'findings'"));
 });
 
 test('routes exact #2164 two-path Windows escalation through the bounded mailbox rollover profile', () => {
