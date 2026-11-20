@@ -775,7 +775,8 @@ test('specialist entry refuses accessor-backed or inherited root review evidence
   const inherited = Object.create(Object.defineProperty({}, 'analysis', {
     get() { inheritedCalls++; throw new Error('hostile inherited analysis'); },
   }));
-  Object.assign(inherited, input());
+  // Define own wire fields without triggering the inherited accessor's missing setter.
+  Object.defineProperties(inherited, Object.getOwnPropertyDescriptors(input()));
   delete inherited.analysis;
   const rejected = analyzeWindowsAuthoritySpecialistReview(inherited);
   assert.equal(inheritedCalls, 0, 'inherited analysis must never be read');
