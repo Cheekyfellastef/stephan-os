@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mailboxActionsExecutionQuiescent, mailboxActionEvidenceSummary } from './canonicalMailboxRotationActionEvidenceV1.mjs';
 import { CANONICAL_MAILBOX_ISSUE, RETIRED_CANONICAL_MAILBOX_ISSUES } from './canonicalMailboxAuthorityV1.mjs';
+import { historicalMailboxTerminalIds } from './mailboxHistoricalTerminalAttestationV1.mjs';
 
 export const MAILBOX_ROTATION_OPERATION = 'MANAGE_CANONICAL_MAILBOX_ROTATION';
 export const MAILBOX_ROTATION_SCHEMA = 'stephanos.canonical-mailbox-rotation.v1';
@@ -72,10 +73,12 @@ export function auditMailboxRotationComments(comments, { issueNumber, barrierCom
   if (!Array.isArray(comments) || !positive(issueNumber) || !positive(barrierCommentId)) throw new Error('MAILBOX_ROTATION_INVENTORY_INVALID');
   const commands = new Map(), terminal = new Map(), accepted = new Map();
   const observations = [];
+  const historicalObservations = [];
   for (const comment of comments) {
     const parsed = parseMailboxRotationComment(comment, issueNumber);
     if (!parsed) continue;
     observations.push(parsed);
+    historicalObservations.push({ ...parsed, comment });
     if (parsed.type === 'command') {
       const entries = commands.get(parsed.value.requestId) || [];
       entries.push(parsed); commands.set(parsed.value.requestId, entries);
@@ -85,8 +88,9 @@ export function auditMailboxRotationComments(comments, { issueNumber, barrierCom
     } else if (parsed.value.state === 'ACCEPTED') accepted.set(parsed.value.requestId, parsed);
   }
   const terminalIds = [], pendingBeforeBarrier = [], pendingAfterBarrier = [];
+  const historicalTerminalIds = historicalMailboxTerminalIds(historicalObservations);
   for (const [id, entries] of commands) {
-    const completed = (terminal.get(id) || []).some(receipt => entries.some(command =>
+    const completed = historicalTerminalIds.has(id) || (terminal.get(id) || []).some(receipt => entries.some(command =>
       receipt.value.operation === command.value.operation
       && (receipt.value.expectedHead || '') === (command.value.expectedHead || '')));
     if (completed) terminalIds.push(id);
