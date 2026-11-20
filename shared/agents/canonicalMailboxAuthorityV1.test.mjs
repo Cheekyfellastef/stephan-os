@@ -17,9 +17,10 @@ test('one source-selected mailbox is active and every predecessor remains retire
   assert.equal(Number.isSafeInteger(CANONICAL_MAILBOX_ISSUE), true);
   assert.ok(CANONICAL_MAILBOX_ISSUE > CANONICAL_MAILBOX_RECEIPT_PREDECESSOR);
   assert.equal(new Set(RETIRED_CANONICAL_MAILBOX_ISSUES).size, RETIRED_CANONICAL_MAILBOX_ISSUES.length);
-  assert.deepEqual(RETIRED_CANONICAL_MAILBOX_ISSUES.slice(0, 5), [1507, 2158, 2590, 2808, 3149]);
+  assert.deepEqual(RETIRED_CANONICAL_MAILBOX_ISSUES, [1507, 2158, 2590, 2808, 3149, 3258]);
   assert.equal(CANONICAL_MAILBOX_RECEIPT_PREDECESSOR, RETIRED_CANONICAL_MAILBOX_ISSUES.at(-1));
   assert.equal(isCanonicalMailboxIssue(CANONICAL_MAILBOX_ISSUE), true);
+  assert.equal(isCanonicalMailboxIssue(3258), false);
   assert.equal(isCanonicalMailboxIssue(3149), false);
   assert.equal(isCanonicalMailboxIssue(2808), false);
   assert.equal(isCanonicalMailboxIssue(2590), false);
@@ -28,6 +29,7 @@ test('one source-selected mailbox is active and every predecessor remains retire
   assert.equal(isRetiredCanonicalMailboxIssue(1507), true);
   assert.equal(isRetiredCanonicalMailboxIssue(2158), true);
   assert.equal(isRetiredCanonicalMailboxIssue(2590), true);
+  assert.equal(isRetiredCanonicalMailboxIssue(3258), true);
   assert.equal(isRetiredCanonicalMailboxIssue(2808), true);
   for (const issue of RETIRED_CANONICAL_MAILBOX_ISSUES) {
     assert.equal(isCanonicalMailboxIssue(issue), false);
