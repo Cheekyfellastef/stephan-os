@@ -407,3 +407,63 @@ test('stopping inside a frame callback disposes only that room and never rearms 
   assert.equal(h.renderers[0].draws, 1);
   assert.equal(recorder.frames, 1);
 });
+
+test('WebGL context loss makes flat preview fail closed and rebuilds its renderer on restoration', () => {
+  // Execute the original page's preview lifecycle with synthetic GPU state,
+  // without a real microphone, XR grant, remote app input or user conversation.
+  const start = html.indexOf('    let inspectCube = false;');
+  const end = html.indexOf("    window.addEventListener('resize', drawPreview);", start);
+  assert.ok(start >= 0 && end > start, 'original flat preview lifecycle present');
+
+  const gl = { lost: false, isContextLost() { return this.lost; } };
+  const canvas = new EventTarget();
+  Object.assign(canvas, { width: 840, height: 420, clientWidth: 840, clientHeight: 420,
+    getContext() { return gl; } });
+  const status = { textContent: '' };
+  let rendererCreates = 0, draws = 0, resumes = 0;
+  const page = vm.createContext({
+    canvas, previewReady: true, immersiveActive: false, previewRenderer: null,
+    inspectKeyboard: false, window: { devicePixelRatio: 1 },
+    document: { hidden: false, getElementById(id) {
+      assert.equal(id, 'preview-status');
+      return status;
+    } },
+    screen: { render() {} },
+    cubeScene: { getStates: () => [{ position: [0, 1, 0] }, { position: [0, 1, 0] }] },
+    comfort: { getState: () => ({ heightOffset: 0 }) },
+    furniture: {},
+    createHolodeckRoomRenderer() {
+      rendererCreates += 1;
+      return { drawPreview() { draws += 1; } };
+    },
+    playPreview() { resumes += 1; },
+  });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.previewDraw = drawPreview;', page);
+
+  assert.equal(page.previewDraw(), true);
+  assert.equal(rendererCreates, 1);
+  assert.equal(draws, 1);
+
+  gl.lost = true;
+  const loss = new Event('webglcontextlost', { cancelable: true });
+  assert.equal(canvas.dispatchEvent(loss), false, 'request browser restoration');
+  assert.equal(loss.defaultPrevented, true);
+  assert.match(status.textContent, /preview paused: graphics context lost/i);
+  assert.equal(page.previewDraw(), false, 'lost GPU context never counts as visible room');
+  assert.equal(draws, 1, 'do not draw with stale GPU objects');
+
+  gl.lost = false;
+  canvas.dispatchEvent(new Event('webglcontextrestored'));
+  assert.equal(resumes, 1, 'resumes only after genuine restoration');
+  assert.equal(page.previewDraw(), true);
+  assert.equal(rendererCreates, 2, 'old renderer is not reused after context restoration');
+  assert.equal(draws, 2);
+
+  gl.lost = true;
+  canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+  page.immersiveActive = true;
+  gl.lost = false;
+  canvas.dispatchEvent(new Event('webglcontextrestored'));
+  assert.equal(resumes, 1, 'do not restart flat preview over immersive Quest session');
+  assert.equal(page.previewDraw(), false);
+});
