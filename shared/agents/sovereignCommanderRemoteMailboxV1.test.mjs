@@ -5567,4 +5567,3 @@ test('Starfield resource preflight requires a genuinely numeric native child exi
   assert.equal(failed.ok, false);
   assert.equal(failed.status, 2);
 });
-
