@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import { classifyProtectedReadyReviewDraftRecoveryV1 as classify,
   READY_REVIEW_DRAFT_INTERLEAVE_CODE, READY_REVIEW_RECOVERY_STEP,
@@ -24,7 +25,7 @@ function fixture() {
     timeline: [{ id: 35499411849, event: 'ready_for_review', actor: 'github-actions[bot]', createdAtUtc: '2026-11-08T15:39:02.000Z' },
       { id: 35499690108, event: 'convert_to_draft', actor: 'Cheekyfellastef', createdAtUtc: '2026-11-08T15:45:27.000Z' },
       { id: 35500258891, event: 'ready_for_review', actor: 'github-actions[bot]', createdAtUtc: '2026-11-08T15:58:27.000Z' }],
-    ownerComment: { id: 7000000000, author: 'Cheekyfellastef', issueNumber: 3258,
+    ownerComment: { id: 7000000000, author: 'Cheekyfellastef', issueNumber: CANONICAL_MAILBOX_ISSUE,
       operation: 'MARK_PROTECTED_PR_READY', scope: 'review-recovery-only', prNumber: 3451,
       headSha: head, treeSha: tree, baseSha: base, bodySha256: 'c'.repeat(64),
       createdAtUtc: '2026-11-08T15:59:00.000Z', expiresAtUtc: '2026-11-08T16:06:00.000Z' },
@@ -155,7 +156,7 @@ test('GitHub-shaped actual history refuses without new qualified owner evidence'
 test('GitHub-shaped synthetic author record never grants execution even if eligible', () => {
   const f = githubFixture();
   f.ownerComment = { id: 99800001, author: 'Cheekyfellastef',
-    issueNumber: 3258, operation: 'MARK_PROTECTED_PR_READY',
+    issueNumber: CANONICAL_MAILBOX_ISSUE, operation: 'MARK_PROTECTED_PR_READY',
     scope: 'review-recovery-only', prNumber: 3451,
     headSha: f.identity.sourceHead, treeSha: f.identity.sourceTree,
     baseSha: f.identity.baseSha, bodySha256: 'd'.repeat(64),
