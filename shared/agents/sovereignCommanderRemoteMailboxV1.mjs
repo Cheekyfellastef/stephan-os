@@ -89,6 +89,10 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'preservation-converge-pr-branch',
 ]);
 
+export function strictNativeFailureExitStatusV1(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+}
+
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const PROOF_HASH_PATTERN = /^[0-9a-f]{64}$/i;
 const ALLOWED_FIELDS = new Set([
@@ -5039,7 +5043,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED';
     const failureEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
     const failedProcessId = text(failureEnvelope?.command?.plan?.processId);
-    const failedStatus = Number(failureEnvelope?.structuredContent?.status);
+    const failedStatus = strictNativeFailureExitStatusV1(failureEnvelope?.structuredContent?.status);
     const boundedFailureProven = preflight?.ok === false
       && failureEnvelope?.ok === false
       && failureEnvelope?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
@@ -5103,7 +5107,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED';
     const failureEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
     const failedProcessId = text(failureEnvelope?.command?.plan?.processId);
-    const failedStatus = Number(failureEnvelope?.structuredContent?.status);
+    const failedStatus = strictNativeFailureExitStatusV1(failureEnvelope?.structuredContent?.status);
     const boundedFailureProven = acceptance?.ok === false
       && acceptance.finalVerdict === 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED'
       && failureEnvelope?.ok === false
