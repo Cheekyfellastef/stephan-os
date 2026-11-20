@@ -360,6 +360,21 @@ function analyzeStarfieldVrAerCompositeReview(input = {}) {
 }
 
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
+  // A caller-controlled root Proxy can execute traps inside any downstream
+  // specialist before composite evidence classification begins. A revoked
+  // Proxy is equally untrusted; types.isProxy inspects both without traps.
+  if (types.isProxy(input)) {
+    return Object.freeze({
+      schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
+      eligible: false,
+      clean: false,
+      reviewedPaths: Object.freeze([]),
+      findings: Object.freeze([]),
+      proofRefs: Object.freeze([]),
+      ...REVIEW_AUTHORITY_BOUNDARY,
+      finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_PROXY',
+    });
+  }
   // Original #2315 source-only review, never an installed native-signer qualification.
   const mailboxNative = canonicalMailboxNative.analyzeWindowsAuthorityCanonicalMailboxNativeEvidenceReviewV1(input);
   if (mailboxNative.eligible) return mailboxNative;

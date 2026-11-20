@@ -720,3 +720,33 @@ test('composite review refuses contradictory typed counts and verdict before del
     }
   }
 });
+
+test('specialist entry refuses a hostile or revoked root Proxy before child dispatch', () => {
+  assert.equal(analyzeWindowsAuthoritySpecialistReview(input()).eligible, true,
+    'ordinary literal input must preserve its existing route');
+  let traps = 0;
+  const hostile = new Proxy(input(), {
+    get() { traps++; throw new Error('untrusted root get'); },
+    getOwnPropertyDescriptor() { traps++; throw new Error('untrusted root descriptor'); },
+    ownKeys() { traps++; throw new Error('untrusted root keys'); },
+    getPrototypeOf() { traps++; throw new Error('untrusted root prototype'); },
+    has() { traps++; throw new Error('untrusted root has'); },
+  });
+  const rejected = analyzeWindowsAuthoritySpecialistReview(hostile);
+  assert.equal(traps, 0, 'no root Proxy trap may execute before route rejection');
+  assert.equal(rejected.eligible, false);
+  assert.equal(rejected.clean, false);
+  assert.deepEqual(rejected.proofRefs, []);
+  assert.equal(rejected.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_PROXY');
+  for (const key of ['mergeAuthority', 'runtimeMutationAllowed',
+    'providerQualificationAuthority', 'sourceMutationAllowed']) {
+    assert.equal(rejected[key], false, key + ' must remain denied');
+  }
+  const revoked = Proxy.revocable(input(), {});
+  revoked.revoke();
+  const revokedResult = analyzeWindowsAuthoritySpecialistReview(revoked.proxy);
+  assert.equal(revokedResult.eligible, false);
+  assert.equal(revokedResult.clean, false);
+  assert.deepEqual(revokedResult.proofRefs, []);
+  assert.equal(revokedResult.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_PROXY');
+});
