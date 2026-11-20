@@ -1140,3 +1140,48 @@ test('ForceOn source parses with Windows PowerShell AST without executing it', {
   });
   assert.equal(r.status,0,String(r.stderr || r.error || 'PowerShell parse failed'));
 });
+
+test('reviewer P0 source evidence rejects accessor-backed claims before executing getters', () => {
+  const checkedPaths = ['repository', 'sourceHead', 'analysis', 'sources'];
+  const cases = [];
+  for (const field of checkedPaths) cases.push(['input.' + field, (claim, trap) => trap(claim, field)]);
+  for (const field of ['findings', 'counts', 'verdict', 'clean']) {
+    cases.push(['analysis.' + field, (claim, trap) => {
+      if (field === 'clean') claim.analysis.clean = false;
+      trap(claim.analysis, field);
+    }]);
+  }
+  cases.push(['findings[0]', (claim, trap) => trap(claim.analysis.findings, '0')]);
+  for (const field of ['severity', 'code', 'path']) {
+    cases.push(['finding.' + field, (claim, trap) => trap(claim.analysis.findings[0], field)]);
+  }
+  for (const field of ['P0', 'P1', 'P2']) {
+    cases.push(['counts.' + field, (claim, trap) => trap(claim.analysis.counts, field)]);
+  }
+  for (const field of ['schemaVersion', 'repository', 'path', 'ref', 'exists', 'size', 'blobSha', 'content']) {
+    cases.push(['source.' + field, (claim, trap) => trap(claim.sources[0], field)]);
+  }
+  assert.equal(analyzeWindowsAuthorityVrResourceGovernorReviewV1(input()).clean, true,
+    'unchanged frozen source must remain eligible');
+  for (const [name, mutate] of cases) {
+    const claim = input();
+    let getterCalls = 0;
+    mutate(claim, (target, key) => {
+      const value = Object.getOwnPropertyDescriptor(target, key)?.value;
+      Object.defineProperty(target, key, {
+        configurable: true, enumerable: true, get() {
+          getterCalls++;
+          return value;
+        },
+      });
+    });
+    const review = analyzeWindowsAuthorityVrResourceGovernorReviewV1(claim);
+    assert.equal(review.clean, false, name + ' must not produce clean review');
+    assert.deepEqual(review.proofRefs, [], name + ' must have no positive source proof');
+    assert.equal(getterCalls, 0, name + ' accessor must never execute');
+    for (const authority of ['mergeAuthority', 'runtimeMutationAllowed',
+      'providerQualificationAuthority', 'sourceMutationAllowed']) {
+      assert.equal(review[authority], false, name + ' authority: ' + authority);
+    }
+  }
+});

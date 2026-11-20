@@ -42,45 +42,49 @@ function blobSha(source) {
   return createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
 }
 
+
+function ownDataFields(value, fields) {
+  // Review evidence must be literal data, never getter-based executable claims.
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && fields.every((key) => {
+      const field = Object.getOwnPropertyDescriptor(value, key);
+      return field && Object.hasOwn(field, 'value');
+    }));
+}
+
 function exactEscalation(analysis = {}) {
   // Review findings, counts and verdict must be explicit, not inherited P0 claims.
-  if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis)
-    || !['findings', 'counts', 'verdict'].every((key) => Object.hasOwn(analysis, key))) return false;
-  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
-  const counts = analysis?.counts;
-  const finding = findings[0];
+  if (!ownDataFields(analysis, ['findings', 'counts', 'verdict'])
+    || (Object.hasOwn(analysis, 'clean') && !ownDataFields(analysis, ['clean']))) return false;
+  const findings = Array.isArray(analysis.findings) ? analysis.findings : [];
+  const counts = analysis.counts;
+  // An accessor installed at array index zero is not a wire finding.
+  const finding = Object.getOwnPropertyDescriptor(findings, '0')?.value;
   return findings.length === 1
     // A finding's P0 identity must be in its own wire fields, never a prototype.
-    && finding !== null
-    && typeof finding === 'object'
-    && !Array.isArray(finding)
-    && ['severity', 'code', 'path'].every((key) => Object.hasOwn(finding, key))
-    && counts !== null
-    && typeof counts === 'object'
-    && !Array.isArray(counts)
+    && ownDataFields(finding, ['severity', 'code', 'path'])
+    && ownDataFields(counts, ['P0', 'P1', 'P2'])
     && Object.keys(counts).length === 3
-    && ['P0', 'P1', 'P2'].every((key) => Object.hasOwn(counts, key))
     && counts.P0 === 1
     && counts.P1 === 0
     && counts.P2 === 0
-    && (analysis?.clean === undefined || analysis.clean === false)
-    && analysis?.verdict === 'findings'
+    && (!('clean' in analysis)
+      || (ownDataFields(analysis, ['clean'])
+        && (analysis.clean === undefined || analysis.clean === false)))
+    && analysis.verdict === 'findings'
     && findings[0]?.severity === 'P0'
     && findings[0]?.code === 'unsupported-high-risk-surface'
     && findings[0]?.path === PATH;
 }
 
 function exactSource(source, repository, head) {
-  const body = typeof source?.content === 'string' ? source.content : '';
+  // Validate descriptors BEFORE reading content or hashing any supplied bytes.
+  if (!ownDataFields(source,
+    ['schemaVersion', 'repository', 'path', 'ref', 'exists', 'size', 'blobSha', 'content'])) return false;
+  const body = typeof source.content === 'string' ? source.content : '';
   const size = Buffer.byteLength(body, 'utf8');
   return Boolean(
-    source
-    && typeof source === 'object'
-    && !Array.isArray(source)
-    // Provenance and content must be explicit wire evidence, never prototype defaults.
-    && ['schemaVersion', 'repository', 'path', 'ref', 'exists', 'size', 'blobSha', 'content']
-      .every((key) => Object.hasOwn(source, key))
-    && source.schemaVersion === SOURCE_SCHEMA
+    source.schemaVersion === SOURCE_SCHEMA
     && source.repository === repository
     && source.path === PATH
     && source.ref === head
@@ -384,8 +388,9 @@ function reviewGovernor(source, findings) {
 
 export function analyzeWindowsAuthorityVrResourceGovernorReviewV1(input = {}) {
   // Fail closed rather than coercing collection identities into trusted source claims.
-  const repository = typeof input.repository === 'string' ? input.repository : '';
-  const sourceHead = typeof input.sourceHead === 'string' ? input.sourceHead : '';
+  const hasIdentity = ownDataFields(input, ['repository', 'sourceHead', 'analysis']);
+  const repository = hasIdentity && typeof input.repository === 'string' ? input.repository : '';
+  const sourceHead = hasIdentity && typeof input.sourceHead === 'string' ? input.sourceHead : '';
   if (repository !== REPOSITORY || !SHA.test(sourceHead) || !exactEscalation(input.analysis)) {
     return Object.freeze({
       schemaVersion: SCHEMA,
@@ -402,8 +407,8 @@ export function analyzeWindowsAuthorityVrResourceGovernorReviewV1(input = {}) {
     });
   }
 
-  const sources = Array.isArray(input.sources) ? input.sources : [];
-  const source = sources.length === 1 ? sources[0] : null;
+  const sources = ownDataFields(input, ['sources']) && Array.isArray(input.sources) ? input.sources : [];
+  const source = sources.length === 1 ? Object.getOwnPropertyDescriptor(sources, '0')?.value : null;
   const findings = [];
   const proofRefs = [];
   if (!exactSource(source, repository, sourceHead)) {
