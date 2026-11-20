@@ -167,24 +167,27 @@ function singleFindingAnalysis(analysis, finding) {
  * In particular, recomputing two single-P0 subreviews cannot cleanse an
  * upstream contradictory counts/verdict envelope.
  */
+function ownCompositeReviewData(value, keys) {
+  // Accessor-backed claims are executable, not literal review evidence.
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && keys.every((key) => {
+      const slot = Object.getOwnPropertyDescriptor(value, key);
+      return slot && Object.hasOwn(slot, 'value');
+    }));
+}
+
 function exactTwoP0CompositeEnvelope(analysis) {
-  // Composite child reviews must not inherit forged upstream evidence.
-  if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis)
-    || !['findings', 'counts', 'verdict'].every((key) => Object.hasOwn(analysis, key))) return false;
+  // Refuse inherited or getter-backed P0 evidence before reading its values.
+  if (!ownCompositeReviewData(analysis, ['findings', 'counts', 'verdict'])
+    || ('clean' in analysis && !ownCompositeReviewData(analysis, ['clean']))) return false;
   const counts = analysis.counts;
-  return counts !== null
-    && typeof counts === 'object'
-    && !Array.isArray(counts)
-    // Additional count categories are contradictory to an exact two-P0 envelope.
+  return ownCompositeReviewData(counts, ['P0', 'P1', 'P2'])
     && Object.keys(counts).length === 3
-    && ['P0', 'P1', 'P2'].every((key) => Object.hasOwn(counts, key))
     && counts.P0 === 2
     && counts.P1 === 0
     && counts.P2 === 0
-    // A contradictory or wrongly typed upstream "clean" claim is never
-    // repaired into a positive source proof by splitting child reviews.
-    && (analysis?.clean === undefined || analysis.clean === false)
-    && analysis?.verdict === 'findings';
+    && (!('clean' in analysis) || analysis.clean === false)
+    && analysis.verdict === 'findings';
 }
 
 // Do not let one-element JSON arrays masquerade as scalar P0 identities.
@@ -192,10 +195,7 @@ function exactTwoP0CompositeEnvelope(analysis) {
 function exactCompositeFindingScalars(findings) {
   // The candidate matcher tolerates case and whitespace, but child routing
   // requires literal P0 and exact source paths. Refuse normalized aliases.
-  return findings.every((item) => item !== null
-    && typeof item === 'object'
-    && !Array.isArray(item)
-    && ['severity', 'code', 'path'].every((key) => Object.hasOwn(item, key))
+  return findings.every((item) => ownCompositeReviewData(item, ['severity', 'code', 'path'])
     && item.severity === 'P0'
     && item.code === 'unsupported-high-risk-surface'
     && typeof item?.path === 'string'

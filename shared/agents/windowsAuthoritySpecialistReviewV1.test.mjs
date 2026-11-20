@@ -497,6 +497,34 @@ test('composite review refuses contradictory typed counts and verdict before del
       analysis: { ...analysis, ...overrides }, sources,
     });
     assert.equal(review().clean, true, 'baseline confirms registered positive proof paths');
+    // Accessor-backed upstream P0 claims cannot be laundered through child reviews.
+    for (const field of ['counts', 'verdict', 'clean']) {
+      const forged = { ...analysis, clean: false };
+      const original = forged[field];
+      Object.defineProperty(forged, field, {
+        enumerable: true, get() { return original; },
+      });
+      const denied = analyzeWindowsAuthoritySpecialistReview({
+        repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+        analysis: forged, sources,
+      });
+      assert.equal(denied.eligible, true, field + ' accessor must be classified');
+      assert.equal(denied.clean, false, field + ' accessor must fail closed');
+      assert.deepEqual(denied.proofRefs, [], field + ' accessor must not yield proof');
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID');
+    }
+    for (const field of ['P0', 'P1', 'P2']) {
+      const counts = { ...analysis.counts };
+      const original = counts[field];
+      Object.defineProperty(counts, field, {
+        enumerable: true, get() { return original; },
+      });
+      const denied = review({ counts });
+      assert.equal(denied.eligible, true, field + ' count accessor must be classified');
+      assert.equal(denied.clean, false, field + ' count accessor must fail closed');
+      assert.deepEqual(denied.proofRefs, [], field + ' count accessor must not yield proof');
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID');
+    }
     // A valid upstream envelope may not carry prototype-forged P0 finding fields.
     for (const index of [0, 1]) {
       for (const field of ['severity', 'code', 'path']) {
