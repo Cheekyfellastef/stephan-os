@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createMissionWorkerHeartbeatRecord } from './mission-orchestrator-worker-heartbeat.mjs';
+import { createMissionWorkerHeartbeatRecord, resolveCanonicalMissionWorkerPaths, writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
+import { createMissionWorkerActionGrantV1, missionWorkerActionGrantsMatchV1 } from '../shared/agents/missionOrchestratorWorker.mjs';
 import { readMissionWorkerActiveClaim } from './mission-orchestrator-worker-heartbeat-active-claim.mjs';
 import { runSupervisedMissionWorker } from './mission-orchestrator-worker-supervised.mjs';
 
@@ -93,6 +94,222 @@ function workerEnv() {
     STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS: '30000',
   };
 }
+
+function promiseGate() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function observeCarriedSourceClaim(priorFailure, mode = 'held-after-pickup') {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'carried-source-claim-'));
+  const env = { ...workerEnv(), USERPROFILE: home };
+  const paths = resolveCanonicalMissionWorkerPaths({ env });
+  const queueRoot = path.join(home, 'worker-queue');
+  Object.assign(env, {
+    STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: paths.repositoryRoot,
+    STEPHANOS_MISSION_WORKER_TASK_NAME: 'Stephanos Mission Orchestrator Worker',
+    STEPHANOS_MISSION_WORKER_LAUNCH_ID: LAUNCH_ID,
+    STEPHANOS_MISSION_WORKER_QUEUE_DIR: queueRoot,
+  });
+  const receiptPath = path.join(paths.workspaceRoot, 'status', `mission-orchestrator-worker-launch-identity-${LAUNCH_ID}.json`);
+  env.STEPHANOS_MISSION_WORKER_LAUNCH_RECEIPT_PATH = receiptPath;
+  const actionGrant = { ...createMissionWorkerActionGrantV1(grant({
+    grantId: 'grant-current-source', controllerId: 'durable-flywheel-controller',
+    sourceRevision: HEAD, missionRevision: 1, currentPhase: 'AGENT_IMPLEMENTATION',
+    adapter: 'foundry-forge', providerRouteIntent: 'AUTO', capacityRoute: 'FOUNDRY_FORGE',
+    capacityReceiptId: 'capacity-current-source', capacityProofRefs: ['proof/capacity.json'],
+    workerId: 'stephanos-forge-lifeboat-local', laneId: 'lane-current-source',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 2961, prNumber: null,
+    branch: 'openclaw/source-current', headSha: null, mergeAuthority: false, leaseSeizureAllowed: false,
+  })) };
+  assert.equal(missionWorkerActionGrantsMatchV1(actionGrant, actionGrant), true);
+  const priorGrant = { ...actionGrant, actionId: 'prior-source-action', missionRevision: 0 };
+  const originalItem = queueItem(actionGrant, { actionGrant: structuredClone(actionGrant), payload: {
+    ...queueItem(actionGrant).payload, allowedFiles: ['shared/agents/one.mjs'],
+    requiredTests: ['node --test shared/agents/one.test.mjs'], requiredEvidence: ['source tests'],
+  } });
+  const originalBytes = JSON.stringify(originalItem);
+  const processingPath = path.join(queueRoot, 'foundry-forge', 'processing', `${actionGrant.actionId}.json`);
+  const firstWriteEntered = promiseGate(), releaseFirstWrite = promiseGate(), timerWriteFinished = promiseGate();
+  const changedGrantWriteFinished = promiseGate();
+  const allowClaimRead = promiseGate(), originalClaimRead = promiseGate();
+  const queuedLiteralMode = ['mutated-before-queued-write', 'settled-before-queued-write'].includes(mode);
+  const records = [], histories = [], writeErrors = [], requestedVerdicts = [];
+  let cycle = 0, sleeps = 0, activeWrites = 0, timer, joinAllowed, changedGrantJoinAllowed, claimObserved = false;
+  const heldResult = (selected, reason) => ({ processed: {
+    schemaVersion: 'stephanos.provider-neutral-source-builder.v1', processed: true, success: false,
+    missionId: selected.missionId, actionId: selected.actionId, adapter: selected.adapter,
+    finalVerdict: 'NATIVE_SOURCE_FINALIZATION_HELD', executionCustodyReleased: false,
+    sourceState: 'UNKNOWN', reason,
+  } });
+  try {
+    await mkdir(path.dirname(receiptPath), { recursive: true });
+    await mkdir(path.dirname(processingPath), { recursive: true });
+    await writeFile(receiptPath, JSON.stringify({
+      schemaVersion: 'stephanos.mission-worker-launch-identity.v1', launchIdentityId: LAUNCH_ID,
+      launchKind: 'ordinary', restartInvocationId: '', taskName: env.STEPHANOS_MISSION_WORKER_TASK_NAME,
+      repositoryRoot: paths.repositoryRoot, branch: 'main', headSha: HEAD, workerPid: 1291,
+      workerStartedAtUtc: WORKER_STARTED_AT,
+      canonicalNode: 'C:\\Program Files\\nodejs\\node.exe',
+      canonicalWorkerScript: path.resolve(paths.repositoryRoot, 'scripts', 'mission-orchestrator-worker-supervised.mjs'),
+      createdAtUtc: WORKER_STARTED_AT,
+    }));
+    await assert.rejects(runSupervisedMissionWorker({
+      argv: [], env, stdout: sink(), stderr: sink(),
+      inspectRepositoryIdentity: async () => canonicalIdentity(),
+      bootstrapMailbox: async () => ({ ok: true }), listMissionState: async () => [],
+      readMissionState: async () => null, loadCapacityRoutingInput: async () => ({}),
+      runCompletionGuardianCycle: async () => ({ ok: true }),
+      appendMissionStateEvent: () => assert.fail('claim observation attempted mission mutation'),
+      runControllerCycle: async (_input, options) => {
+        cycle++;
+        histories.push(structuredClone(options.controllerLivenessEvidence.surfaceFailures));
+        if (cycle === 1 && priorFailure === 'NO_WORKER_GRANT') return {
+          status: 'ACTIVE', allowWorkerTick: false,
+          authoritativeProjection: { status: 'ACTIVE', lane: { active: true } },
+        };
+        if (cycle <= 2) return { ...controllerFor(cycle === 1 ? priorGrant : actionGrant),
+          status: 'ACTIVE', authoritativeProjection: { status: 'ACTIVE' } };
+        return { status: 'IDLE', allowWorkerTick: false, authoritativeProjection: { status: 'READY' } };
+      },
+      readActiveClaim: async options => {
+        if (queuedLiteralMode) await allowClaimRead.promise;
+        const observed = await readMissionWorkerActiveClaim(options);
+        if (observed) originalClaimRead.resolve();
+        if (observed && mode === 'mutated-during-claim-read' && !claimObserved) {
+          claimObserved = true;
+          actionGrant.sourceRevision = 'c'.repeat(40);
+        }
+        return observed;
+      },
+      writeHeartbeat: async input => {
+        requestedVerdicts.push({ cycle, verdict: input.lastTickVerdict });
+        const currentAction = input.activeActionGrant?.actionId === actionGrant.actionId;
+        const index = currentAction ? ++activeWrites : 0;
+        if (index === 1) {
+          firstWriteEntered.resolve();
+          await releaseFirstWrite.promise;
+          if (mode === 'write-failure') throw new Error('fixture atomic write failed');
+        }
+        let publication;
+        try { publication = await writeMissionWorkerHeartbeat({ ...input, pid: 1291 }); }
+        catch (error) {
+          writeErrors.push(error.message);
+          if (index === 2) timerWriteFinished.resolve({ error: error.message });
+          throw error;
+        }
+        records.push({ cycle, record: publication.record });
+        if (index === 2) timerWriteFinished.resolve(publication.record);
+        if (index === 3) changedGrantWriteFinished.resolve(publication.record);
+        return publication;
+      },
+      runTick: async options => {
+        if (options.actionGrant.actionId === priorGrant.actionId) return heldResult(priorGrant, 'PRIOR_SOURCE_HELD');
+        await writeFile(processingPath, originalBytes);
+        if (queuedLiteralMode) {
+          // An earlier timer write holds the serialized queue. Let the watcher
+          // observe the real claim and enqueue its literal behind that IO.
+          timer();
+          await firstWriteEntered.promise;
+          allowClaimRead.resolve();
+          const joined = options.awaitActiveClaimHeartbeat(structuredClone(actionGrant));
+          await originalClaimRead.promise;
+          await new Promise(resolve => setImmediate(resolve));
+          if (mode === 'mutated-before-queued-write') {
+            actionGrant.sourceRevision = 'c'.repeat(40);
+            releaseFirstWrite.resolve();
+            joinAllowed = await joined;
+          } else {
+            void joined.then(value => { joinAllowed = value; });
+            // Return the held tick first, so its finally invalidates the grant
+            // before the earlier IO releases the queued literal publication.
+            setImmediate(() => releaseFirstWrite.resolve());
+          }
+          return heldResult(actionGrant, 'CURRENT_SOURCE_HELD');
+        }
+        const joined = options.awaitActiveClaimHeartbeat(structuredClone(actionGrant));
+        if (mode !== 'mutated-during-claim-read') {
+          const entered = await Promise.race([firstWriteEntered.promise.then(() => true), joined.then(() => false)]);
+          assert.equal(entered, true, 'the real processing claim must reach atomic publication before the join fails');
+          // Force a timer to enqueue while the first atomic RUNNING publication
+          // is still awaited. It must resolve its verdict after that write.
+          timer();
+          releaseFirstWrite.resolve();
+        }
+        joinAllowed = await joined;
+        if (mode !== 'mutated-during-claim-read') {
+          const periodic = await timerWriteFinished.promise;
+          assert.equal(periodic.lastTickVerdict, mode === 'write-failure'
+            ? `CONTROLLER_EXECUTION_DEFECT_${priorFailure}` : 'MISSION_WORKER_TICK_RUNNING');
+          if (joinAllowed) {
+            const onDisk = JSON.parse(await readFile(paths.heartbeatPath, 'utf8'));
+            assert.equal(onDisk.lastTickVerdict, 'MISSION_WORKER_TICK_RUNNING');
+            assert.equal(onDisk.activeTaskId, actionGrant.actionId);
+          }
+          if (mode === 'mutated-after-publication') {
+            actionGrant.sourceRevision = 'c'.repeat(40);
+            timer();
+            const changed = await changedGrantWriteFinished.promise;
+            assert.equal(changed.lastTickVerdict, `CONTROLLER_EXECUTION_DEFECT_${priorFailure}`);
+            assert.equal(Object.hasOwn(changed, 'activeTaskId'), false);
+            changedGrantJoinAllowed = await options.awaitActiveClaimHeartbeat(structuredClone(actionGrant));
+          }
+        }
+        // This fixture stops at the real publication join; it never launches a
+        // native process or manufactures a successful source outcome.
+        return heldResult(actionGrant, 'CURRENT_SOURCE_HELD');
+      },
+      activeClaimProbeIntervalMs: 1,
+      setIntervalFn: callback => { timer = callback; return 17; }, clearIntervalFn: () => {},
+      sleep: async () => { if (++sleeps === 3) throw new Error('carried-claim-observation-complete'); },
+      now: () => '2026-09-04T16:00:01.000Z',
+    }), /carried-claim-observation-complete/);
+    assert.equal(await readFile(processingPath, 'utf8'), originalBytes, 'the original processing claim remains untouched');
+    return { records, histories, joinAllowed, changedGrantJoinAllowed, writeErrors, requestedVerdicts };
+  } finally { await rm(home, { recursive: true, force: true }); }
+}
+
+for (const priorFailure of ['NO_WORKER_GRANT', 'NO_MATERIAL_PROGRESS']) {
+  test('current source claim publication supersedes carried ' + priorFailure + ' without clearing failed outcomes', async () => {
+    const observed = await observeCarriedSourceClaim(priorFailure);
+    assert.equal(observed.joinAllowed, true, JSON.stringify(observed.writeErrors));
+    assert.equal(observed.records.some(({ record }) => record.lastTickVerdict === `CONTROLLER_EXECUTION_DEFECT_${priorFailure}`), true);
+    const running = observed.records.filter(({ cycle, record }) => cycle === 2 && record.lastTickVerdict === 'MISSION_WORKER_TICK_RUNNING');
+    assert.equal(running.length, 2, 'the actual claim publication and queued timer retain current execution');
+    assert.equal(running.every(({ record }) => record.executionPhase === 'processing:foundry-forge' && /^claim:[a-f0-9]{64}$/.test(record.activeReceiptId)), true);
+    assert.equal(observed.records.at(-1).record.lastTickVerdict, 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS');
+    assert.deepEqual(observed.histories[2].slice(0, observed.histories[1].length), observed.histories[1], 'pickup does not erase historical surface failures');
+    assert.equal(observed.histories[2].at(-1).failureClass, 'CURRENT_SOURCE_HELD');
+  });
+}
+
+for (const mode of ['write-failure', 'mutated-during-claim-read']) {
+  test('carried failure cannot authorize source pickup after ' + mode, async () => {
+    const observed = await observeCarriedSourceClaim('NO_WORKER_GRANT', mode);
+    assert.equal(observed.joinAllowed, false);
+    assert.equal(observed.records.some(({ cycle, record }) => cycle === 2 && record.lastTickVerdict === 'MISSION_WORKER_TICK_RUNNING'), false);
+    assert.equal(observed.records.at(-1).record.lastTickVerdict, 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS');
+  });
+}
+
+for (const mode of ['mutated-before-queued-write', 'settled-before-queued-write']) {
+  test('queued source RUNNING publication is fenced when ' + mode, async () => {
+    const observed = await observeCarriedSourceClaim('NO_WORKER_GRANT', mode);
+    assert.equal(observed.joinAllowed, false);
+    assert.equal(observed.requestedVerdicts.some(({ cycle, verdict }) => cycle === 2 && verdict === 'MISSION_WORKER_TICK_RUNNING'), false,
+      'an invalidated queued publication never reaches the actual writer');
+    assert.equal(observed.records.some(({ cycle, record }) => cycle === 2 && record.lastTickVerdict === 'MISSION_WORKER_TICK_RUNNING'), false);
+  });
+}
+
+test('a proven current claim cannot keep periodic RUNNING or resume permission after its grant mutates', async () => {
+  const observed = await observeCarriedSourceClaim('NO_MATERIAL_PROGRESS', 'mutated-after-publication');
+  assert.equal(observed.joinAllowed, true, 'the unchanged original claim was initially proven');
+  assert.equal(observed.changedGrantJoinAllowed, false);
+  assert.equal(observed.records.at(-1).record.lastTickVerdict, 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS');
+  assert.deepEqual(observed.histories[2].slice(0, observed.histories[1].length), observed.histories[1]);
+});
 
 test('active claim requires the exact granted action in the exact processing queue', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'mission-worker-active-claim-'));
@@ -324,7 +541,7 @@ test('local source processing heartbeat preserves exact canonical task class and
 });
 
 // Append these tests to the existing heartbeat-active-claim test module.
-for (const mode of ['delayed-success','write-failure','wrong-action','wrong-claim','no-active-record','claim-timeout']) {
+for (const mode of ['delayed-success','write-failure','wrong-action','wrong-claim','wrong-phase','wrong-verdict','no-active-record','missing-receipt','missing-phase','claim-timeout']) {
   test('source launch joins actual active-claim publication: '+mode, async () => {
     const actionGrant=grant({adapter:'foundry-forge',capacityRoute:'FOUNDRY_FORGE',workerId:'stephanos-forge-lifeboat-local'});
     const activeClaim={activeTaskId:actionGrant.actionId,activeReceiptId:'claim:'+'c'.repeat(64),executionPhase:'processing:foundry-forge'};
@@ -354,7 +571,11 @@ for (const mode of ['delayed-success','write-failure','wrong-action','wrong-clai
         const record={...activeClaim,lastTickVerdict:'MISSION_WORKER_TICK_RUNNING'};
         if(mode==='wrong-action')record.activeTaskId='foreign-action';
         if(mode==='wrong-claim')record.activeReceiptId='claim:'+'d'.repeat(64);
+        if(mode==='wrong-phase')record.executionPhase='processing:foreign-adapter';
+        if(mode==='wrong-verdict')record.lastTickVerdict='MISSION_WORKER_TICK_PASS';
         if(mode==='no-active-record')delete record.activeTaskId;
+        if(mode==='missing-receipt')delete record.activeReceiptId;
+        if(mode==='missing-phase')delete record.executionPhase;
         return {ok:true,record};
       },
       activeClaimProbeIntervalMs:1,setIntervalFn:()=>7,clearIntervalFn:()=>{},

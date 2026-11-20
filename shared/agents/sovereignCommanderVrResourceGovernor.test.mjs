@@ -195,7 +195,9 @@ test('Qwen canary never emits a global unload without authenticated model owners
     governorVersion: 3, phase: 'NORMAL', updatedAtUtc: new Date().toISOString(),
     active: false, flatGameActive: false, airLinkActive: false,
     realAirLinkActive: false, virtualAirLinkTestActive: false,
-    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true,
+    prepareLeaseActive: false, nativeProbeCustodyHeld: false,
+    dependencyObservationKnown: true, evictionHealthy: true,
+    localModelAllowed: true, heavyModelAllowed: true,
   });
   for (const mode of ['stale', 'tags503', 'modelMissing', 'transportError', 'chat503', 'success']) {
     const calls = [], outputs = [];
@@ -241,7 +243,9 @@ test('Qwen 27B canary cancels on in-flight VR transition or stale governor and n
     governorVersion: 3, phase: 'NORMAL', updatedAtUtc: new Date().toISOString(),
     active: false, flatGameActive: false, airLinkActive: false,
     realAirLinkActive: false, virtualAirLinkTestActive: false,
-    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true,
+    prepareLeaseActive: false, nativeProbeCustodyHeld: false,
+    dependencyObservationKnown: true, evictionHealthy: true,
+    localModelAllowed: true, heavyModelAllowed: true,
   });
   for (const mode of ['steady', 'during-flight', 'response-parse', 'stale-flight', 'transport-rejection']) {
     let state = safe(), checkPoll, pollCleared = 0, aborted = false;
@@ -301,6 +305,28 @@ test('Qwen 27B canary cancels on in-flight VR transition or stale governor and n
   }
 });
 
+test('Qwen canary enforces the shared governor effective heavy grant and native-custody denial', () => {
+  const state = { schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+    phase: 'NORMAL', updatedAtUtc: new Date().toISOString(),
+    active: false, flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false, prepareLeaseActive: false,
+    localModelAllowed: true, heavyModelAllowed: true, nativeProbeCustodyHeld: false,
+    dependencyObservationKnown: true, evictionHealthy: true };
+  assert.equal(classifyQwen35CanaryGovernorV1(state).blocked, false);
+  for (const override of [
+    { nativeProbeCustodyHeld: true },
+    { dependencyObservationKnown: false },
+    { evictionHealthy: false },
+  ]) {
+    const check = classifyQwen35CanaryGovernorV1({ ...state, ...override });
+    assert.equal(check.blocked, true);
+    assert.equal(check.blocker, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR');
+    assert.equal(check.modelStarted, false);
+    assert.equal(check.sourceMutationAllowed, false);
+    assert.equal(check.pcRestartAllowed, false);
+  }
+});
+
 test('Qwen 27B canary admission is fail closed on every missing, corrupt or denied VR record', () => {
   const nowMs = Date.parse('2026-11-11T05:20:00.000Z');
   const allowed = { schemaVersion: 'stephanos.vr-resource-governor.v1',
@@ -308,7 +334,9 @@ test('Qwen 27B canary admission is fail closed on every missing, corrupt or deni
     updatedAtUtc: new Date(nowMs).toISOString(),
     active: false, flatGameActive: false, airLinkActive: false,
     realAirLinkActive: false, virtualAirLinkTestActive: false,
-    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true };
+    prepareLeaseActive: false, nativeProbeCustodyHeld: false,
+    dependencyObservationKnown: true, evictionHealthy: true,
+    localModelAllowed: true, heavyModelAllowed: true };
   const denied = [
     [null, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
     [{}, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
@@ -316,6 +344,9 @@ test('Qwen 27B canary admission is fail closed on every missing, corrupt or deni
     [{ ...allowed, schemaVersion: 'other' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
     [{ ...allowed, active: 'false' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
     [{ ...allowed, heavyModelAllowed: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, nativeProbeCustodyHeld: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, dependencyObservationKnown: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
+    [{ ...allowed, evictionHealthy: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
     [{ ...allowed, localModelAllowed: undefined }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
     [{ ...allowed, updatedAtUtc: 'bad-date' }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
     [{ ...allowed, updatedAtUtc: new Date(nowMs - 15_001).toISOString() }, 'QWEN35_CANARY_GOVERNOR_UNPROVEN'],
@@ -332,6 +363,9 @@ test('Qwen 27B canary admission is fail closed on every missing, corrupt or deni
     [{ ...allowed, prepareLeaseActive: true }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
     [{ ...allowed, active: true, heavyModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
     [{ ...allowed, active: true, localModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, nativeProbeCustodyHeld: true }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, dependencyObservationKnown: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
+    [{ ...allowed, evictionHealthy: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
     [{ ...allowed, heavyModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
     [{ ...allowed, localModelAllowed: false }, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR'],
   ];
@@ -369,7 +403,9 @@ test('Qwen 27B canary never opens a gaming interval the protected Core blocks', 
     phase: 'NORMAL', updatedAtUtc: new Date(nowMs).toISOString(),
     active: false, flatGameActive: false, airLinkActive: false,
     realAirLinkActive: false, virtualAirLinkTestActive: false,
-    prepareLeaseActive: false, localModelAllowed: true, heavyModelAllowed: true,
+    prepareLeaseActive: false, nativeProbeCustodyHeld: false,
+    dependencyObservationKnown: true, evictionHealthy: true,
+    localModelAllowed: true, heavyModelAllowed: true,
   };
   const cases = [
     ['fresh and clear', normal],

@@ -1,5 +1,6 @@
 import { CONTROL_TOWER_BUILD_OPERATION, CONTROL_TOWER_OBSERVE_OPERATION,
-  CONTROL_TOWER_OPERATIONS_V1 } from './controlTowerBuildRequestV1.mjs';
+  CONTROL_TOWER_OPERATIONS_V1, parseControlTowerRequestIdV1,
+  controlTowerRequestIdentityValidV1 } from './controlTowerBuildRequestV1.mjs';
 import { projectSovereignControlSystemStatusV1,
   SOVEREIGN_CONTROL_SYSTEM_STATUS_SCHEMA_V1,
   sovereignControlSystemDiagnosticCodeV1 } from './sovereignControlSystemStatusV1.mjs';
@@ -8,7 +9,6 @@ import { projectSovereignControlSystemStatusV1,
 // input to request authentication, replay admission, worker grants or custody.
 export const CONTROL_TOWER_REQUEST_OBSERVATION_SCHEMA_V1 = 'stephanos.control-tower-request-observation.v1';
 export const CONTROL_TOWER_REQUEST_OBSERVATION_MAX_BYTES_V1 = 3500;
-const REQUEST = /^control-tower-build-([1-9][0-9]{0,15})-1$/;
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const STATES = new Set(['RESERVED', 'UNKNOWN', 'WAKE_COMPLETED', 'WAKE_BLOCKED',
@@ -42,6 +42,7 @@ const BLOCKERS = new Set([
   'CONTROL_TOWER_BUILD_RECEIPT_UNPROVEN', 'CONTROL_TOWER_REQUEST_OUTCOME_UNPROVEN',
   'CONTROL_TOWER_REQUEST_OPERATION_FILTER_INVALID', 'CONTROL_TOWER_RECORDED_BUILD_DETAIL_MISSING',
   'CONTROL_TOWER_RELAY_CYCLE_FAILED',
+  'CONTROL_TOWER_OWNER_COMMENT_READBACK_INVALID',
   'SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED', 'SOVEREIGN_MAINTENANCE_OWNER_TOKEN_UNAVAILABLE',
   'SOVEREIGN_MAINTENANCE_OWNER_INITIALIZE_FAILED', 'SOVEREIGN_MAINTENANCE_OWNER_TOOL_UNAVAILABLE',
   'SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID', 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE',
@@ -86,8 +87,9 @@ export function projectControlTowerRequestObservationV1(value, {
 } = {}) {
   if (!object(value) || value.schemaVersion !== CONTROL_TOWER_REQUEST_OBSERVATION_SCHEMA_V1
     || !Number.isFinite(nowMs) || !positive(value.runId) || value.runAttempt !== 1
-    || value.requestId !== 'control-tower-build-' + value.runId + '-1'
-    || !matches(REQUEST, value.requestId) || (requestId && requestId !== value.requestId)
+    || !controlTowerRequestIdentityValidV1(value) || (requestId && requestId !== value.requestId)
+    || (value.ownerCommentId !== undefined && (!positive(value.ownerCommentIssueNumber) || !matches(HASH, value.ownerCommentSha256)))
+    || (value.ownerCommentId === undefined && (value.ownerCommentIssueNumber !== undefined || value.ownerCommentSha256 !== undefined))
     || !CONTROL_TOWER_OPERATIONS_V1.includes(value.operation) || !matches(SHA, value.sourceHead)
     || !positive(value.artifactId) || !matches(HASH, value.artifactSha256)
     || !matches(HASH, value.commandDigest) || (commandDigest && commandDigest !== value.commandDigest)
@@ -127,6 +129,8 @@ export function projectControlTowerRequestObservationV1(value, {
   const projected = Object.freeze({
     schemaVersion: CONTROL_TOWER_REQUEST_OBSERVATION_SCHEMA_V1,
     requestId: value.requestId, runId: value.runId, runAttempt: 1, operation: value.operation,
+    ...(value.ownerCommentId !== undefined ? { ownerCommentId: value.ownerCommentId,
+      ownerCommentIssueNumber: value.ownerCommentIssueNumber, ownerCommentSha256: value.ownerCommentSha256 } : {}),
     sourceHead: value.sourceHead, artifactId: value.artifactId, artifactSha256: value.artifactSha256,
     commandDigest: value.commandDigest, createdAtUtc: value.createdAtUtc, expiresAtUtc: value.expiresAtUtc,
     acceptedAtUtc: value.acceptedAtUtc, observedAtUtc: value.observedAtUtc,
@@ -156,8 +160,8 @@ export function createControlTowerRequestObservationV1(request, {
 // poll's time/head. Legacy entries retain phase truth but cannot invent detail.
 export function projectControlTowerLedgerObservationV1(record, { nowMs = Date.now() } = {}) {
   if (!object(record) || typeof record.requestId !== 'string') return null;
-  const matched = REQUEST.exec(record.requestId);
-  if (!matched || !Number.isSafeInteger(Number(matched[1])) || record.issueNumber !== 2315
+  const identity = parseControlTowerRequestIdV1(record.requestId);
+  if (!identity || record.issueNumber !== 2315
     || !['RESERVED', 'TERMINAL', 'RETIRED'].includes(record.phase)) return null;
   const observation = projectControlTowerRequestObservationV1(record.controlTowerObservation,
     { requestId: record.requestId, commandDigest: record.commandDigest, nowMs });
@@ -169,14 +173,19 @@ export function projectControlTowerLedgerObservationV1(record, { nowMs = Date.no
       && (observation.state !== 'WAKE_COMPLETED' || record.terminalProofHash === observation.wakeProofHash));
   if (consistent) return Object.freeze({ ...observation, ledgerPhase: record.phase,
     terminalState: record.terminalState || '', detailState: 'OBSERVED' });
+  // This ingress has always required a bound observation in the original
+  // atomic reservation. Missing comment metadata cannot masquerade as a legacy
+  // dispatch terminal and release an unresolved build.
+  const legacy = record.controlTowerObservation == null && !identity.ownerCommentId;
   return Object.freeze({ schemaVersion: CONTROL_TOWER_REQUEST_OBSERVATION_SCHEMA_V1,
-    requestId: record.requestId, runId: Number(matched[1]), runAttempt: 1,
+    requestId: record.requestId, runId: identity.runId, runAttempt: 1,
+    ...(identity.ownerCommentId ? { ownerCommentId: identity.ownerCommentId } : {}),
     operation: '', sourceHead: '', acceptedAtUtc: '', observedAtUtc: '',
     state: record.phase === 'RESERVED' ? 'RESERVED' : 'UNKNOWN',
-    blocker: record.controlTowerObservation == null ? 'CONTROL_TOWER_LEGACY_DETAIL_UNAVAILABLE' : 'CONTROL_TOWER_STORED_OBSERVATION_INVALID',
+    blocker: legacy ? 'CONTROL_TOWER_LEGACY_DETAIL_UNAVAILABLE' : 'CONTROL_TOWER_STORED_OBSERVATION_INVALID',
     ledgerPhase: record.phase,
     terminalState: record.phase === 'TERMINAL' && ['DONE', 'BLOCKED'].includes(record.terminalState) ? record.terminalState : '',
-    detailState: record.controlTowerObservation == null ? 'LEGACY_DETAIL_UNAVAILABLE' : 'INVALID', ...noAuthority });
+    detailState: legacy ? 'LEGACY_DETAIL_UNAVAILABLE' : 'INVALID', ...noAuthority });
 }
 
 export function projectControlTowerLatestRequestObservationV1(value, { expectedHead = '', nowMs = Date.now() } = {}) {
@@ -209,10 +218,11 @@ export function projectControlTowerLatestRequestObservationV1(value, { expectedH
 // a history gap, never proof of terminal release. It supplies no ledger phase,
 // source, acceptance time, or execution result.
 export function controlTowerMissingLedgerObservationV1(requestId) {
-  const matched = typeof requestId === 'string' ? REQUEST.exec(requestId) : null;
-  if (!matched || !Number.isSafeInteger(Number(matched[1]))) return null;
+  const identity = parseControlTowerRequestIdV1(requestId);
+  if (!identity) return null;
   return Object.freeze({ schemaVersion: CONTROL_TOWER_REQUEST_OBSERVATION_SCHEMA_V1,
-    requestId, runId: Number(matched[1]), runAttempt: 1, operation: '', sourceHead: '',
+    requestId, runId: identity.runId, runAttempt: 1, operation: '', sourceHead: '',
+    ...(identity.ownerCommentId ? { ownerCommentId: identity.ownerCommentId } : {}),
     acceptedAtUtc: '', observedAtUtc: '', state: 'UNKNOWN', ledgerPhase: 'UNPROVEN',
     terminalState: '', detailState: 'MISSING', blocker: 'CONTROL_TOWER_RECORDED_BUILD_DETAIL_MISSING', ...noAuthority });
 }

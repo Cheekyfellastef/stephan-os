@@ -1,5 +1,6 @@
 import { applyHolodeckLocomotionToView } from './holodeck-locomotion-v1.mjs';
 import { HOLODECK_ROOM, HOLODECK_TABLE, HOLODECK_CUBE, HOLODECK_CUBES, HOLODECK_OBSTACLES, HOLODECK_DISPLAY, HOLODECK_CONSOLE } from './holodeck-layout-v1.mjs';
+import { HOLODECK_TABLE_SURFACE, HOLODECK_TABLE_BASE, HOLODECK_CONSOLE_SUPPORTS, HOLODECK_CONSOLE_TRAY } from './holodeck-layout-v1.mjs';
 import { createHolodeckDisplayRenderer } from './holodeck-display-renderer-v1.mjs';
 import { rotate3, add3, scale3, normalize3 } from './holodeck-cube-physics-v1.mjs';
 import { consolePointToWorld, consoleDirectionToWorld, HOLODECK_KEYBOARD_DIALS } from './holodeck-comfort-v1.mjs';
@@ -62,7 +63,7 @@ function keyboardDial(g,dial) {
   // keyboardRanges, so it follows the exact same 0–90 degree hinge rotation.
   const side=x<0?-1:1;
   const trayEdge=side*(HOLODECK_CONSOLE.halfWidth-0.06);
-  const fromX=trayEdge-side*0.035; // overlap the tray, not just touch its edge
+  const fromX=trayEdge-side*HOLODECK_CONSOLE_TRAY.mountOverlap;
   const toX=x+side*0.02; // overlap the dial's axle
   const armY=y-0.032,armZ=z-0.028;
   box(g,[(fromX+toX)/2,armY,armZ],[Math.abs(toX-fromX),0.064,0.10],CERAMIC);
@@ -133,9 +134,10 @@ export function createHolodeckRoomGeometry({keyboardTilt=0}={}) {
   const t = HOLODECK_TABLE, cz=t.center[2];
   slab(g,{w:t.halfWidth,d:t.halfDepth,bevel:t.bevel,bottom:t.bottom,top:0.785,color:CERAMIC});
   slab(g,{w:t.halfWidth,d:t.halfDepth,bevel:t.bevel,bottom:0.803,top:t.top,color:CERAMIC});
-  slab(g,{w:1.18,d:0.65,bevel:0.20,bottom:t.top,top:t.top+0.008,color:DARK});
+  const surface=HOLODECK_TABLE_SURFACE,base=HOLODECK_TABLE_BASE;
+  slab(g,{w:surface.halfWidth,d:surface.halfDepth,bevel:surface.bevel,bottom:surface.bottom,top:surface.top,color:DARK});
   slab(g,{w:t.halfWidth,d:t.halfDepth,bevel:t.bevel,bottom:0.785,top:0.803,color:CYAN,emissive:1});
-  slab(g,{w:0.68,d:0.44,bevel:0.20,bottom:0.035,top:0.11,color:METAL});
+  slab(g,{w:base.halfWidth,d:base.halfDepth,bevel:base.bevel,bottom:base.bottom,top:0.11,color:METAL});
   slab(g,{w:0.57,d:0.36,bevel:0.17,bottom:0.11,top:0.13,color:CYAN,emissive:1});
   for (const side of [-1,1]) {
     const low = contour(side*0.24,cz,0.12,0.24,0.06,0.13);
@@ -180,9 +182,9 @@ export function createHolodeckRoomGeometry({keyboardTilt=0}={}) {
     bottom:c.top-0.02,top:c.top+0.001,color:DARK});
   HOLODECK_KEYBOARD_DIALS.forEach(dial=>keyboardDial(g,dial));
   for(const [key,range] of Object.entries(keyboardRanges))range.end=g[key].length;
+  for(const support of HOLODECK_CONSOLE_SUPPORTS)
+    box(g,support.center,support.size,support.material==='metal'?METAL:CERAMIC);
   for(const side of [-1,1]) {
-    box(g,[side*1.3,0.435,c.center[2]],[0.18,0.77,0.76],METAL);
-    box(g,[side*1.3,0.97,-5.72],[0.18,0.26,0.56],CERAMIC);
     line(g,[side*1.3,0.08,-4.734],[side*1.3,0.82,-4.734],CYAN);
   }
   endFurniture('keyboard');

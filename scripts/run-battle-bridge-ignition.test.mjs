@@ -10,6 +10,7 @@ import {
   ensureBackend8787ConvergedBeforeSupervisor,
   ensureLiveUiConvergedBeforeSupervisor,
   main,
+  parseBattleBridgeIgnitionArgs,
   probeCanonicalBackendHealth,
   runSupervisorHousekeepPreservingLiveDist,
   runSupervisorHousekeepPreservingLiveRuntime,
@@ -55,6 +56,48 @@ function canonicalSourceTruth(head) {
     originHead: head,
   };
 }
+
+test('direct ignition parses one exact optional parent head and rejects malformed or additional arguments before effects',()=>{
+  const head='a'.repeat(40);
+  assert.equal(parseBattleBridgeIgnitionArgs(['--expected-main',head]).expectedMain,head);
+  assert.equal(parseBattleBridgeIgnitionArgs([]).expectedMain,'');
+  assert.equal(parseBattleBridgeIgnitionArgs(['--approve-local-merge']).expectedMain,'');
+  for(const args of [['--expected-main'],['--expected-main','bad'],['--expected-main',head,'--expected-main',head],
+    ['--expected-main',head,'--extra'],['--shared-workspace'],['--unexpected'],['--approve-local-merge','--approve-local-merge']])
+    assert.throws(()=>parseBattleBridgeIgnitionArgs(args),/IGNITION_/);
+});
+
+test('parent head mismatch and invalid CLI input execute zero service effects while current and unpinned canonical truth remain compatible',async()=>{
+  const head='a'.repeat(40),workspace=await mkdtemp(path.join(tmpdir(),'ignition-parent-head-fixture-'));
+  for(const expected of ['b'.repeat(40),head,'']){
+    const effects=[];
+    const result=await main({argv:['--shared-workspace',workspace,...(expected?['--expected-main',expected]:[])],platform:'win32',
+      sourceTruthFn:()=>canonicalSourceTruth(head),currentHeadFn:()=>head,
+      ollamaPreflightFn:async()=>{effects.push('ollama');return {state:'ready'};},
+      backendPreflightFn:async()=>{effects.push('backend');return {ok:true};},
+      uiPreflightFn:async()=>{effects.push('ui');},supervisorFn:async options=>{effects.push('supervisor');
+        assert.equal(options.sourceTruthFn().head,head);return {ok:true};}});
+    assert.equal(result,expected&&expected!==head?2:0);
+    assert.equal(effects.length,expected&&expected!==head?0:4);
+  }
+  const effects=[];
+  await assert.rejects(main({argv:['--expected-main',head,'--extra'],sourceTruthFn:()=>{effects.push('source');return canonicalSourceTruth(head);}}),/IGNITION_ARGUMENT_NOT_ALLOWED/);
+  assert.equal(effects.length,0);
+});
+
+test('existing interactive recovery flags remain accepted without granting merge or service-restart authority',async()=>{
+  const head='a'.repeat(40),workspace=await mkdtemp(path.join(tmpdir(),'ignition-compatibility-fixture-'));
+  for(const flag of ['--approve-local-merge','--approve-openclaw-service-restart']){
+    const parsed=parseBattleBridgeIgnitionArgs([flag]);
+    assert.equal(parsed.expectedMain,'');assert.equal(Object.hasOwn(parsed,'approval'),false);
+    let calls=0;
+    const result=await main({argv:['--shared-workspace',workspace,flag],platform:'win32',sourceTruthFn:()=>canonicalSourceTruth(head),
+      currentHeadFn:()=>head,ollamaPreflightFn:async()=>({state:'ready'}),backendPreflightFn:async()=>({ok:true}),
+      uiPreflightFn:async()=>{},supervisorFn:async options=>{calls++;assert.equal(Object.hasOwn(options,'approveLocalMerge'),false);
+        assert.equal(Object.hasOwn(options,'approveOpenClawServiceRestart'),false);return {ok:true};}});
+    assert.equal(result,0);assert.equal(calls,1);
+  }
+});
 
 test('supervisor housekeeping preserves exact-head dist and all runtime-owned data', () => {
   const delegated = [];
@@ -413,6 +456,81 @@ test('canonical source truth blocks the click path before backend, UI, or superv
   } finally {
     process.argv = previousArgs;
     await rm(sharedWorkspace, { recursive: true, force: true });
+  }
+});
+
+test('warm-looking services cannot bypass bad canonical source in the desktop entry', async () => {
+  const head = 'a'.repeat(40);
+  const fixtures = [
+    { name: 'dirty', workingTreeDirty: true, publicationState: 'local-uncommitted' },
+    { name: 'detached', detachedHead: true },
+    { name: 'feature-branch', branch: 'feature/fixture', upstreamBranch: 'origin/feature/fixture' },
+    { name: 'unpublished', headPublished: false, aheadCount: 1 },
+    { name: 'stale-main', behindCount: 1, publicationState: 'stale-behind', originHead: 'b'.repeat(40) },
+  ];
+  const previousArgs = process.argv;
+  for (const fixture of fixtures) {
+    const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-desktop-source-fixture-'));
+    const calls = [];
+    process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+    try {
+      const exitCode = await main({
+        platform: 'win32',
+        sourceTruthFn: () => ({ ...canonicalSourceTruth(head), ...fixture }),
+        ollamaPreflightFn: async () => { calls.push('ollama'); return {}; },
+        backendPreflightFn: async () => { calls.push('backend'); return { ok: true }; },
+        uiPreflightFn: async () => { calls.push('ui'); return { ready: true }; },
+        supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+      });
+      assert.equal(exitCode, 2, fixture.name);
+      assert.deepEqual(calls, [], fixture.name);
+      const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+      assert.equal(status.trafficLight, 'red', fixture.name);
+      assert.equal(status.phases['source truth'].state, 'blocked', fixture.name);
+    } finally {
+      process.argv = previousArgs;
+      await rm(sharedWorkspace, { recursive: true, force: true });
+    }
+  }
+});
+
+test('warm-looking UI cannot bypass failed stale-backend qualification in the desktop entry', async () => {
+  const head = 'b'.repeat(40);
+  const previousArgs = process.argv;
+  const fixtures = [
+    { name: 'generic-ok', payload: { ok: true } },
+    { name: 'wrong-runtime', payload: { schemaVersion: 'stephanos.backend-health.v1', backendIdentity: { runtimeId: 'foreign', sourceHead: 'a'.repeat(40) } } },
+    { name: 'stale-after-restart', payload: { schemaVersion: 'stephanos.backend-health.v1', backendIdentity: { runtimeId: 'stephanos-battle-bridge-backend', sourceHead: 'a'.repeat(40) } } },
+  ];
+  for (const fixture of fixtures) {
+    const sharedWorkspace = await mkdtemp(path.join(tmpdir(), 'bb-desktop-backend-fixture-'));
+    const calls = [];
+    process.argv = [previousArgs[0], previousArgs[1], '--shared-workspace', sharedWorkspace];
+    try {
+      const exitCode = await main({
+        platform: 'win32',
+        sourceTruthFn: () => canonicalSourceTruth(head),
+        currentHeadFn: () => head,
+        ollamaPreflightFn: async () => ({}),
+        backendPreflightFn: options => ensureBackend8787ConvergedBeforeSupervisor({
+          ...options,
+          fetchFn: async () => ({ status: 200, json: async () => fixture.payload }),
+          runStepFn: label => { calls.push(label); return label === 'backend-8787-approved-stale-restart'; },
+        }),
+        uiPreflightFn: async () => { calls.push('ui'); return { ready: true }; },
+        supervisorFn: async () => { calls.push('supervisor'); return { ok: true }; },
+      });
+      assert.equal(exitCode, 1, fixture.name);
+      assert.equal(calls.includes('ui'), false, fixture.name);
+      assert.equal(calls.includes('supervisor'), false, fixture.name);
+      assert.equal(calls[0], 'backend-8787-preflight', fixture.name);
+      const status = JSON.parse(await readFile(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json'), 'utf8'));
+      assert.equal(status.blockerId, 'backend-8787-preflight-failed-before-supervisor', fixture.name);
+      assert.equal(status.trafficLight, 'red', fixture.name);
+    } finally {
+      process.argv = previousArgs;
+      await rm(sharedWorkspace, { recursive: true, force: true });
+    }
   }
 });
 

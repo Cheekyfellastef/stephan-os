@@ -84,6 +84,9 @@ const MAILBOX_GUARD_REASON_CODES_V1 = new Set([
   'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_IDENTITY_UNPROVEN',
   'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_INDEX_UNPROVEN',
   'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_CANONICAL_IDENTITY_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_STATE_UNPROVEN',
+  'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_CONTENT_UNPROVEN',
   'MAILBOX_OUTBOX_LEGACY_RECONCILIATION_LEDGER_UNPROVEN',
   'MAILBOX_OUTBOX_JSON_OBJECT_REQUIRED',
   'MAILBOX_OUTBOX_JSON_TOO_LARGE',
@@ -588,23 +591,35 @@ function sameLegacyTerminalIdentity(pendingReceipt, canonicalReceipt, { sealedRe
   } else if (singleSession) {
     const pendingCompact = pendingTerminal.result?.result;
     const canonicalCompact = canonicalTerminal.result?.result;
-    // Old serializeBoundedReceiptJson used this exact 256 KiB disk limit.
-    // The producer appended one LAST pretty-printed root property; permit
-    // only its precise byte delta when BOTH sealed receipts were compacted.
+    // The historical serializer emits compact projections even for short
+    // receipts. A transport-only receiptRef changes the raw JSON size and
+    // may make the pending receipt alone cross the original 256 KiB limit.
     const transportBytes = Buffer.byteLength(
       `,\n  "receiptRef": ${JSON.stringify(expectedRef)}`, 'utf8');
-    if (isPlainObject(pendingCompact) && isPlainObject(canonicalCompact)
-      && pendingTerminal.githubProjectionTruncated === true
-      && canonicalTerminal.githubProjectionTruncated === true
-      && pendingCompact.githubProjectionTruncated === true
-      && canonicalCompact.githubProjectionTruncated === true
-      && Number.isSafeInteger(canonicalCompact.originalBytes)
-      && canonicalCompact.originalBytes > 256 * 1024
-      && Number.isSafeInteger(pendingCompact.originalBytes)
-      && pendingCompact.originalBytes === canonicalCompact.originalBytes + transportBytes) {
+    const originalLimit = 256 * 1024;
+    const canonicalBytes = canonicalCompact?.originalBytes;
+    const pendingBytes = pendingCompact?.originalBytes;
+    const canonicalTruncated = Number.isSafeInteger(canonicalBytes)
+      && canonicalBytes > originalLimit;
+    const pendingTruncated = Number.isSafeInteger(pendingBytes)
+      && pendingBytes > originalLimit;
+    if (isPlainObject(pendingTerminal.result) && isPlainObject(canonicalTerminal.result)
+      && isPlainObject(pendingCompact) && isPlainObject(canonicalCompact)
+      && Number.isSafeInteger(canonicalBytes) && canonicalBytes >= 2
+      && Number.isSafeInteger(pendingBytes)
+      && pendingBytes === canonicalBytes + transportBytes
+      && canonicalTerminal.githubProjectionTruncated === canonicalTruncated
+      && canonicalCompact.githubProjectionTruncated === canonicalTruncated
+      && pendingTerminal.githubProjectionTruncated === pendingTruncated
+      && pendingCompact.githubProjectionTruncated === pendingTruncated) {
+      pendingTerminal.githubProjectionTruncated = canonicalTruncated;
       pendingTerminal.result = {
         ...pendingTerminal.result,
-        result: { ...pendingCompact, originalBytes: canonicalCompact.originalBytes },
+        result: {
+          ...pendingCompact,
+          originalBytes: canonicalBytes,
+          githubProjectionTruncated: canonicalTruncated,
+        },
       };
     }
   }
@@ -638,12 +653,20 @@ function proveSingleLegacyPendingDebt(statePath, receiptRoot, state, entry, metr
     && canonicalReceipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
     && canonicalReceipt?.expectedHead === 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77'
     && canonicalReceipt?.processSourceHead === 'cf7cd85b7afa96a696fd092b1ceb2e734f198a77';
+  // Diagnostic-only split of the original fail-closed conjunction, preserving
+  // exact predicate order. No new authority, identity or executed child.
   if (!isPlainObject(canonicalReceipt)
-    || (canonicalReceipt.requestId !== requestId && !sealedSingleSession)
-    || canonicalReceipt.state !== 'DONE'
-    || !sameLegacyTerminalIdentity(entry.receipt, canonicalReceipt,
-      { sealedRequestId: sealedSingleSession ? requestId : '' })
-    || entry.publicationId !== [
+      || (canonicalReceipt.requestId !== requestId && !sealedSingleSession)) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_CANONICAL_IDENTITY_UNPROVEN');
+  }
+  if (canonicalReceipt.state !== 'DONE') {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_STATE_UNPROVEN');
+  }
+  if (!sameLegacyTerminalIdentity(entry.receipt, canonicalReceipt,
+      { sealedRequestId: sealedSingleSession ? requestId : '' })) {
+    throw new Error('MAILBOX_OUTBOX_LEGACY_RECONCILIATION_TERMINAL_CONTENT_UNPROVEN');
+  }
+  if (entry.publicationId !== [
       requestId,
       canonicalReceipt.state,
       canonicalReceipt.completedAt || canonicalReceipt.acceptedAt || 'unknown',

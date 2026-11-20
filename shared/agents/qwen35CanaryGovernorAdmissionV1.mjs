@@ -1,3 +1,5 @@
+import { projectVrGovernorExecutionPermissionsV1 } from '../ai/ollamaLoadGovernor.mjs';
+
 // Original #2573 / gaming governor: read-only Qwen 3.5 heavy-model admission.
 // This is NOT an authority grant or a reason to start a model automatically.
 export const QWEN35_CANARY_GOVERNOR_ADMISSION_SCHEMA_V1 =
@@ -36,10 +38,16 @@ export function classifyQwen35CanaryGovernorV1(record, nowMs = Date.now()) {
     || observedAtMs > nowMs || nowMs - observedAtMs > 15_000) {
     return decision(true, 'QWEN35_CANARY_GOVERNOR_UNPROVEN');
   }
-  // This 27B model is a new heavy load: every game/session flag must be
-  // explicitly false, the phase NORMAL and both consent flags explicitly true.
+  // The shared governor also demands no native-probe custody hold, observed
+  // dependencies and proven eviction health. Two model flags alone are unsafe.
+  const permission = projectVrGovernorExecutionPermissionsV1(record, nowMs);
+  if (permission.observed !== true) {
+    return decision(true, 'QWEN35_CANARY_GOVERNOR_UNPROVEN');
+  }
+  // An actual heavy-model grant is necessary, but a fully idle game/session
+  // is independently required for this new 27B load.
   if (record.phase !== 'NORMAL' || gamingFlags.some(key => record[key] !== false)
-    || record.localModelAllowed !== true || record.heavyModelAllowed !== true) {
+    || permission.heavyModelAllowed !== true || permission.localCpuAllowed !== true) {
     return decision(true, 'QWEN35_CANARY_BLOCKED_BY_VR_RESOURCE_GOVERNOR');
   }
   return decision(false);
