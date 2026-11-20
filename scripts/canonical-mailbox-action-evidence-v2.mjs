@@ -306,13 +306,26 @@ function readMailboxActionRuns(read,status){
 }
 
 export function inventoryMailboxRotationExecution({read,activationHead,now=()=>new Date().toISOString(),local=localMailboxPublicationRevocations,collectProofs}={}){
- if(typeof read!=='function'||!sha(activationHead))throw Error('MAILBOX_ACTION_EVIDENCE_CONTEXT_INVALID');
+ if(typeof read!=='function'||typeof now!=='function'||!sha(activationHead))throw Error('MAILBOX_ACTION_EVIDENCE_CONTEXT_INVALID');
  if(collectProofs!==undefined&&typeof collectProofs!=='function')throw Error('MAILBOX_ACTION_EVIDENCE_CONTEXT_INVALID');
+ // Inventory age begins before the first authenticated read, including main
+ // and source qualification. Completing later proof reads never refreshes it.
+ const collectionStartedAt=now(),collectionStart=Date.parse(collectionStartedAt);
+ if(typeof collectionStartedAt!=='string'||!Number.isFinite(collectionStart))throw Error('MAILBOX_ACTION_COLLECTION_CLOCK_INVALID');
+ let lastCollectionClock=collectionStart;
+ const collectionNow=()=>{
+  const stamp=now(),clock=Date.parse(stamp);
+  if(typeof stamp!=='string'||!Number.isFinite(clock)||clock<lastCollectionClock)throw Error('MAILBOX_ACTION_COLLECTION_CLOCK_INVALID');
+  if(clock-collectionStart>120000)throw Error('MAILBOX_ACTION_COLLECTION_STALE');
+  lastCollectionClock=clock;return stamp;
+ };
+ const readSource=read;
+ read=path=>{collectionNow();const value=readSource(path);collectionNow();return value;};
  const main=(read('commits/main'))?.sha;
  if(!sha(main))throw Error('MAILBOX_ACTION_MAIN_UNPROVEN');
  const responses=[];
  for(const status of ['queued','in_progress','waiting','requested','pending'])responses.push(readMailboxActionRuns(read,status));
- const observedAt=now(),inventory=evaluateMailboxRotationActionInventory(responses,observedAt);
+ const inventory=evaluateMailboxRotationActionInventory(responses,collectionStartedAt);
  const raw=responses.flatMap(r=>r.workflow_runs),proofs=[];
  const locals=local();let source=null;
  if(!Array.isArray(locals)||locals.length!==modules.length||modules.some(m=>locals.filter(x=>x.path===m.path&&x.legacyBuilder===m.legacyBuilder&&sha(x.localBlob)).length!==1))
@@ -349,6 +362,7 @@ export function inventoryMailboxRotationExecution({read,activationHead,now=()=>n
    const spec={schemaVersion:MAILBOX_ACTION_PROOF_BATCH_SCHEMA,repository:batchRepository,targets};
    validateMailboxActionProofBatchSpec(spec);
    const collected=collectProofs(spec);
+   collectionNow();
    if(!Array.isArray(collected)||collected.length!==targets.length)throw batchError('MAILBOX_ACTION_BATCH_RESULT_INVALID');
    proofs.push(...collected);
   }
@@ -356,7 +370,7 @@ export function inventoryMailboxRotationExecution({read,activationHead,now=()=>n
  for(const pending of collectProofs?[]:inventory.pendingRuns){
   const listed=raw.find(r=>r.id===pending.id),c=contractForRun(listed);
   if(!c)continue; // Unknown/execution-capable records remain in blockingRuns.
-  const startedAt=now();
+  const startedAt=collectionNow();
   const before=read(`actions/runs/${pending.id}`);
   if(actionEvidence.historicalSourceNonadmissionContract?.(listed)&&!sameRunIdentity(before,listed))continue;
   if(before?.id!==pending.id||!Number.isSafeInteger(before.run_attempt)||before.run_attempt<=0
@@ -368,12 +382,13 @@ export function inventoryMailboxRotationExecution({read,activationHead,now=()=>n
    workflows.set(key,{path:w?.path,ref:c.head,sha:w?.sha});
   }
   const jobs=read(`actions/runs/${pending.id}/attempts/${before.run_attempt}/jobs?per_page=100`);
-  const jobsObservedAt=now();
+  const jobsObservedAt=collectionNow();
   const after=read(`actions/runs/${pending.id}`);
-  proofs.push({run:before,runAfter:after,workflow:workflows.get(key),attempt:before.run_attempt,jobs,startedAt,jobsObservedAt,observedAt:now()});
+  proofs.push({run:before,runAfter:after,workflow:workflows.get(key),attempt:before.run_attempt,jobs,startedAt,jobsObservedAt,observedAt:collectionNow()});
  }
  if((read('commits/main'))?.sha!==main)throw Error('MAILBOX_ACTION_MAIN_MOVED');
- return withMailboxActionEvidence({...inventory,observedAt:now()},{proofs,source});
+ return withMailboxActionEvidence(inventory,{proofs,source,
+  collection:{startedAt:collectionStartedAt,completedAt:collectionNow()}});
 }
 
 if(process.argv[1]&&fileURLToPath(import.meta.url)===process.argv[1]){

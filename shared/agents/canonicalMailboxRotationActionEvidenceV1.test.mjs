@@ -126,8 +126,9 @@ function historicalFixture(which=0,id=historicalContracts[which].runIds[0]){
    return{path,localBlob:blob,mainBlob:blob,activationBlob:blob};
   }),historicalModules:clone(HISTORICAL_SOURCE_NONADMISSION_STATIC_MODULES),
  }};
- const inventory={complete:true,observedAt:historicalNow,pendingRuns:[pending]};
- return{c,run,pending,proof,source,inventory,actions:()=>withMailboxActionEvidence(inventory,{proofs:[proof],source})};
+ const collection={startedAt:proof.startedAt,completedAt:historicalNow};
+ const inventory={complete:true,observedAt:collection.startedAt,pendingRuns:[pending]};
+ return{c,run,pending,proof,source,collection,inventory,actions:()=>withMailboxActionEvidence(inventory,{proofs:[proof],source,collection})};
 }
 
 test('fixed historical source contracts match all 162 authenticated IDs and exact inert workflow fixtures',()=>{
@@ -148,8 +149,8 @@ test('fixed historical source contracts match all 162 authenticated IDs and exac
 
 test('all 162 source-contained wrappers remain 162 queued aggregates with fresh zero-job evidence',()=>{
  const fixtures=historicalContracts.flatMap((c,i)=>c.runIds.map(id=>historicalFixture(i,id)));
- const inventory={complete:true,observedAt:historicalNow,pendingRuns:fixtures.map(f=>f.pending)};
- const a=withMailboxActionEvidence(inventory,{proofs:fixtures.map(f=>f.proof),source:fixtures[0].source});
+ const inventory={complete:true,observedAt:fixtures[0].collection.startedAt,pendingRuns:fixtures.map(f=>f.pending)};
+ const a=withMailboxActionEvidence(inventory,{proofs:fixtures.map(f=>f.proof),source:fixtures[0].source,collection:fixtures[0].collection});
  assert.equal(a.pendingRuns.length,162);assert.equal(a.pendingRuns.every(p=>p.status==='queued'),true);
  assert.equal(a.blockingRuns.length,0);
  assert.equal(a.aggregateDispositions.every(d=>d.reason==='HISTORICAL_WORKFLOW_SOURCE_NOT_ADMITTED'),true);
@@ -215,9 +216,54 @@ test('historical evidence age covers the entire before/jobs/after chain and cann
 
 test('one unproven current or unknown run holds cutover alongside all contained historical wrappers',()=>{
  const f=historicalFixture(),unknown={id:123456789,workflow:f.pending.workflow,status:'queued'};
- const a=withMailboxActionEvidence({...f.inventory,pendingRuns:[f.pending,unknown]},{proofs:[f.proof],source:f.source});
+ const a=withMailboxActionEvidence({...f.inventory,pendingRuns:[f.pending,unknown]},{proofs:[f.proof],source:f.source,collection:f.collection});
  assert.equal(a.pendingRuns.length,2);assert.equal(a.blockingRuns.length,1);
  assert.equal(mailboxActionsExecutionQuiescent(a),false);assert.equal(mailboxActionEvidenceSummary(a).actionBlockingCount,1);
  const incomplete=withMailboxActionEvidence(f.inventory,{source:f.source});
  assert.equal(mailboxActionsExecutionQuiescent(incomplete),false);
+});
+
+test('whole-collection age starts with inventory and cannot be replaced by recent run proofs',()=>{
+ const f=historicalFixture();f.collection.startedAt=f.inventory.observedAt='2026-11-20T21:58:15.000Z';
+ const a=f.actions();
+ assert.equal(mailboxActionsExecutionQuiescent(a,{now:'2026-11-20T22:00:14.000Z'}),true);
+ assert.equal(mailboxActionsExecutionQuiescent(a,{now:'2026-11-20T22:00:16.000Z'}),false);
+ assert.equal(a.pendingRuns[0].status,'queued');
+ assert.equal(a.executionEvidence.proofs[0].observedAt,historicalNow);
+});
+
+test('historical nonadmission requires the digest-bound complete collection interval',()=>{
+ const f=historicalFixture();
+ const missing=withMailboxActionEvidence(f.inventory,{proofs:[f.proof],source:f.source});
+ assert.equal(mailboxActionsExecutionQuiescent(missing),false);
+ const mutations=[a=>delete a.executionEvidence.collection,a=>a.executionEvidence.collection.completedAt='2026-11-20T22:00:01.000Z',
+  a=>a.observedAt=historicalNow];
+ for(const mutate of mutations){const a=f.actions();mutate(a);assert.equal(mailboxActionsExecutionQuiescent(a),false);}
+});
+
+test('collection bounds reject malformed, reversed, overlong or out-of-interval proof evidence',()=>{
+ const changes=[f=>f.collection=null,f=>f.collection=[],f=>f.collection={startedAt:f.inventory.observedAt},
+  f=>f.collection=Object.assign(Object.create({startedAt:f.inventory.observedAt}),{completedAt:historicalNow,extra:true}),
+  f=>f.collection.extra=true,f=>f.collection.startedAt='invalid',f=>f.collection.completedAt='invalid',
+  f=>f.collection.completedAt=Date.parse(historicalNow),f=>f.collection.completedAt='2026-11-20T21:59:54.000Z',
+  f=>f.collection.completedAt='2026-11-20T22:02:00.000Z',
+  f=>{f.collection.startedAt=f.inventory.observedAt='2026-11-20T21:59:56.000Z';},
+  f=>f.proof.observedAt='2026-11-20T22:00:01.000Z',f=>f.proof.jobsObservedAt=Date.parse(historicalNow)];
+ for(const change of changes){const f=historicalFixture();change(f);
+  const a=withMailboxActionEvidence(f.inventory,{proofs:[f.proof],source:f.source,collection:f.collection});
+  assert.equal(mailboxActionsExecutionQuiescent(a),false);
+ }
+});
+
+test('empty collected inventories validate their envelope and preserve initial freshness',()=>{
+ const collection={startedAt:historicalNow,completedAt:'2026-11-20T22:01:00.000Z'};
+ const make=()=>withMailboxActionEvidence({complete:true,observedAt:historicalNow,pendingRuns:[]},{collection});
+ assert.equal(mailboxActionsExecutionQuiescent(make(),{now:collection.completedAt}),true);
+ assert.equal(mailboxActionsExecutionQuiescent(make(),{now:'2026-11-20T22:00:30.000Z'}),false);
+ assert.equal(mailboxActionsExecutionQuiescent(make(),{now:'2026-11-20T22:02:00.001Z'}),false);
+ for(const mutate of [a=>delete a.executionEvidence.collection,a=>delete a.executionEvidence,a=>a.evidenceDigest='0'.repeat(64),
+  a=>a.observedAt=collection.completedAt,a=>a.executionEvidence.schemaVersion='unknown']){
+  const a=make();mutate(a);assert.equal(mailboxActionsExecutionQuiescent(a),false);
+ }
+ assert.equal(mailboxActionsExecutionQuiescent({complete:true,pendingRuns:[]}),true);
 });

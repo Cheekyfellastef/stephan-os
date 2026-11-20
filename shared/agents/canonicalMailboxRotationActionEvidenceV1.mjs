@@ -139,9 +139,9 @@ export function classifyMailboxActionEvidence(pending,proof,source){
  return{quiescent:true,reason:'EXACT_WORKFLOW_DAG_TERMINAL',attempt:r.run_attempt,workflowBlob:c.blob};
 }
 
-export function withMailboxActionEvidence(inventory,{proofs=[],source=null}={}){
+export function withMailboxActionEvidence(inventory,{proofs=[],source=null,collection}={}){
  if(inventory?.complete!==true||!Array.isArray(inventory.pendingRuns))throw Error('MAILBOX_ACTION_INVENTORY_INCOMPLETE');
- const evidence={schemaVersion:MAILBOX_ACTION_EVIDENCE_SCHEMA,proofs,source};
+ const evidence={schemaVersion:MAILBOX_ACTION_EVIDENCE_SCHEMA,proofs,source,...(collection===undefined?{}:{collection})};
  const dispositions=inventory.pendingRuns.map(p=>({id:p.id,...classifyMailboxActionEvidence(p,proofs.find(x=>x?.run?.id===p.id),source)}));
  return{...inventory,executionEvidence:evidence,blockingRuns:inventory.pendingRuns.filter((_,i)=>!dispositions[i].quiescent),
    aggregateDispositions:dispositions,evidenceDigest:mailboxActionEvidenceDigest({pending:inventory.pendingRuns,evidence})};
@@ -150,9 +150,24 @@ export function withMailboxActionEvidence(inventory,{proofs=[],source=null}={}){
 function validEvidenceEnvelope(actions){
  if(actions?.complete!==true||!Array.isArray(actions.pendingRuns))return false;
  const e=actions.executionEvidence;
- const observed=Date.parse(actions.observedAt);
- if(e?.schemaVersion!==MAILBOX_ACTION_EVIDENCE_SCHEMA||!Array.isArray(e.proofs)
-   ||!Number.isFinite(observed)||e.proofs.some(x=>!Number.isFinite(Date.parse(x?.observedAt))||observed-Date.parse(x.observedAt)<0||observed-Date.parse(x.observedAt)>120000)
+ const started=Date.parse(actions.observedAt);
+ if(e?.schemaVersion!==MAILBOX_ACTION_EVIDENCE_SCHEMA||!Array.isArray(e.proofs)||!Number.isFinite(started))return false;
+ const hasCollection=Object.hasOwn(e,'collection'),c=e.collection;
+ let observed=started;
+ if(hasCollection){
+  if(!c||typeof c!=='object'||Array.isArray(c)||Object.keys(c).length!==2
+    ||!Object.hasOwn(c,'startedAt')||!Object.hasOwn(c,'completedAt')
+    ||typeof c.startedAt!=='string'||typeof c.completedAt!=='string'
+    ||c.startedAt!==actions.observedAt||!Number.isFinite(Date.parse(c.completedAt)))return false;
+  observed=Date.parse(c.completedAt);
+  if(observed<started||observed-started>120000
+    ||e.proofs.some(p=>['startedAt','jobsObservedAt','observedAt'].some(key=>Object.hasOwn(p||{},key)
+      &&(typeof p[key]!=='string'||!Number.isFinite(Date.parse(p[key]))||Date.parse(p[key])<started||Date.parse(p[key])>observed))))return false;
+ }
+ // Legacy evidence remains readable, but the newly admitted historical cohort
+ // must bind the complete inventory/source observation interval into its digest.
+ if(!hasCollection&&e.proofs.some(p=>historicalSourceNonadmissionContract(p?.run)))return false;
+ if(e.proofs.some(x=>!Number.isFinite(Date.parse(x?.observedAt))||observed-Date.parse(x.observedAt)<0||observed-Date.parse(x.observedAt)>120000)
    ||e.proofs.some(x=>historicalSourceNonadmissionContract(x?.run)
      &&(!historicalObservationTimes(x)||observed-Date.parse(x.startedAt)<0||observed-Date.parse(x.startedAt)>120000))
    ||new Set(actions.pendingRuns.map(x=>x.id)).size!==actions.pendingRuns.length
@@ -167,6 +182,10 @@ export function mailboxActionsExecutionQuiescent(actions,{now,mainHead,activatio
  if(actions?.complete!==true||!Array.isArray(actions.pendingRuns))return false;
  if(now!==undefined&&(!Number.isFinite(Date.parse(now))||!Number.isFinite(Date.parse(actions.observedAt))
    ||Date.parse(now)-Date.parse(actions.observedAt)<0||Date.parse(now)-Date.parse(actions.observedAt)>120000))return false;
+ if(Object.hasOwn(actions,'executionEvidence')||Object.hasOwn(actions,'evidenceDigest')){
+  if(!validEvidenceEnvelope(actions)||(now!==undefined&&actions.executionEvidence.collection
+    &&Date.parse(now)<Date.parse(actions.executionEvidence.collection.completedAt)))return false;
+ }
  if(actions.pendingRuns.length===0)return true;
  if(!validEvidenceEnvelope(actions))return false;
  const e=actions.executionEvidence;

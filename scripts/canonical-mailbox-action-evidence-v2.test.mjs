@@ -253,8 +253,9 @@ test('all 162 fixed runs use eight concurrent independent before/jobs/after chai
  assert.equal(f.reads.length,486);assert.ok([...stages.values()].every(n=>n===3));
  assert.ok(proofs.every(p=>p.run.status==='queued'&&p.runAfter.status==='queued'&&p.jobs.total_count===0
   &&Date.parse(p.startedAt)<=Date.parse(p.jobsObservedAt)&&Date.parse(p.jobsObservedAt)<=Date.parse(p.observedAt)));
- const collected=inventoryMailboxRotationExecution({read:f.api,activationHead:target,now:()=>stamps.at(-1),
-  collectProofs:spec=>{assert.deepEqual(spec,f.spec);return proofs;}});
+ let collectionClock=f.stamp;
+ const collected=inventoryMailboxRotationExecution({read:f.api,activationHead:target,now:()=>collectionClock,
+  collectProofs:spec=>{assert.deepEqual(spec,f.spec);collectionClock=stamps.at(-1);return proofs;}});
  assert.equal(collected.pendingRuns.length,162);assert.equal(collected.blockingRuns.length,0);
  assert.equal(mailboxActionsExecutionQuiescent(collected,{now:stamps.at(-1),mainHead:main,activationHead:target}),true);
  assert.ok(collected.aggregateDispositions.every(p=>p.reason==='HISTORICAL_WORKFLOW_SOURCE_NOT_ADMITTED'));
@@ -420,5 +421,73 @@ test('serial historical compatibility path rejects full listed-to-before identit
   assert.equal(result.pendingRuns.length,1);assert.equal(result.blockingRuns.length,1);
   assert.equal(result.executionEvidence.proofs.length,0);assert.equal(mailboxActionsExecutionQuiescent(result),false);
   assert.equal(f.reads.some(p=>p.includes('/attempts/')),false,'drifted identity must not select a jobs endpoint');
+ }
+});
+
+test('two individually bounded slow source reads cannot renew the initial complete inventory',()=>{
+ for(const kind of ['legacy','historical']){
+  const f=kind==='legacy'?fixture():boundedHistoricalFixture();
+  if(kind==='historical')f.runs.splice(1);
+  const first=Date.parse(kind==='legacy'?now:f.stamp);let clock=first,sourceReads=0,batchCalls=0;
+  assert.throws(()=>inventoryMailboxRotationExecution({activationHead:target,now:()=>new Date(clock).toISOString(),
+   read:path=>{const value=f.api(path);if(path.startsWith('contents/')&&sourceReads<2){sourceReads++;clock+=90001;}return value;},
+   collectProofs:()=>{batchCalls++;return[];},
+  }),/MAILBOX_ACTION_COLLECTION_STALE/);
+  assert.equal(sourceReads,2);assert.equal(clock-first,180002);assert.equal(batchCalls,0);
+  assert.equal(f.reads.some(path=>/actions\/runs\/[0-9]+/.test(path)),false);
+ }
+ const f=fixture(),control=f.collect();
+ assert.equal(mailboxActionsExecutionQuiescent(control,{now}),true);
+ assert.deepEqual(control.executionEvidence.collection,{startedAt:now,completedAt:now});
+});
+
+test('the first main read and every complete-inventory page are inside the unchanged freshness bound',()=>{
+ for(const delayed of ['commits/main','actions/runs?status=queued&per_page=100','actions/runs?status=queued&per_page=100&page=2']){
+  const f=pagedFixture(200);let clock=Date.parse(now);
+  assert.throws(()=>inventoryMailboxRotationExecution({activationHead:target,now:()=>new Date(clock).toISOString(),
+   read:path=>{const value=f.api(path);if(path===delayed)clock+=120001;return value;},
+  }),/MAILBOX_ACTION_COLLECTION_STALE/);
+ }
+});
+
+test('a valid collection retains its original start for later consumer expiry',()=>{
+ const f=fixture(),first=Date.parse(now);let clock=first,sourceReads=0;
+ const result=inventoryMailboxRotationExecution({activationHead:target,now:()=>new Date(clock).toISOString(),
+  read:path=>{const value=f.api(path);if(path.startsWith('contents/')&&sourceReads++<2)clock+=45000;return value;},
+ });
+ assert.equal(result.observedAt,now);
+ assert.deepEqual(result.executionEvidence.collection,{startedAt:now,completedAt:new Date(first+90000).toISOString()});
+ assert.equal(result.executionEvidence.proofs[0].observedAt,new Date(first+90000).toISOString());
+ assert.equal(result.pendingRuns[0].status,'queued');assert.equal(result.pendingRuns.length,1);
+ assert.equal(mailboxActionsExecutionQuiescent(result,{now:new Date(first+120000).toISOString()}),true);
+ assert.equal(mailboxActionsExecutionQuiescent(result,{now:new Date(first+120001).toISOString()}),false);
+});
+
+test('empty actual collections keep whole-inventory freshness and validate evidence before the empty fastpath',()=>{
+ const f=pagedFixture(0),first=Date.parse(now);let clock=first;
+ const result=inventoryMailboxRotationExecution({read:f.api,activationHead:target,now:()=>new Date(clock).toISOString()});
+ assert.equal(result.pendingRuns.length,0);assert.equal(result.observedAt,now);
+ assert.equal(mailboxActionsExecutionQuiescent(result,{now}),true);
+ assert.equal(mailboxActionsExecutionQuiescent(result,{now:new Date(first+120001).toISOString()}),false);
+ const tampered=structuredClone(result);delete tampered.executionEvidence.collection;
+ assert.equal(mailboxActionsExecutionQuiescent(tampered,{now}),false);
+ assert.throws(()=>inventoryMailboxRotationExecution({activationHead:target,now:()=>new Date(clock).toISOString(),
+  read:path=>{const value=f.api(path);if(path.startsWith('actions/runs?status=queued'))clock+=120001;return value;},
+ }),/MAILBOX_ACTION_COLLECTION_STALE/);
+});
+
+test('invalid or backward collection clocks fail before yielding refreshed evidence',()=>{
+ for(const value of ['invalid',null,123]){
+  const f=fixture();let reads=0;
+  assert.throws(()=>inventoryMailboxRotationExecution({activationHead:target,now:()=>value,
+   read:path=>{reads++;return f.api(path);}}),/MAILBOX_ACTION_COLLECTION_CLOCK_INVALID/);
+  assert.equal(reads,0);
+ }
+ for(const invalidAfterRead of ['invalid','backward']){
+  const f=fixture();let clock=Date.parse(now),invalid=false;
+  assert.throws(()=>inventoryMailboxRotationExecution({activationHead:target,
+   now:()=>invalid?'invalid':new Date(clock).toISOString(),
+   read:path=>{const value=f.api(path);if(invalidAfterRead==='backward')clock--;else invalid=true;return value;},
+  }),/MAILBOX_ACTION_COLLECTION_CLOCK_INVALID/);
  }
 });
