@@ -8,8 +8,8 @@ export const WINDOWS_AUTHORITY_SOVEREIGN_REVIEWER_PROFILE_PATHS_V1 = Object.free
 
 export const WINDOWS_AUTHORITY_SOVEREIGN_REVIEWER_PROFILE_BLOBS_V1 = Object.freeze({
   'scripts/windows/SovereignReviewerHostV1.cs': 'bca159a1ea12c2d443ca36ddb5221c0da8083b7e',
-  'scripts/windows/SovereignReviewerProfileV1.cs': '28a3e1dea9e97134c49130c7c2217e40ac3ed760',
-  'scripts/windows/install-sovereign-reviewer-profile-v1.ps1': '485d60a78fec46691c4d0f8344b1db1e4f083d5e',
+  'scripts/windows/SovereignReviewerProfileV1.cs': '461ec1bda76bc88af0f738db3a2d4043e8fb77f8',
+  'scripts/windows/install-sovereign-reviewer-profile-v1.ps1': '9c2c0385dbad9f3eda6bee0b9cbabcc3f4a7aae1',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -161,7 +161,7 @@ function reviewProfile(source, path, findings) {
     ['const string ReviewerRootV1 = @"C:\\Program Files\\Stephanos\\SovereignReviewerV1";','reviewer-profile-root-not-fixed'],
     ['const string ReviewerNodeV1 = @"C:\\Program Files\\nodejs\\node.exe";','reviewer-profile-node-not-fixed'],
     ['const string ReviewerGitV1 = @"C:\\Program Files\\Git\\cmd\\git.exe";','reviewer-profile-git-not-fixed'],
-    ['manifest.Files==null||manifest.Files.Length!=25','reviewer-profile-closure-count-not-fixed'],
+    ['manifest.Files==null||manifest.Files.Length!=26','reviewer-profile-closure-count-not-fixed'],
     ['ReviewerPinToolV1(ReviewerNodeV1,installation.NodeSha256,installation.NodeLinkCount,pins);','reviewer-profile-node-pin-missing'],
     ['ReviewerPinToolV1(ReviewerGitV1,installation.GitSha256,installation.GitLinkCount,pins);','reviewer-profile-git-pin-missing'],
     ['principalDiffersFromInstaller=pins.ActualSid!=pins.Installation.InstallerSid','reviewer-profile-installer-separation-observation-missing'],
@@ -178,7 +178,7 @@ function reviewProfile(source, path, findings) {
 function reviewInstaller(source, path, findings) {
   const active=activePowerShell(source);
   for (const [literal, code] of [
-    ["$source.Records.Count -ne 25",'reviewer-installer-closure-count-not-fixed'],
+    ["$source.Records.Count -ne 26",'reviewer-installer-closure-count-not-fixed'],
     ["throw 'REVIEWER_INSTALL_ADMINISTRATOR_REQUIRED'",'reviewer-installer-admin-gate-missing'],
     ['[void]$reviewer.Translate([Security.Principal.NTAccount])','reviewer-installer-existing-principal-proof-missing'],
     ["$root='C:\\Program Files\\Stephanos\\SovereignReviewerV1'",'reviewer-installer-root-not-fixed'],

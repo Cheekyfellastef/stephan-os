@@ -7,7 +7,7 @@ $ErrorActionPreference='Stop';$PSModuleAutoLoadingPreference='None'
 $source=$script:SovereignReviewerInstallerSourceV1
 if($ExpectedMain -cnotmatch '^[a-f0-9]{40}$' -or $null -eq $source -or
  $source.SchemaVersion -cne 'stephanos.reviewer-install-source.v1' -or $source.SourceHead -cne $ExpectedMain -or
- $source.SourceTree -cnotmatch '^[a-f0-9]{40}$' -or $source.Records.Count -ne 25 -or
+ $source.SourceTree -cnotmatch '^[a-f0-9]{40}$' -or $source.Records.Count -ne 26 -or
  $ReviewerSid -cnotmatch '^S-1-5-21-[0-9-]{8,100}$' -or
  ($ExpectedInstalledHead -ne '' -and $ExpectedInstalledHead -cnotmatch '^[a-f0-9]{40}$')){throw 'REVIEWER_INSTALL_IMMUTABLE_SOURCE_REQUIRED'}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
