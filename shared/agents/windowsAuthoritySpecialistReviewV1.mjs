@@ -172,7 +172,7 @@ function unsafeNestedReviewEvidence(value, seen = new Set(), depth = 0, sourceEv
     if (!Object.hasOwn(descriptor, 'value')) {
       if (sourceEvidence || (Array.isArray(value) && typeof key === 'string'
         && /^(0|[1-9][0-9]*)$/.test(key))
-        || (typeof key === 'string' && ['findings', 'counts', 'verdict', 'clean'].includes(key))) return true;
+        || (typeof key === 'string' && ['findings', 'counts', 'verdict', 'clean', 'P0', 'P1', 'P2'].includes(key))) return true;
       continue;
     }
     if (unsafeNestedReviewEvidence(descriptor.value, seen, depth + 1, sourceEvidence)) return true;

@@ -546,17 +546,21 @@ test('composite review refuses contradictory typed counts and verdict before del
       assert.deepEqual(denied.proofRefs, [], field + ' accessor must not yield proof');
       assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE');
     }
+    // Sibling reviewers may read counts before the composite route selects a
+    // specialist. Reject executable count identities at the shared entrypoint.
     for (const field of ['P0', 'P1', 'P2']) {
       const counts = { ...analysis.counts };
       const original = counts[field];
+      let getterCalls = 0;
       Object.defineProperty(counts, field, {
-        enumerable: true, get() { return original; },
+        enumerable: true, get() { getterCalls++; return original; },
       });
       const denied = review({ counts });
-      assert.equal(denied.eligible, true, field + ' count accessor must be classified');
+      assert.equal(getterCalls, 0, field + ' must not execute before specialist dispatch');
+      assert.equal(denied.eligible, false, field + ' count accessor must be denied at entrypoint');
       assert.equal(denied.clean, false, field + ' count accessor must fail closed');
       assert.deepEqual(denied.proofRefs, [], field + ' count accessor must not yield proof');
-      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID');
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE');
     }
     // Route discovery must not run getters even when they return the exact P0
     // identity. Both partner routes use this same candidate matcher.
