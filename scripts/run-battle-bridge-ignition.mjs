@@ -488,9 +488,25 @@ export async function ensureLiveUiConvergedBeforeSupervisor({
   return { action: 'refreshed-stale-ui', before, after };
 }
 
-function sharedWorkspaceFromArgs(argv = process.argv.slice(2)) {
-  const index = argv.indexOf('--shared-workspace');
-  return index >= 0 ? argv[index + 1] : undefined;
+export function parseBattleBridgeIgnitionArgs(argv = process.argv.slice(2)) {
+  if (!Array.isArray(argv) || argv.some(value => typeof value !== 'string')) throw new Error('IGNITION_ARGUMENTS_INVALID');
+  const seen = new Set(), result = { expectedMain: '', sharedWorkspace: undefined };
+  for (let index = 0; index < argv.length; index++) {
+    const argument = argv[index];
+    if (seen.has(argument)) throw new Error('IGNITION_ARGUMENT_DUPLICATED');
+    seen.add(argument);
+    if (argument === '--expected-main' || argument === '--shared-workspace') {
+      const value = argv[++index];
+      if (typeof value !== 'string' || !value || value.startsWith('--') || /[\0\r\n]/.test(value)) throw new Error('IGNITION_ARGUMENT_VALUE_INVALID');
+      if (argument === '--expected-main') {
+        if (!SHA40.test(value)) throw new Error('IGNITION_EXPECTED_MAIN_INVALID');
+        result.expectedMain = value;
+      } else result.sharedWorkspace = value;
+    } else if (!['--approve-local-merge', '--approve-openclaw-service-restart'].includes(argument)) {
+      throw new Error('IGNITION_ARGUMENT_NOT_ALLOWED');
+    }
+  }
+  return Object.freeze(result);
 }
 
 export async function writePreSupervisorFailureStatus({
@@ -520,6 +536,7 @@ export async function writePreSupervisorFailureStatus({
 }
 
 export async function main({
+  argv = process.argv.slice(2),
   platform = process.platform,
   sourceTruthFn = collectCanonicalIgnitionSourceTruth,
   currentHeadFn = getCurrentGitHead,
@@ -528,8 +545,9 @@ export async function main({
   uiPreflightFn = ensureLiveUiConvergedBeforeSupervisor,
   supervisorFn = runBattleBridgeIgnitionSupervisor,
 } = {}) {
+  const input = parseBattleBridgeIgnitionArgs(argv);
   process.chdir(repoRoot);
-  const sharedWorkspace = sharedWorkspaceFromArgs();
+  const sharedWorkspace = input.sharedWorkspace;
 
   const sourceTruth = sourceTruthFn({ cwd: repoRoot, platform });
   const canonicalSourceTruth = evaluateCanonicalIgnitionSourceTruth(sourceTruth);
@@ -546,6 +564,12 @@ export async function main({
   }
 
   const expectedHead = String(canonicalSourceTruth.sourceTruth.head || '').trim().toLowerCase();
+  if (input.expectedMain && input.expectedMain !== expectedHead) {
+    await writePreSupervisorFailureStatus({ sharedWorkspace, phase: 'source truth', blockerId: 'ignition-parent-head-mismatch',
+      detail: 'Canonical source advanced from the exact parent update transition before service startup.',
+      nextOperatorAction: 'Reconcile the current canonical source through the same update owner before retrying Ignition.' });
+    return 2;
+  }
   const boundSourceTruthFn = bindCanonicalSourceTruthToProvenHead({ sourceTruthFn, expectedHead });
   const proveSourceTruthBeforeMutation = async () => {
     const nextSourceTruth = boundSourceTruthFn({ cwd: repoRoot, platform });

@@ -67,7 +67,7 @@ export function projectGoalBuildGateObservatoryV1({
     }
   } catch { key = null; }
   const knownProofs = Array.isArray(proofRecords) ? proofRecords : [];
-  const evidence = key
+  const authenticatedEvidence = key
     ? (Array.isArray(statusRecords) ? statusRecords : [])
       .filter(record => ['status', 'stephanos.shared_workspace.status'].includes(record?.kind)
         && record?.statusId === 'goal-build-gates-current'
@@ -78,6 +78,9 @@ export function projectGoalBuildGateObservatoryV1({
         && e?.signingKeyId === 'stephanos-goal-build-gates-v1'
         && e?.sourceHead === trustedHead
         && Array.isArray(e?.gates) && e.gates.length <= GOAL_BUILD_GATE_DEFINITIONS_V1.length
+        // Preserve signed, proof-backed malformed identities as evidence of
+        // ambiguity until competing envelopes have been reconciled. Invalid
+        // gate sets are rejected below, never projected as operational PASS.
         && Number.isFinite(time(e.observedAtUtc))
         && time(e.observedAtUtc) <= nowMs + MAX_CLOCK_SKEW_MS
         && typeof e.signatureBase64 === 'string')
@@ -99,13 +102,35 @@ export function projectGoalBuildGateObservatoryV1({
           const matches = knownProofs.filter(p => ['proof', 'stephanos.shared_workspace.proof'].includes(p?.kind)
             && p?.proofId === id && p?.sourceHead === trustedHead
             && time(p.timestampUtc) <= time(e.observedAtUtc) + MAX_CLOCK_SKEW_MS
-            && nowMs - time(p.timestampUtc) <= maxAge
+            // Preserve an authenticated old checkpoint as STALE. A fresh
+            // signed envelope still requires a fresh immutable proof, so an
+            // old receipt can never be republished as current-green.
+            && Number.isFinite(time(p.timestampUtc))
+            && time(p.timestampUtc) <= nowMs + MAX_CLOCK_SKEW_MS
+            && (nowMs - time(p.timestampUtc) <= maxAge
+              || nowMs - time(e.observedAtUtc) > maxAge)
             && createHash('sha256').update(JSON.stringify(p)).digest('hex') === proofDigest);
           return matches.length === 1;
         });
       })
-      .sort((a, b) => time(b.observedAtUtc) - time(a.observedAtUtc))[0] || null
-    : null;
+      .sort((a, b) => time(b.observedAtUtc) - time(a.observedAtUtc))
+    : [];
+  const latest = authenticatedEvidence[0] || null;
+  // Two independently authenticated envelopes at the same instant cannot
+  // select opposite gate truth by input ordering. Fail closed on ambiguity.
+  // Identical repeated evidence stays valid; signature and proof gates above
+  // have already verified each candidate independently.
+  const sameClockConflict = latest && authenticatedEvidence.some(candidate =>
+    time(candidate.observedAtUtc) === time(latest.observedAtUtc)
+    && JSON.stringify(candidate.gates) !== JSON.stringify(latest.gates));
+  // Check identity AFTER cryptographic and immutable-proof authentication.
+  // Discarding a signed malformed envelope earlier could let an equal-clock
+  // (or older) PASS from another envelope resurface as green.
+  const canonicalIds = new Set(GOAL_BUILD_GATE_DEFINITIONS_V1.map(def => def.id));
+  const latestGateIdentityValid = latest
+    && latest.gates.every(g => canonicalIds.has(g?.id))
+    && new Set(latest.gates.map(g => g.id)).size === latest.gates.length;
+  const evidence = sameClockConflict || !latestGateIdentityValid ? null : latest;
   const observedAtUtc = evidence?.observedAtUtc || '';
   const sourceHead = evidence?.sourceHead || '';
   const expired = evidence ? nowMs - time(observedAtUtc) > maxAge : false;
@@ -115,9 +140,15 @@ export function projectGoalBuildGateObservatoryV1({
       || byId.has(raw.id)) continue;
     const state = String(raw.status || '').toUpperCase();
     const proofRef = String(raw.proofRef || '');
+    // Sharing one immutable proof across distinct signed checkpoints does
+    // not establish independent operational PASS evidence. Keep FAIL vetoes.
+    const sharedPositiveProof = state === 'PASS'
+      && evidence.gates.some(other => other?.id !== raw.id
+        && String(other?.proofRef || '') === proofRef);
     const blocker = String(raw.typedBlocker || '');
     const sampledAtMs = time(raw.observedAtUtc);
     if (!VALID.has(state)
+      || sharedPositiveProof
       || raw.sourceHead !== sourceHead
       || !SAFE_REF.test(proofRef)
       || !Number.isFinite(sampledAtMs)
@@ -133,15 +164,25 @@ export function projectGoalBuildGateObservatoryV1({
   const all = new Map();
   const gates = GOAL_BUILD_GATE_DEFINITIONS_V1.map(def => {
     const observed = byId.get(def.id);
+    // Preserve individually signed historical facts, but do not advertise an
+    // operational PASS until every prerequisite has an effective current PASS.
+    // An upstream FAIL, WAITING, UNVERIFIED or STALE cannot be overridden by a
+    // downstream signed PASS in this read-only operational projection.
+    const prerequisiteNotProven = def.prerequisites.find(id => all.get(id)?.status !== 'PASS');
     const priorFail = def.prerequisites.find(id =>
       ['FAIL', 'WAITING_FOR_PREREQUISITE'].includes(all.get(id)?.status));
-    const status = observed?.status || (priorFail ? 'WAITING_FOR_PREREQUISITE' : 'UNVERIFIED');
+    const status = observed?.status === 'PASS' && prerequisiteNotProven
+      ? 'WAITING_FOR_PREREQUISITE'
+      : observed?.status || (priorFail ? 'WAITING_FOR_PREREQUISITE' : 'UNVERIFIED');
     const gate = Object.freeze({
       ...def, status,
+      // Retain a signed historic observation for audit without promoting it.
+      reportedSignedStatus: observed?.status || null,
       proofRef: observed?.proofRef || '',
       observedAtUtc: observed?.observedAtUtc || '',
       typedBlocker: observed?.typedBlocker || '',
-      waitingOnGate: observed ? null : priorFail || null,
+      waitingOnGate: status === 'WAITING_FOR_PREREQUISITE'
+        ? prerequisiteNotProven || priorFail || null : null,
     });
     all.set(def.id, gate);
     return gate;

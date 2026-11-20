@@ -8,9 +8,12 @@ import { resolve, dirname, join, isAbsolute, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { captureAuthenticatedReviewDiffV1 } from '../shared/agents/sovereignAuthenticatedReviewDiffV1.mjs';
+import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
+import { admitSovereignLocalOllamaBindingV1, matchesSovereignLocalOllamaCompletionV1, sovereignLocalOllamaFailureReasonV1 } from '../shared/agents/sovereignReviewerOllamaBindingV1.mjs';
 
-import { resolveBattleBridgeGitExecution } from
+import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from
   '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { createBattleBridgeGitProbeContextV1, validateBattleBridgeGitProbeConfigurationV1 } from '../shared/agents/battleBridgeGitProbeContextV1.mjs';
 import { evaluateSovereignHighRiskCandidateV1 } from
   '../shared/agents/sovereignHighRiskReviewCandidateV1.mjs';
 import {
@@ -28,6 +31,7 @@ export const HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS = Object.freeze([
   'scripts/sovereign-high-risk-advisory-v1.mjs',
   'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
   'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'shared/agents/sovereignReviewCoverageV1.mjs',
   'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
   'shared/agents/sharedAgentWorkspaceStore.mjs',
@@ -46,23 +50,45 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   if (!SHA.test(head) || !SHA.test(base) || head === base) {
     throw Error('EXACT_HEAD_AND_BASE_REQUIRED');
   }
-  const git = args => {
+  // Isolate per-worktree configuration for native Windows candidate review.
+  // Shared Git settings, existing worktrees, refs and index remain untouched.
+  const probe = platform === 'win32' ? createBattleBridgeGitProbeContextV1(root) : null;
+  try {
+  const git = (args, maxBuffer = 512 * 1024) => {
+    probe?.assert();
     const execution = resolveGit({ platform, environment: env });
     const result = spawn(execution.executable, [
       ...execution.fixedConfigArgs,
-      '--git-dir=' + join(root, '.git'), '--work-tree=' + root, ...args,
+      ...(probe ? probe.repositoryArgs() : ['--git-dir=' + join(root, '.git'), '--work-tree=' + root]),
+      ...args,
     ], {
-      encoding: 'utf8', shell: false, windowsHide: true, timeout: 12_000,
-      maxBuffer: 512 * 1024, env: execution.environment,
+      cwd: root, encoding: 'utf8', shell: false, windowsHide: true, timeout: 12_000,
+      maxBuffer, env: execution.environment,
     });
-    if (result?.error || result?.status !== 0) throw Error('EXACT_LOCAL_GIT_READ_UNVERIFIED');
-    return String(result.stdout || '');
+    probe?.assert();
+    if (result?.error || result?.status !== 0 || typeof result.stdout !== 'string') {
+      throw Error('EXACT_LOCAL_GIT_READ_UNVERIFIED');
+    }
+    return result.stdout;
   };
+  // Status can invoke attribute-driven helpers. Admit the canonical raw local
+  // configuration before source scans, without following configuration includes.
+  const localConfig = git(['config','--local','--null','--list','--no-includes'], 16 * 1024);
+  const configAdmission = probe
+    ? validateBattleBridgeGitProbeConfigurationV1(localConfig, {
+      gitProbeContext: probe, repoRoot: root,
+    })
+    : validateBattleBridgeLocalGitConfiguration(localConfig);
+  if (!configAdmission.ok) {
+    throw Error('HIGH_RISK_REVIEWER_GIT_CONFIGURATION_UNSAFE');
+  }
   if (git(['rev-parse','HEAD']).trim().toLowerCase() !== head) throw Error('LOCAL_REVIEW_HEAD_MISMATCH');
   if (git(['symbolic-ref','--quiet','--short','HEAD']).trim() !== branch) {
     throw Error('LOCAL_REVIEW_BRANCH_MISMATCH');
   }
-  if (git(['status','--porcelain','--untracked-files=normal']).trim()) throw Error('DIRTY_REVIEW_CHECKOUT');
+  const statusLines = git(['-c','status.renames=false','status','--porcelain','--untracked-files=normal'])
+    .split('\n').map(line => line.endsWith('\r') ? line.slice(0, -1) : line).filter(Boolean);
+  if (classifyDirt(statusLines).blocksSync) throw Error('DIRTY_REVIEW_CHECKOUT');
   if (git(['rev-parse','--verify',base+'^{commit}']).trim().toLowerCase() !== base) {
     throw Error('BASE_COMMIT_NOT_PROVEN');
   }
@@ -77,8 +103,23 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
       throw Error('HIGH_RISK_REVIEWER_EXECUTABLE_BYTES_NOT_HEAD');
     }
   }
+  const gitExecution = resolveGit({platform, environment:env});
+  const reviewedGit = probe ? Object.freeze({
+    ...gitExecution,
+    fixedConfigArgs: Object.freeze([...gitExecution.fixedConfigArgs, ...probe.repositoryArgs()]),
+  }) : gitExecution;
   const {changedFiles,diff,reviewedObjectClosureSha256}=captureDiff({root,head,base,
-    git:resolveGit({platform,environment:env}),run:spawn});
+    git:reviewedGit,run:spawn});
+  probe?.assert();
+  if (probe) {
+    // The common Git configuration may not drift across the trust bracket.
+    // Keep its full original bytes and all other risky-key exclusions in scope.
+    const configAfter = git(['config','--local','--null','--list','--no-includes'], 16 * 1024);
+    if (configAfter !== localConfig
+      || !validateBattleBridgeGitProbeConfigurationV1(configAfter, {
+        gitProbeContext: probe, repoRoot: root,
+      }).ok) throw Error('HIGH_RISK_REVIEWER_GIT_CONFIGURATION_CHANGED');
+  }
   return Object.freeze({
     repository: text(env.STEPHANOS_REVIEW_REPOSITORY),
     issueNumber: Number(env.STEPHANOS_REVIEW_ISSUE),
@@ -90,6 +131,10 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
     implementerProvider: text(env.STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER),
     modelClass: text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL_CLASS || 'qwen-14b'),
   });
+  } finally {
+    // No unverified private metadata is deleted on a failed cleanup.
+    probe?.close();
+  }
 }
 
 // The same independently written VR/flat governor protects ordinary local
@@ -190,7 +235,6 @@ export async function localHighRiskModelV1(prompt, chunk, env = process.env, {
   const before = await modelPin(model, { fetchImpl });
   if (!before?.ok || before.digest !== pinned.digest)
     throw Error('HIGH_RISK_MODEL_DIGEST_CHANGED');
-  const immutableModel = 'sha256:' + pinned.digest;
   const controller = new AbortController();
   let preempted = false;
   const monitor = startPolling(() => {
@@ -205,11 +249,17 @@ export async function localHighRiskModelV1(prompt, chunk, env = process.env, {
     }
   }, 500);
   try {
+    const binding = await admitSovereignLocalOllamaBindingV1(pinned.digest, {
+      fetchImpl, signal: controller.signal,
+    });
+    if (preempted || controller.signal.aborted || !allowed()) {
+      throw Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
+    }
     const response = await fetchImpl(OLLAMA_URL, {
       method: 'POST', redirect: 'error',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: immutableModel, prompt, stream: false, format: 'json',
+        model: binding.model, prompt, stream: false, format: 'json',
         keep_alive: 0,
         options: { temperature: 0, num_ctx: 8192 },
       }),
@@ -223,8 +273,7 @@ export async function localHighRiskModelV1(prompt, chunk, env = process.env, {
     if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 65536)
       throw Error('LOCAL_MODEL_OUTPUT_TOO_LARGE');
     const parsed = JSON.parse(raw);
-    const returnedModel = text(parsed?.model).toLowerCase();
-    if (![immutableModel, 'sha256-' + pinned.digest].includes(returnedModel)
+    if (!matchesSovereignLocalOllamaCompletionV1(parsed, binding)
       || parsed?.done !== true || parsed?.done_reason !== 'stop'
       || typeof parsed?.response !== 'string'
       || Buffer.byteLength(parsed.response, 'utf8') > 12288)
@@ -234,6 +283,11 @@ export async function localHighRiskModelV1(prompt, chunk, env = process.env, {
       throw Error('HIGH_RISK_MODEL_OR_GAMING_CHANGED_DURING_INFERENCE');
     return Object.freeze({ response: parsed.response, modelDigestSha256: pinned.digest,
       chunkId: chunk?.chunkId, contentSha256: chunk?.contentSha256 });
+  } catch (error) {
+    if (preempted || controller.signal.aborted) {
+      throw Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
+    }
+    throw error;
   } finally {
     stopPolling(monitor);
   }
@@ -266,7 +320,18 @@ export async function runSovereignHighRiskAdvisoryV1({
     const modelBefore = await observeModel(model);
     if (!modelBefore?.ok || !/^[a-f0-9]{64}$/.test(modelBefore.digest ?? ''))
       throw Error('HIGH_RISK_REVIEW_MODEL_DIGEST_UNVERIFIED');
-    result = await evaluateSovereignHighRiskCandidateV1(identity, {invokeModel, modelDigestSha256:modelBefore.digest});
+    let bindingFailure = '';
+    result = await evaluateSovereignHighRiskCandidateV1(identity, {
+      modelDigestSha256:modelBefore.digest,
+      invokeModel:async (...args) => {
+        try { return await invokeModel(...args); }
+        catch (error) { bindingFailure = sovereignLocalOllamaFailureReasonV1(error); throw error; }
+      },
+    });
+    if (bindingFailure && result.status === 'SOVEREIGN_HIGH_RISK_REVIEW_HELD'
+      && result.reason === 'LOCAL_MODEL_UNAVAILABLE') {
+      result = { ...result, reason: bindingFailure };
+    }
     const modelAfter = await observeModel(model);
     if (!modelAfter?.ok || modelAfter.digest !== modelBefore.digest)
       throw Error('HIGH_RISK_REVIEW_MODEL_DIGEST_CHANGED');

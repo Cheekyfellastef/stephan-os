@@ -50,10 +50,14 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
   await mkdir(join(canonicalRoot,'scripts/windows'),{recursive:true});
   const governorFile=join(sharedWorkspaceRoot,'vr/vr-resource-governor-current.json').replaceAll("'","''");
   const canonical=await readFile(join(repo,'scripts/windows/run-vr-resource-governor.ps1'),'utf8');
-  const actionStart=canonical.indexOf("if ($Action -eq 'ObserveAdmission') {"),
-    actionEnd=canonical.indexOf("if ($Action -eq 'SetAuto') {",actionStart);
+  const actionStart=canonical.indexOf("if ($MyInvocation.InvocationName -ne '.' -and $Action -eq 'ObserveAdmission') {"),
+    actionEnd=canonical.indexOf('function Invoke-GovernorOneShot {',actionStart);
   assert.ok(actionStart>0&&actionEnd>actionStart);
   const admissionAction=canonical.slice(actionStart,actionEnd);
+  // Keep the actual read-only branch separate from the serialized mutation
+  // entry. The latter owns SetAuto/Status and must never enter this fixture.
+  assert.match(admissionAction,/readOnly = \$true/);
+  assert.doesNotMatch(admissionAction,/Enter-GovernorMutationOwner|Invoke-GovernorOneShot/);
   let detector='';
   if(realFlatSignal) {
     const start=canonical.indexOf('function Get-FlatGameSignal {'),end=canonical.indexOf('function Get-GamingSignal {',start);
@@ -87,6 +91,21 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
   }
   if(sourcePatch) await writeFile(join(canonicalRoot,'shared/agents/rescueIslandSecondLaneV1.mjs'),
     '// '+('actual large Windows baseline '.repeat(500))+'\nexport const lane = 1;\n');
+  // Git is launched with guarded core.autocrlf=true on the real Windows test
+  // runner. Track only the isolated JavaScript source/test dependencies as
+  // byte-preserved blobs, so their raw worktree bytes match the committed
+  // source identity checked by the production recovery guard. Never relax it.
+  const bytePreservedFixturePaths=[
+    'rescueIslandPreflightV1.mjs','rescueIslandPreflightV1.test.mjs',
+    'rescueIslandSourceTaskV1.mjs','rescueIslandSourceTaskV1.test.mjs',
+    'rescueIslandSupervisedRunV1.test.mjs','rescueIslandFirstCommitV1.mjs',
+    'rescueIslandAuthenticatedGithubReadV1.mjs','rescueIslandPilotOwnerIntakeV1.mjs',
+    'battleBridgeWindowsHosts.mjs','rescueIslandNativeTestProvisionV1.mjs',
+    'rescueIslandSupervisedHostV1.mjs','rescueIslandSupervisedHostV1.windows.mjs',
+    'rescueIslandSecondLaneV1.mjs',
+  ];
+  await writeFile(join(canonicalRoot,'.gitattributes'),
+    bytePreservedFixturePaths.map(name=>'shared/agents/'+name+' -text').join('\n')+'\n');
   git(canonicalRoot,['init','-b','main']);git(canonicalRoot,['add','.']);
   git(canonicalRoot,['-c','user.name=Adapter Fixture','-c','user.email=fixture@example.invalid','commit','-m','Adapter fixture baseline']);
   git(canonicalRoot,['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
@@ -259,13 +278,32 @@ test('changed governor source is rejected before that script executes',async t=>
 });
 test('Windows CRLF checkout executes only the preserved exact governor Git blob',async t=>{
   const f=await fixture(t),script=join(f.config.canonicalRoot,'scripts/windows/run-vr-resource-governor.ps1');
-  const approved=await readFile(script,'utf8');await writeFile(script,approved.replace(/\n/g,'\r\n'));
+  const approved=await readFile(script,'utf8');
+  // The fixture incorporates a real checked-out PowerShell action which may
+  // already contain CRLF on the Windows runner. Canonicalise to LF first so
+  // this test exercises *ordinary* CRLF, never accidental CR-CR-LF bytes.
+  const withWindowsNewlines=approved.replace(/\r\n/g,'\n').replace(/\n/g,'\r\n');
+  // Independently read the exact committed Git blob as raw bytes. Comparing
+  // against the earlier mixed-EOL worktree would mistake valid normalization
+  // for a source-integrity failure after the correct fixed source executes.
+  const approvedBlob=git(f.config.canonicalRoot,['rev-parse',f.task.baseHead+':scripts/windows/run-vr-resource-governor.ps1']);
+  const committed=spawnSync(resolveBattleBridgeGitExecutable(),
+    [...battleBridgeGitFixedConfigArgs(),'-C',f.config.canonicalRoot,'cat-file','blob',approvedBlob],
+    {encoding:null,shell:false,windowsHide:true,timeout:30000,
+      env:createBattleBridgeMinimalChildEnvironment(process.env,{git:true})});
+  assert.equal(committed.status,0,String(committed.stderr||''));
+  assert.ok(Buffer.isBuffer(committed.stdout));
+  assert.doesNotMatch(withWindowsNewlines,/\r\r\n/);
+  await writeFile(script,withWindowsNewlines);
+  assert.notDeepEqual(await readFile(script),committed.stdout,
+    'test must exercise ordinary CRLF worktree bytes distinct from the Git blob');
   await f.host.host.withExistingOwnerAdmission(f.expected,async()=>{
     await f.host.host.observeSupervisedAdmission({...f.expected,stage:'BEFORE_PREPARATION'});
   });
   const inputs=join(f.config.sharedWorkspaceRoot,'proof/rescue-island-01-inputs');
   const files=await readdir(inputs);assert.equal(files.length,1);
-  assert.equal(await readFile(join(inputs,files[0]),'utf8'),approved);
+  assert.deepEqual(await readFile(join(inputs,files[0])),committed.stdout,
+    'only the exact independently read HEAD blob may be materialized for execution');
 });
 test('replacing a physical estate root between observations is held',async t=>{
   const f=await fixture(t);

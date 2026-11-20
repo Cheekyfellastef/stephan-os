@@ -55,6 +55,7 @@ internal static class OriginalR7SigningProviderTests
             Sessions(own, witnessPath);
             Profiles();
             Interop(own, script, witnessPath, operatorPath);
+            ProspectiveInterop(own, script);
             CheckLoadedProvider();
             Console.WriteLine("R7_SIGNING_PROVIDER_ASSERTIONS_PASSED=" + total);
             Console.WriteLine("R7_SIGNING_TEST_ONLY_ROOTS=true");
@@ -306,6 +307,168 @@ internal static class OriginalR7SigningProviderTests
             OriginalR7SigningPrimitives.DomainMessage(OriginalR7SignaturePurpose.Operator,wire))) };
         record["osWitness"]=Part(wire,wrongDomain);Save();
         Check(!Node(script,"verify",metadata).GetProperty("scoped").GetProperty("authenticated").GetBoolean(),"WRONG_SIGNATURE_DOMAIN_REJECTED");
+    }
+
+
+    private static void ProspectiveInterop(string own, string script)
+    {
+        JsonElement domains=Node(script,"prospective-domains","");
+        byte[] sample=Wire(new { fixture="current-claim encoding only + / =", revision=6 });
+        byte[][] messages={
+            OriginalR7SigningPrimitives.DomainMessage(OriginalR7SignaturePurpose.Witness,sample),
+            OriginalR7SigningPrimitives.DomainMessage(OriginalR7SignaturePurpose.Operator,sample),
+            OriginalR7SigningPrimitives.ProspectiveDomainMessage(ProspectiveProcessingClaimSignaturePurpose.Witness,sample),
+            OriginalR7SigningPrimitives.ProspectiveDomainMessage(ProspectiveProcessingClaimSignaturePurpose.Operator,sample)
+        };
+        Check(messages[2].SequenceEqual(Encoding.UTF8.GetBytes(domains.GetProperty("witness").GetString()!).Concat(sample)),
+            "PROSPECTIVE_WITNESS_DOMAIN_MATCHES_ACTUAL_CONSUMER");
+        Check(messages[3].SequenceEqual(Encoding.UTF8.GetBytes(domains.GetProperty("operator").GetString()!).Concat(sample)),
+            "PROSPECTIVE_OPERATOR_DOMAIN_MATCHES_ACTUAL_CONSUMER");
+        byte[] publicKey=OriginalR7SigningPrimitives.PublicKey(WitnessSeed);
+        for(int i=0;i<messages.Length;i++) {
+            byte[] sig=OriginalR7SigningPrimitives.SignDetached(WitnessSeed,messages[i]);
+            for(int j=0;j<messages.Length;j++)
+                Check(OriginalR7SigningPrimitives.Verify(publicKey,messages[j],sig)==(i==j),
+                    "ALL_FOUR_PURPOSE_VERSION_DOMAINS_ARE_SEPARATE");
+        }
+        foreach(string malformed in new[]{"[]","{} ","{\"x\":1,\"x\":1}","{\"x\":null}",
+            "{\"x\":{}}","{\"x\":1.0}","{\"x\":9007199254740992}","{\"0\":0}",
+            "{\"x\":\"é\"}","{\"x\":\"\\u0061\"}","{\"x\":\"\\n\"}"})
+            foreach(ProspectiveProcessingClaimSignaturePurpose purpose in Enum.GetValues<ProspectiveProcessingClaimSignaturePurpose>())
+                Reject(()=>OriginalR7SigningPrimitives.ProspectiveDomainMessage(purpose,Encoding.UTF8.GetBytes(malformed)),
+                    "PROSPECTIVE_CANONICAL_WIRE_HELD");
+        Reject(()=>OriginalR7SigningPrimitives.ProspectiveDomainMessage(
+            (ProspectiveProcessingClaimSignaturePurpose)99,sample),"PROSPECTIVE_UNKNOWN_PURPOSE_HELD");
+        Reject(()=>OriginalR7SigningPrimitives.ProspectiveDomainMessage(
+            ProspectiveProcessingClaimSignaturePurpose.Witness,new byte[OriginalR7SigningPrimitives.MaxPayloadBytes+1]),
+            "PROSPECTIVE_WIRE_BOUND");
+
+        string worktree=Path.Combine(own,"prospective-source + = apostrophe'");
+        Directory.CreateDirectory(worktree);
+        string canonical=Node(script,"path",worktree).GetProperty("canonicalWorktree").GetString()!;
+        var expected=new Dictionary<string,object>{
+            ["repository"]="Cheekyfellastef/stephan-os",["missionId"]="critical-4321-elastic-goal",
+            ["missionRevision"]=6,["sourceExecutionId"]="critical-4321-elastic-goal-r5-012345abcdef",
+            ["sourceExecutionLeaseKey"]="critical-4321-elastic-goal-r5-lease",
+            ["processingClaimSha256"]=H("SYNTHETIC_CURRENT_CLAIM_ONLY"),
+            ["sourceRevision"]=new string('a',40),["operatorSourceRevision"]=new string('b',40),
+            ["branch"]="openclaw/elastic-goal-4321",["worktreePath"]=canonical,
+            ["commandId"]="fixture-prospective-command",["requestId"]="fixture-prospective-request"
+        };
+        // Public RFC8032 roots and synthetic physical assertions ONLY. No actual
+        // mission, host policy, retained native proof or enrolled key is used.
+        var witness=new Dictionary<string,object>(expected){
+            ["historicalTerminalReceiptPresent"]=false,["historicalTerminalReceiptReconstructed"]=false,
+            ["historicalExecutionOutcome"]="UNKNOWN",["activeOriginalSourceWriters"]=0,
+            ["oldWriterAccessRevoked"]=true,["outOfJobExecutionRevoked"]=true,
+            ["wmiComRelaunchDenied"]=true,["scheduledTaskRelaunchDenied"]=true,
+            ["sourceWriteAccessDeniedToOriginalPrincipals"]=true,["testedOldPrincipalWriteDenied"]=true,
+            ["otherKnownWriterQueuesQuiesced"]=true,["exactProcessingClaimQuarantinable"]=true,
+            ["containmentRemainsEnforced"]=true,["independentOsWitnessSid"]=WitnessSid,
+            ["osEvidenceDigest"]=H("SYNTHETIC_NOT_NATIVE_EVIDENCE"),
+            ["denyAclPolicyDigest"]=H("SYNTHETIC_NOT_ADOPTED_POLICY"),
+            ["protectedWitnessLogId"]="fixture-prospective-log",
+            ["containmentEffectiveAtUtc"]="2026-11-05T12:16:00.000Z",
+            ["observedAtUtc"]="2026-11-05T12:17:00.000Z",["signedAtUtc"]="2026-11-05T12:18:00.000Z"
+        };
+        var approval=new Dictionary<string,object>{
+            ["repository"]=expected["repository"],["missionId"]=expected["missionId"],
+            ["missionRevision"]=6,["sourceExecutionId"]=expected["sourceExecutionId"],
+            ["sourceExecutionLeaseKey"]=expected["sourceExecutionLeaseKey"],
+            ["processingClaimSha256"]=expected["processingClaimSha256"],
+            ["commandId"]=expected["commandId"],["requestId"]=expected["requestId"],
+            ["historicalOutcomeRemainsUnknown"]=true,["deferGoalNotComplete"]=true,
+            ["operatorApprovalKind"]="QUARANTINE_UNKNOWN_PROCESSING_CLAIM_ONLY",
+            ["operatorSid"]=OperatorSid,["approvedAtUtc"]="2026-11-05T12:19:00.000Z"
+        };
+        string recordPath=Path.Combine(own,"test-only-prospective-record.json");
+        string publicWitness=Path.Combine(own,"test-only-prospective-witness.pem");
+        string publicOperator=Path.Combine(own,"test-only-prospective-operator.pem");
+        File.WriteAllText(publicWitness,OriginalR7SigningPrimitives.PublicPem(publicKey),new UTF8Encoding(false));
+        File.WriteAllText(publicOperator,OriginalR7SigningPrimitives.PublicPem(
+            OriginalR7SigningPrimitives.PublicKey(OperatorSeed)),new UTF8Encoding(false));
+        string metadata=Path.Combine(own,"test-only-prospective-metadata.json");
+        File.WriteAllBytes(metadata,Wire(new{recordPath,witnessPublicPath=publicWitness,
+            operatorPublicPath=publicOperator,expected,clockUtc="2026-11-05T12:20:00.000Z"}));
+        byte[] canonicalWitness=Array.Empty<byte>();
+        OriginalR7SoftwareSignature Signature(byte[] seed,byte[] message) {
+            try {
+                byte[] pub=OriginalR7SigningPrimitives.PublicKey(seed);
+                string pem=OriginalR7SigningPrimitives.PublicPem(pub);
+                return new("Ed25519",pem,Sha(OriginalR7SigningPrimitives.PublicSpki(pub)),
+                    H(pem),Convert.ToBase64String(OriginalR7SigningPrimitives.SignDetached(seed,message)));
+            } finally {CryptographicOperations.ZeroMemory(message);}
+        }
+        void Publish(Func<byte[],byte[]>? witnessMessage=null,Func<byte[],byte[]>? operatorMessage=null,
+            bool wrongEnvelopeDigest=false) {
+            byte[] claims=Wire(witness);
+            var sig=Signature(WitnessSeed,witnessMessage?.Invoke(claims)
+                ??OriginalR7SigningPrimitives.ProspectiveDomainMessage(ProspectiveProcessingClaimSignaturePurpose.Witness,claims));
+            Check(!sig.PolicyAdopted&&!sig.KeyCustodyProven&&!sig.NativeContainmentProven&&!sig.LeaseReleaseAuthorized,
+                "PROSPECTIVE_ALGORITHM_OUTPUT_HAS_NO_PRODUCTION_AUTHORITY");
+            canonicalWitness=OriginalR7SigningPrimitives.CanonicalProspectiveSignaturePart(
+                ProspectiveProcessingClaimSignaturePurpose.Witness,claims,sig);
+            approval["witnessDigest"]=wrongEnvelopeDigest
+                ?Sha(JsonSerializer.SerializeToUtf8Bytes(Part(claims,sig))):Sha(canonicalWitness);
+            byte[] approved=Wire(approval);
+            var op=Signature(OperatorSeed,operatorMessage?.Invoke(approved)
+                ??OriginalR7SigningPrimitives.ProspectiveDomainMessage(ProspectiveProcessingClaimSignaturePurpose.Operator,approved));
+            byte[] canonicalApproval=OriginalR7SigningPrimitives.CanonicalProspectiveSignaturePart(
+                ProspectiveProcessingClaimSignaturePurpose.Operator,approved,op);
+            using JsonDocument a=JsonDocument.Parse(canonicalApproval);
+            var record=new Dictionary<string,object>{["schemaVersion"]="stephanos.original-source-prospective-quarantine.v1",
+                ["osWitness"]=Part(claims,sig),["operatorApproval"]=a.RootElement.Clone()};
+            File.WriteAllBytes(recordPath,JsonSerializer.SerializeToUtf8Bytes(record));
+        }
+        JsonElement Verify()=>Node(script,"verify-prospective",metadata);
+        void Rejected(string reason,string label) {
+            JsonElement actual=Verify().GetProperty("scoped");
+            Check(!actual.GetProperty("authenticated").GetBoolean()&&actual.GetProperty("blocker").GetString()==reason,label);
+        }
+        Publish();
+        JsonElement valid=Verify(), scoped=valid.GetProperty("scoped");
+        Check(valid.GetProperty("testOnlyTrust").GetBoolean()&&scoped.GetProperty("authenticated").GetBoolean(),
+            "ACTUAL_CURRENT_CLAIM_CONSUMER_ACCEPTS_SYNTHETIC_CRYPTO_FIXTURE");
+        Check(scoped.GetProperty("processingClaimQuarantineAuthority").GetBoolean()
+            &&scoped.GetProperty("eligibilityOnly").GetBoolean()
+            &&!scoped.GetProperty("leaseReleaseAuthority").GetBoolean()
+            &&!scoped.GetProperty("sourceMutationAuthority").GetBoolean()
+            &&!scoped.GetProperty("materialPickupProven").GetBoolean()
+            &&!scoped.GetProperty("goalComplete").GetBoolean(),"EVEN_ACCEPTED_FIXTURE_HAS_NO_BUILD_OR_LEASE_AUTHORITY");
+        Check(valid.GetProperty("noProductionPins").GetProperty("blocker").GetString()=="PROSPECTIVE_ORPHAN_TRUST_ROOTS_UNPROVEN",
+            "REAL_UNENROLLED_CONTEXT_STILL_REFUSES");
+        Check(valid.GetProperty("interpretedWitnessDigest").GetString()==Sha(canonicalWitness),
+            "CURRENT_CONSUMER_WITNESS_ENVELOPE_DIGEST_EXACT");
+
+        Publish(witnessMessage:b=>OriginalR7SigningPrimitives.DomainMessage(OriginalR7SignaturePurpose.Witness,b));
+        Rejected("PROSPECTIVE_ORPHAN_ATTESTATIONS_UNAUTHENTICATED","LEGACY_WITNESS_DOMAIN_CANNOT_SIGN_CURRENT_CLAIM");
+        Publish(operatorMessage:b=>OriginalR7SigningPrimitives.DomainMessage(OriginalR7SignaturePurpose.Operator,b));
+        Rejected("PROSPECTIVE_ORPHAN_ATTESTATIONS_UNAUTHENTICATED","LEGACY_OPERATOR_DOMAIN_CANNOT_APPROVE_CURRENT_CLAIM");
+        Publish(witnessMessage:b=>OriginalR7SigningPrimitives.ProspectiveDomainMessage(
+            ProspectiveProcessingClaimSignaturePurpose.Operator,b));
+        Rejected("PROSPECTIVE_ORPHAN_ATTESTATIONS_UNAUTHENTICATED","CURRENT_OPERATOR_DOMAIN_CANNOT_SIGN_WITNESS");
+        Publish(operatorMessage:b=>OriginalR7SigningPrimitives.ProspectiveDomainMessage(
+            ProspectiveProcessingClaimSignaturePurpose.Witness,b));
+        Rejected("PROSPECTIVE_ORPHAN_ATTESTATIONS_UNAUTHENTICATED","CURRENT_WITNESS_DOMAIN_CANNOT_SIGN_APPROVAL");
+
+        witness["processingClaimSha256"]=H("DIFFERENT_SYNTHETIC_CLAIM");Publish();
+        Rejected("PROSPECTIVE_ORPHAN_PHYSICAL_CONTAINMENT_UNPROVEN","RESIGNED_DIFFERENT_CLAIM_REFUSED");
+        witness["processingClaimSha256"]=expected["processingClaimSha256"];
+        witness["containmentRemainsEnforced"]=false;Publish();
+        Rejected("PROSPECTIVE_ORPHAN_PHYSICAL_CONTAINMENT_UNPROVEN","RESIGNED_OBSERVATION_WITHOUT_CONTAINMENT_REFUSED");
+        witness["containmentRemainsEnforced"]=true;
+        approval["operatorApprovalKind"]="QUARANTINE_ORIGINAL_EXECUTION_ONLY";Publish();
+        Rejected("PROSPECTIVE_ORPHAN_INDEPENDENT_OPERATOR_APPROVAL_UNPROVEN","LEGACY_APPROVAL_INTENT_REFUSED");
+        approval["operatorApprovalKind"]="QUARANTINE_UNKNOWN_PROCESSING_CLAIM_ONLY";
+        approval["approvedAtUtc"]="2026-11-05T12:17:00.000Z";Publish();
+        Rejected("PROSPECTIVE_ORPHAN_CURRENT_ATTESTATION_UNPROVEN","APPROVAL_BEFORE_CURRENT_WITNESS_REFUSED");
+        approval["approvedAtUtc"]="2026-11-05T12:19:00.000Z";
+        Publish(wrongEnvelopeDigest:true);
+        Rejected("PROSPECTIVE_ORPHAN_INDEPENDENT_OPERATOR_APPROVAL_UNPROVEN","DIFFERENT_ENVELOPE_BYTES_REFUSED");
+        Publish();
+        Check(Verify().GetProperty("scoped").GetProperty("authenticated").GetBoolean(),"CURRENT_FIXTURE_RECOVERS_WITH_CORRECT_ENCODING");
+        Console.WriteLine("R7_PROSPECTIVE_SIGNATURE_CODEC_INTEROP_PASSED=true");
+        Console.WriteLine("R7_CURRENT_CLAIM_PRODUCTION_ISSUER_AVAILABLE=false");
     }
 
     private static Dictionary<string,object> Part(byte[] wire,OriginalR7SoftwareSignature signature)

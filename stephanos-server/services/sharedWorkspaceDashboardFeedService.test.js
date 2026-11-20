@@ -10,6 +10,7 @@ import {
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { SHARED_WORKSPACE_FEED_RECORD_SCOPES } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
 import { readBackendSharedWorkspaceDashboardFeed } from './sharedWorkspaceDashboardFeedService.js';
+import { projectGoalBuildJourneyV1 } from '../../shared/agents/goalBuildConveyorV1.mjs';
 
 async function createWorkspace() {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-backend-dashboard-feed-'));
@@ -236,4 +237,92 @@ test('complete Shared Workspace estate reaches the local dashboard without the l
   assert.equal(feed.projection.goalEstate.stateCounts.active, 6);
   assert.equal(feed.projection.goalEstate.stateCounts.eligible, 80);
   assert.equal(feed.diagnosticTrace.find((hop) => hop.hop === 'goal-estate-summary')?.openGoalCount, 86);
+});
+
+// Included in the real hosted surface/ignition Node job, not only a local trace fixture.
+test('Goal #2961 hosted dashboard: repeated worker gates fail closed under current-looking BUILDING truth', () => {
+  const goal = {
+    issue: '#2002', statusTruth: 'CURRENT', state: 'ACTIVE',
+    buildTruthTruth: 'CURRENT', buildState: 'BUILDING', builder: 'mission-worker-1',
+  };
+  for (const states of [['BLOCKED', 'PASS'], ['PASS', 'BLOCKED'], ['PASS', 'PASS']]) {
+    const journey = projectGoalBuildJourneyV1(goal, {
+      issueNumber: 2002, missionId: 'critical-2002-goal-building-self-hosting',
+      gates: [
+        { id: 'WORKER', state: states[0] },
+        { id: 'worker', state: states[1] },
+      ],
+    });
+    assert.equal(journey.exactAutonomyTrackBound, true);
+    assert.equal(journey.stages.find(stage => stage.id === 'PICKED_UP').trafficLight, 'RED');
+    assert.equal(journey.stages.find(stage => stage.id === 'PICKED_UP').reason, 'DUPLICATE_AUTONOMY_GATE_ID');
+    assert.notEqual(journey.stages.find(stage => stage.id === 'BUILDING').trafficLight, 'GREEN');
+    assert.equal(journey.currentTrafficLight, 'RED');
+    assert.equal(journey.stages.find(stage => stage.id === 'GOAL').trafficLight, 'GREEN');
+  }
+});
+
+// Hosted dashboard/surface CI must execute the same physical proof regressions.
+test('Goal #2961 hosted display never counts downstream PASS when worker custody is contradictory', () => {
+  const goal = {
+    issue: '#2002', state: 'ACTIVE', statusTruth: 'CURRENT',
+    buildState: 'BUILDING', buildTruthTruth: 'CURRENT', builder: 'mission-worker-1',
+  };
+  for (const downstream of ['SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT']) {
+    const journey = projectGoalBuildJourneyV1(goal, {
+      issueNumber: 2002, missionId: 'critical-2002-goal-building-self-hosting',
+      gates: [
+        { id: 'CLAIM', state: 'PASS' },
+        { id: 'WORKER', state: 'PASS' }, { id: 'worker', state: 'PASS' },
+        { id: downstream, state: 'PASS' },
+      ],
+    });
+    assert.equal(journey.stages.find((s) => s.id === 'PICKED_UP').trafficLight, 'RED');
+    for (const id of ['BUILDING', 'BUILT', 'TESTED', 'COMPLETED']) {
+      assert.notEqual(journey.stages.find((s) => s.id === id).trafficLight, 'GREEN', downstream + ':' + id);
+    }
+  }
+});
+
+// The hosted dashboard cannot claim physical material work when an earlier
+// eligibility/selection/mission gate is missing or contradicts a later WORKER.
+test('Goal #2961 hosted dashboard keeps physical stages amber/red for upstream mission holds', () => {
+  const goal = {
+    issue: '#2002', state: 'ACTIVE', statusTruth: 'CURRENT',
+    selectedForAdmission: true, buildState: 'BUILDING',
+    buildTruthTruth: 'CURRENT', builder: 'mission-worker-1',
+  };
+  const gateIds = ['ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER', 'TERMINAL_RECEIPT'];
+  for (const bad of ['ELIGIBLE_GOAL', 'SELECT', 'MISSION']) {
+    for (const state of ['BLOCKED', 'WAITING']) {
+      const gates = gateIds.map((id) => ({ id, state: id === bad ? state : 'PASS' }));
+      const journey = projectGoalBuildJourneyV1(goal, {
+        issueNumber: 2002, missionId: 'critical-2002-goal-building-self-hosting', gates,
+      });
+      assert.notEqual(journey.stages.find((s) => s.id === 'PICKED_UP')?.trafficLight, 'GREEN');
+      for (const id of ['BUILDING', 'BUILT', 'TESTED', 'COMPLETED']) {
+        assert.notEqual(journey.stages.find((s) => s.id === id)?.trafficLight, 'GREEN', bad + ':' + state + ':' + id);
+      }
+    }
+  }
+});
+
+test('Goal #2961 hosted dashboard refuses synthetic logical PASS as native pickup', () => {
+  const goal = {
+    issue: '#2002', state: 'ACTIVE', statusTruth: 'CURRENT',
+    buildState: 'BUILDING', buildTruthTruth: 'CURRENT', builder: 'simulated-worker',
+    selectedForAdmission: true, buildProofRefs: ['receipt:synthetic'],
+    physicalPickupProven: true,
+  };
+  const gates = ['ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER',
+    'SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT'].map((id) => ({ id, state: 'PASS' }));
+  const j = projectGoalBuildJourneyV1(goal, {
+    issueNumber: 2002, missionId: 'synthetic-no-private-witness', gates,
+    physicalPickupProven: true,
+  });
+  assert.equal(j.logicalWorkerHandoffReported, true);
+  assert.equal(j.physicalPickupProven, false);
+  for (const id of ['PICKED_UP', 'BUILDING', 'BUILT', 'TESTED', 'COMPLETED']) {
+    assert.notEqual(j.stages.find(s => s.id === id)?.trafficLight, 'GREEN', id);
+  }
 });

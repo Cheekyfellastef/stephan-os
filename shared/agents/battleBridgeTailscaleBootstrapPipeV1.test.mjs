@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -23,7 +24,6 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const NOW = new Date('2026-08-07T13:45:00.000Z');
-const CANONICAL_MAILBOX_ISSUE = 3149;
 
 function command(overrides = {}) {
   return {

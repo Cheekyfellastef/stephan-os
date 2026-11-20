@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -50,7 +51,7 @@ test('a recent valid exact-head command may remain non-blocking during ingress g
       requestId: 'recent-exact-head-ingress-probe-0001',
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 3149,
+      issueNumber: activeMailboxIssueForTest,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead: HEAD,

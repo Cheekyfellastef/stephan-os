@@ -197,17 +197,42 @@ export async function assertMissionWorkerPendingCapacityCurrent(item, bytes, opt
   if (history.entries.length && history.entries.at(-1).record.admittedEnvelopeSha256 !== digest(bytes)) {
     throw capacityRefusal('RECOVERY_REQUIRED');
   }
+  // The original pending envelope is just as exclusive as a renewed one.
+  // Previously the exact caller/persisted grant check ran only after a capacity
+  // refresh. A different controller grant could therefore claim a first-issue
+  // pending item while still matching its advisory mission/action identifier.
+  // Keep legacy *identical* old grants valid, but refuse any changed authority.
+  if (options.actionGrant && !(
+    missionWorkerActionGrantsMatchV1(item.actionGrant, options.actionGrant)
+    || isDeepStrictEqual(item.actionGrant, options.actionGrant)
+  )) {
+    throw capacityRefusal('GRANT_MISMATCH');
+  }
   if (history.entries.length && !missionWorkerActionGrantsMatchV1(item.actionGrant, options.actionGrant)) {
     throw capacityRefusal('GRANT_MISMATCH');
   }
   if (item.actionGrant) {
     const grant = item.actionGrant;
     const action = buildMissionWorkerAction(state, { ...options, actionGrant: grant });
+    // The first published envelope has no renewal journal yet, but the full
+    // modern grant, action payload and execution binding must ALREADY agree.
+    // Older partial pre-contract envelopes remain eligible only when their
+    // stored binding and exact caller identity agree; a malformed modern grant
+    // cannot silently fall back to the legacy compatibility path.
+    const fullyBoundGrant = missionWorkerActionGrantsMatchV1(grant, grant);
+    const isSourceCapacityGrant = ['codex', 'foundry-forge', 'chatgpt-github',
+      'openclaw-standalone', 'openclaw-local', 'desktop-commander',
+      'sovereign-commander', 'stephanos-native'].includes(grant.adapter)
+      || Boolean(text(grant.capacityRoute) || text(item.payload.capacityRoute));
     if (!state || state.missionId !== grant.missionId || state.revision !== grant.missionRevision
         || state.currentPhase !== grant.currentPhase || state.dispatch?.status !== 'pending'
         || action.executable !== true || action.actionId !== grant.actionId
         || action.actionKind !== grant.actionKind || adapterForAction(action) !== grant.adapter
         || item.payload.actionId !== action.actionId || item.payload.missionId !== state.missionId
+        || !isDeepStrictEqual(item.executionBinding, durableQueueExecutionBinding(grant))
+        || (isSourceCapacityGrant && Object.hasOwn(grant, 'grantId') && !fullyBoundGrant)
+        || (fullyBoundGrant && (!validateExactActionGrant(state, action, grant, options).valid
+          || !isDeepStrictEqual(item.payload, action)))
         || (history.entries.length && (!validateExactActionGrant(state, action, grant, options).valid
           || !isDeepStrictEqual(item.payload, action)))) throw capacityRefusal('MISSION_CHANGED');
   }

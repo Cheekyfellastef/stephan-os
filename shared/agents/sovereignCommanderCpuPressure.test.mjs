@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -81,7 +82,7 @@ const CPU_COMMAND = Object.freeze({
   requestId: 'test-fixed-cpu-snapshot',
   operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
   repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 3149,
+  issueNumber: activeMailboxIssueForTest,
   branch: 'main',
   operatorApproval: 'operator-approved',
   expectedHead: CPU_HEAD,
@@ -159,7 +160,7 @@ function publicCpuReceipt(cpu) {
     requestId: 'cpu-public-proof-test-0001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 3149, branch: 'main',
+    issueNumber: activeMailboxIssueForTest, branch: 'main',
     state: 'DONE',
     expectedHead: CPU_HEAD, processSourceHead: CPU_HEAD,
     proofRefs: [],

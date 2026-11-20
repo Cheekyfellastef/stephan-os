@@ -12,9 +12,8 @@ const event = (patch = {}) => ({
 });
 test('new canonical shard allows event ingress but grants zero protected authority', () => {
   const result = evaluateCanonicalMailboxWorkflowEvent(event(), { mode: 'receipt' });
-  assert.equal(CANONICAL_MAILBOX_ISSUE, 3149);
   assert.equal(result.admitted, true);
-  assert.equal(result.issueNumber, 3149);
+  assert.equal(result.issueNumber, CANONICAL_MAILBOX_ISSUE);
   assert.equal(result.downstreamExactCommandValidationRequired, true);
   assert.equal(result.sourceMutationAuthority, false);
   assert.equal(result.mergeAuthority, false);

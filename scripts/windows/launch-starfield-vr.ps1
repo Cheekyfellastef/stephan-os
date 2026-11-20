@@ -17,6 +17,7 @@ if (-not $ProfilePath) {
 }
 $receiptRoot = Join-Path $workspaceRoot 'vr\starfield-vr-launch-receipts'
 $latestReceiptPath = Join-Path $workspaceRoot 'vr\starfield-vr-launch-current.json'
+$latestReadinessPath = Join-Path $workspaceRoot 'vr\starfield-vr-readiness-current.json'
 $decisionScript = Join-Path $repositoryRoot 'scripts\starfield-vr-launch-decision.mjs'
 $performanceModeScript = Join-Path $repositoryRoot 'scripts\windows\starfield-vr-performance-mode.ps1'
 $gamingResourceGovernorScript = Join-Path $repositoryRoot 'scripts\windows\run-vr-resource-governor.ps1'
@@ -52,8 +53,10 @@ function Write-LaunchReceipt {
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
     $receiptPath = Join-Path $receiptRoot "starfield-vr-launch-$timestamp.json"
     $json = $receipt | ConvertTo-Json -Depth 12
-    $json | Set-Content -LiteralPath $receiptPath -Encoding UTF8
-    $json | Set-Content -LiteralPath $latestReceiptPath -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($receiptPath, $json + [Environment]::NewLine, $utf8NoBom)
+    $latestPath = if ($ReadinessOnly) { $latestReadinessPath } else { $latestReceiptPath }
+    [System.IO.File]::WriteAllText($latestPath, $json + [Environment]::NewLine, $utf8NoBom)
     return $receiptPath
 }
 
@@ -142,31 +145,59 @@ function Get-ActiveOpenXrRuntimePath {
 function Start-StarfieldWithMetaAirLinkIsolation {
     param(
         [Parameter(Mandatory)][string]$ExecutablePath,
-        [Parameter(Mandatory)][string]$WorkingDirectory
+        [Parameter(Mandatory)][string]$WorkingDirectory,
+        $VisualTelemetry = $null
     )
 
-    # Virtual Desktop registers an implicit Oculus-compatibility OpenXR layer
-    # system-wide. Meta Air Link does not need that layer, and crash evidence
-    # shows it loaded alongside Meta's runtime. Use the layer's own supported
-    # disable environment only for the Starfield child process.
-    $previous = [Environment]::GetEnvironmentVariable(
+    # Child-only environment changes keep Virtual Desktop's compatibility layer
+    # out of the Meta route while enabling the pass-through Stephanos OpenXR
+    # telemetry layer for the exact game process when a verified sensor contract exists.
+    $environmentNames = @(
         $virtualDesktopOculusCompatibilityDisableEnvironment,
-        'Process'
+        'XR_API_LAYER_PATH',
+        'XR_ENABLE_API_LAYERS',
+        'STEPHANOS_VR_TELEMETRY_TRACE_PATH',
+        'STEPHANOS_VR_TELEMETRY_TARGET_EXE',
+        'STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID',
+        'STEPHANOS_VR_TELEMETRY_GAME_ID'
     )
+    $previous = @{}
+    foreach ($name in $environmentNames) {
+        $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
     try {
-        [Environment]::SetEnvironmentVariable(
-            $virtualDesktopOculusCompatibilityDisableEnvironment,
-            '1',
-            'Process'
-        )
+        [Environment]::SetEnvironmentVariable($virtualDesktopOculusCompatibilityDisableEnvironment, '1', 'Process')
+        if ($VisualTelemetry) {
+            if ([bool]$VisualTelemetry.capabilities.modifiesFrameData -ne $false) { throw 'VR telemetry layer must be pass-through.' }
+            $layerDirectory = [string]$VisualTelemetry.layerDirectory
+            $tracePath = [string]$VisualTelemetry.tracePath
+            $targetExecutable = [string]$VisualTelemetry.targetExecutable
+            $launchIdentity = [string]$VisualTelemetry.launchSessionId
+            $gameId = [string]$VisualTelemetry.gameId
+            if (-not (Test-Path -LiteralPath $layerDirectory -PathType Container) -or
+                [string]::IsNullOrWhiteSpace($tracePath) -or
+                $targetExecutable -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $launchIdentity -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $gameId -notmatch '^[A-Za-z0-9._-]{1,120}$') {
+                throw 'VR telemetry child environment contract is invalid.'
+            }
+            $priorLayerPath = [string]$previous['XR_API_LAYER_PATH']
+            $priorLayers = [string]$previous['XR_ENABLE_API_LAYERS']
+            $layerPath = if ($priorLayerPath) { $layerDirectory + ';' + $priorLayerPath } else { $layerDirectory }
+            $enabledLayers = if ($priorLayers) { $priorLayers + ';XR_APILAYER_STEPHANOS_telemetry_v1' } else { 'XR_APILAYER_STEPHANOS_telemetry_v1' }
+            [Environment]::SetEnvironmentVariable('XR_API_LAYER_PATH', $layerPath, 'Process')
+            [Environment]::SetEnvironmentVariable('XR_ENABLE_API_LAYERS', $enabledLayers, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TRACE_PATH', $tracePath, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TARGET_EXE', $targetExecutable, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID', $launchIdentity, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_GAME_ID', $gameId, 'Process')
+        }
         return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru
     }
     finally {
-        [Environment]::SetEnvironmentVariable(
-            $virtualDesktopOculusCompatibilityDisableEnvironment,
-            $previous,
-            'Process'
-        )
+        foreach ($name in $environmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
+        }
     }
 }
 
@@ -330,7 +361,17 @@ $companionObservation = Get-FileObservation -Path $companionExecutablePath
 $activeOpenXrRuntimePath = Get-ActiveOpenXrRuntimePath
 $sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {
     ([string]$env:STEPHANOS_SOURCE_HEAD).ToLowerInvariant()
-} else { '' }
+} else {
+    $gitCommand = Get-Command -Name 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($gitCommand) {
+        try {
+            $candidateHead = (& $gitCommand.Source -C $repositoryRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
+            if ($candidateHead -match '^[a-f0-9]{40}$') { $candidateHead } else { '' }
+        }
+        catch { '' }
+    }
+    else { '' }
+}
 $observations = [ordered]@{
     platform = 'win32'
     observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
@@ -469,7 +510,7 @@ if ($decision.action -eq 'LAUNCH_VORPX') {
 }
 
 try {
-    $gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory
+    $gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory -VisualTelemetry $(if ($performanceMode) { $performanceMode.visualTelemetry } else { $null })
 }
 catch {
     if ($performanceMode -and $performanceMode.sessionPath) {

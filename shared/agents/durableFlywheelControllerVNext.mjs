@@ -412,7 +412,10 @@ export function evaluateControllerLivenessDecision(input = {}) {
   const terminalCompletion = input?.terminalCompletion === true && !safeEligibleWorkRemaining;
   const scopedActions = [...new Set(list(input?.scopedActions).map(text).filter(Boolean))].sort();
   const unsafeScopedActions = [...new Set(list(input?.unsafeScopedActions).map(text).filter(Boolean))].sort();
-  const controllerLevelUnsafe = input?.controllerLevelUnsafe === true
+  // Caller-supplied action sets cannot prove the controller's *entire* work
+  // universe unsafe. Keep unsafe actions held, but never disable the recurring
+  // controller or a disjoint qualified provider without operator intent.
+  const scopedUnsafeActionsReported = input?.controllerLevelUnsafe === true
     && scopedActions.length > 0
     && scopedActions.length === unsafeScopedActions.length
     && scopedActions.every((action, index) => action === unsafeScopedActions[index]);
@@ -433,13 +436,15 @@ export function evaluateControllerLivenessDecision(input = {}) {
     (surfaceId) => !blockedSurfaceIds.includes(surfaceId),
   );
 
-  const disableAllowed = operatorDisableRequested || terminalCompletion || controllerLevelUnsafe;
+  // Completing one goal does not retire its recurring controller.
+  // Keep the original hourly fleet live for the next qualified task.
+  const disableAllowed = operatorDisableRequested;
   const reason = operatorDisableRequested
     ? 'EXPLICIT_OPERATOR_DISABLE'
-    : terminalCompletion
-      ? 'TERMINAL_SCOPE_COMPLETE'
-      : controllerLevelUnsafe
-        ? 'CONTROLLER_LEVEL_UNSAFE'
+    : scopedUnsafeActionsReported
+      ? 'SCOPED_UNSAFE_CONTROLLER_LIVE'
+      : terminalCompletion
+        ? 'TERMINAL_GOAL_COMPLETE_CONTROLLER_LIVE'
         : blockedSurfaceIds.length
           ? 'SURFACE_BLOCKED_CONTROLLER_LIVE'
           : 'CONTROLLER_LIVE';
@@ -456,7 +461,9 @@ export function evaluateControllerLivenessDecision(input = {}) {
     selectedAlternateSurface: alternateQualifiedSurfaces[0] ?? null,
     retryNextScheduledRun: !disableAllowed && alternateQualifiedSurfaces.length === 0,
     safeEligibleWorkRemaining,
-    controllerLevelUnsafeProven: controllerLevelUnsafe,
+    // A reported action subset is not authenticated controller-wide coverage.
+    controllerLevelUnsafeProven: false,
+    scopedUnsafeActionsReported,
     surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
   });
 }
@@ -1013,6 +1020,34 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     const receipt = createCycleReceipt(result, null, nowUtc);
     const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
     return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+  }
+
+  // An unresolved Core maintenance attempt is an authority hold for this
+  // controller's affected admission/release phases. Keep incident learning and
+  // proof publication alive, but do not enter goal creation, closure, orphan
+  // recovery, lane finalization, capacity routing or grant issuance. This
+  // option only removes authority; no caller-supplied value can grant it.
+  if (options.maintenanceContinuationHold != null && options.maintenanceContinuationHold !== false) {
+    const candidate = options.maintenanceContinuationHold?.blocker;
+    const blocker = typeof candidate === 'string' && /^[A-Z][A-Z0-9_]{1,159}$/.test(candidate)
+      ? candidate : 'CORE_REPAIR_CONTINUATION_UNPROVEN';
+    let learningPromotion;
+    try {
+      learningPromotion = await requiredFunction(deps.promoteIncidentLessons, 'promoteIncidentLessons')({
+        ...serviceOptions, repoRoot: serviceOptions.repoRoot || process.cwd(), maxPromotions: 2,
+      });
+    } catch {
+      learningPromotion = freeze({ ok: false, reason: 'LEARNING_PROMOTION_FAILED_SOFT',
+        finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED' });
+    }
+    const result = holdResult(blocker, { observedAtUtc: nowUtc, sourceRevision });
+    const receipt = createCycleReceipt(result, null, nowUtc);
+    const receiptPublication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
+    const heartbeatPublication = await publishHeartbeat(heartbeatInput({
+      state: 'HOLD', sourceRevision, nowUtc, blockers: [blocker],
+    }), serviceOptions);
+    return freeze({ ...result, learningPromotion, cycleReceipt: receipt, receiptPublication,
+      heartbeatPublication, maintenanceContinuationHeld: true });
   }
 
   let outcomeOwnershipSeedPublication = null;

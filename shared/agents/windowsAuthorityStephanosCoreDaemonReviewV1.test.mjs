@@ -53,18 +53,24 @@ const candidateRunner = await readFile(
 const status = await readFile(
   new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8',
 );
-const helper = await readFile(new URL('../../scripts/windows/stephanos-core-process-observation.ps1', import.meta.url), 'utf8');
+const historicalHelperFixture = JSON.parse(await readFile(
+  new URL('./fixtures/stephanosCoreReviewedProcessObservationV1.json', import.meta.url), 'utf8',
+));
+const helper = historicalHelperFixture.source;
+const candidateHelper = await readFile(new URL('../../scripts/windows/stephanos-core-process-observation.ps1', import.meta.url), 'utf8');
+const OWNER_PATH = 'scripts/windows/read-sovereign-maintenance-owner-v2.ps1';
+const candidateOwner = await readFile(new URL('../../scripts/windows/read-sovereign-maintenance-owner-v2.ps1', import.meta.url), 'utf8');
 
-function review(runnerSource = runner, statusSource = status, extra = []) {
+function review(runnerSource = runner, statusSource = status, extra = [], helperSource = helper) {
   return analyzeWindowsAuthorityStephanosCoreDaemonReviewV1({
     repository: REPOSITORY,
     sourceHead: HEAD,
     analysis,
-    sources: [source(RUNNER_PATH, runnerSource), source(STATUS_PATH, statusSource), source(HELPER_PATH, helper), ...extra],
+    sources: [source(RUNNER_PATH, runnerSource), source(STATUS_PATH, statusSource), source(HELPER_PATH, helperSource), ...extra],
   });
 }
 
-test('successor candidate covers the complete Core Windows estate and grants zero authority', () => {
+test('historical reviewer covers its original complete Core Windows estate and grants zero authority', () => {
   const result = review();
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
@@ -259,6 +265,34 @@ test('historical fixture is the exact reviewed v6 byte source, independent of th
   assert.match(candidateRunner, /function Resolve-SovereignCommanderOperatorContextV1/);
   assert.match(candidateRunner, /WindowsIdentity\]::GetCurrent\(\)/);
   assert.match(candidateRunner, /SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED/);
+});
+
+test('historical inventory fixture retains exact reviewed bytes without qualifying the new native fallback', () => {
+  assert.equal(historicalHelperFixture.schemaVersion, 'stephanos.test-only-reviewed-core-inventory-fixture.v1');
+  assert.equal(historicalHelperFixture.repository, REPOSITORY);
+  assert.equal(historicalHelperFixture.sourcePath, HELPER_PATH);
+  assert.equal(historicalHelperFixture.sourceHead, '62d659f63ada09586967882cb790b8363a0bf1a0');
+  assert.equal(historicalHelperFixture.testOnly, true);
+  assert.equal(historicalHelperFixture.runtimeAuthority, false);
+  assert.equal(historicalHelperFixture.blobSha, '9e00ce659859b0274fce36e13cb20045b1b337b1');
+  assert.equal(blobSha(helper), historicalHelperFixture.blobSha);
+  assert.notEqual(candidateHelper, helper);
+  const changedHelper = review(runner, status, [], candidateHelper);
+  assert.equal(changedHelper.clean, false);
+  assert.ok(changedHelper.findings.some(item => item.code === 'windows-authority-core-source-blob-unreviewed'
+    && item.path === HELPER_PATH));
+  const expandedOwner = review(runner, status, [source(OWNER_PATH, candidateOwner)], candidateHelper);
+  assert.equal(expandedOwner.clean, false);
+  assert.ok(expandedOwner.findings.some(item => item.code === 'windows-authority-source-estate-widened'));
+  assert.equal(expandedOwner.reviewedPaths.includes(OWNER_PATH), false);
+  const routed = analyzeWindowsAuthoritySpecialistReview({
+    repository: REPOSITORY, sourceHead: HEAD,
+    analysis: { findings: [...analysis.findings, { severity: 'P0', code: 'unsupported-high-risk-surface', path: OWNER_PATH }] },
+    sources: [source(RUNNER_PATH, runner), source(STATUS_PATH, status),
+      source(HELPER_PATH, candidateHelper), source(OWNER_PATH, candidateOwner)],
+  });
+  assert.equal(routed.clean, false);
+  assert.notEqual(routed.runtimeMutationAllowed, true);
 });
 
 test('new actual-token runner cannot inherit a historical internal specialist qualification', () => {
