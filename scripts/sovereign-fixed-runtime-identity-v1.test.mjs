@@ -81,7 +81,8 @@ if($null -eq $nativeGuard){throw 'NATIVE_MEMBER_FIXTURE_MISSING'}
 $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile(__INSTALLER__,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'INSTALLER_MEMBER_PARSE_FAILED'}
-$loops=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.ForEachStatementAst] -and $node.Variable.VariablePath.UserPath -ceq 'row'},$true))
+# Admission iterates bootstrap records; a later row loop pins records.Values.
+$loops=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.ForEachStatementAst] -and $node.Variable.VariablePath.UserPath -ceq 'row' -and $node.Condition.Extent.Text -ceq '$bootstrap.Records'},$true))
 if($loops.Count -ne 1){throw 'INSTALLER_MEMBER_LOOP_AMBIGUOUS'}
 $first=$loops[0].Body.Statements[0]
 if($first -isnot [Management.Automation.Language.IfStatementAst]){throw 'INSTALLER_MEMBER_GUARD_MISSING'}
