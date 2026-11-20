@@ -102,7 +102,8 @@ $monitorState = [pscustomobject]@{
     ConfirmationToken = $null
     RunId = $null
     GameProcess = $null
-    GameProcessIdentity = $null # Per-run immutable identity survives null cleanup frames
+    GameProcessIdentity = $null # Immutable game identity survives null cleanup frames
+    WitnessedRunId = $null # A single monitor child cannot switch to a second run
     Result = $null
     DetailText = ''
     FocusAttemptedRunId = ''
@@ -805,25 +806,26 @@ function Receive-MonitorEvent {
             ($event.process.pid -isnot [int] -and $event.process.pid -isnot [long]) -or $event.process.pid -le 0 -or $event.process.pid -gt 4294967295 -or
             $event.process.createdFileTime -isnot [string] -or $event.process.createdFileTime -cnotmatch '^[0-9]{16,20}$') { throw 'monitor-state-process-invalid' }
     }
+    if ($event.process -and -not $event.runId) { throw 'monitor-state-process-without-run' }
     if ($null -ne $event.confirmationToken -and ($event.confirmationToken -isnot [string] -or $event.confirmationToken -cnotmatch '^[a-f0-9]{32,128}$')) { throw 'monitor-state-confirmation-invalid' }
     if ('confirm' -cin $event.allowedActions -and ($event.mode -cne 'waiting' -or $event.busy -or -not $event.runId -or -not $event.process -or -not $event.confirmationToken)) { throw 'monitor-state-confirmation-not-bound' }
     foreach ($name in @('outcome', 'error', 'resultZip', 'resultDirectory')) {
         $value = $event.PSObject.Properties[$name].Value
         if ($null -ne $value -and ($value -isnot [string] -or $value.Length -gt 4096)) { throw ('monitor-state-text-invalid:' + $name) }
     }
-    # Keep one exact native game process identity per monitor run. An otherwise
-    # well-typed later frame cannot silently retarget foreground or confirmation.
-    # A null process is allowed for terminal cleanup after the game exits.
-    if ($monitorState.RunId -and $event.runId -and $monitorState.RunId -ceq $event.runId -and
-        $monitorState.GameProcessIdentity -and $event.process -and
+    # One monitor child owns one run. Null cleanup frames must not erase its
+    # first witnessed identity or grant a later frame new focus/confirm authority.
+    if ($monitorState.WitnessedRunId -and $event.runId -and $monitorState.WitnessedRunId -cne $event.runId) {
+        throw 'monitor-state-run-identity-drift'
+    }
+    if ($monitorState.GameProcessIdentity -and $event.process -and
         ($monitorState.GameProcessIdentity.pid -ne $event.process.pid -or
          $monitorState.GameProcessIdentity.createdFileTime -cne $event.process.createdFileTime)) {
         throw 'monitor-state-game-identity-drift'
     }
-    # The live frame may legitimately omit the process during cleanup. Keep the
-    # original witnessed identity until the run ID changes, rather than allowing
-    # a later same-run frame to substitute a different game process.
-    if ($monitorState.RunId -cne $event.runId) { $monitorState.GameProcessIdentity = $null }
+    if ($event.runId -and -not $monitorState.WitnessedRunId) {
+        $monitorState.WitnessedRunId = $event.runId
+    }
     if ($event.process -and -not $monitorState.GameProcessIdentity) {
         $monitorState.GameProcessIdentity = $event.process
     }
