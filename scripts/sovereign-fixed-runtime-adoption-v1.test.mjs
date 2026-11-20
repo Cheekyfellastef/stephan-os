@@ -68,16 +68,16 @@ add('case aliased manifest member refuses',original.raw,{members:[...original.me
 add('empty closure refuses',original.raw,{members:[]});
 // Exercise legacy and current bounded Spatial source composition in the same
 // Node and independently compiled Windows verifier, including the last member.
-const capacityFiles=Array.from({length:301},(_,i)=>({
+const capacityFiles=Array.from({length:303},(_,i)=>({
   path:'scripts/capacity/member-'+String(i+1).padStart(3,'0')+'.mjs',
   content:'export const member = '+(i+1)+';\n',
 }));
-for(const count of [266,284,295,296,300,301]) {
+for(const count of [266,284,295,296,300,301,302,303]) {
   const proof=fixture({files:capacityFiles.slice(0,count)});
-  add(count+' exact members '+(count<=300?'preserve bounded proof':'exceed capacity'),
-    proof.raw,{members:proof.members,valid:count<=300});
+  add(count+' exact members '+(count<=302?'preserve bounded proof':'exceed capacity'),
+    proof.raw,{members:proof.members,valid:count<=302});
 }
-for(const count of [295,300]) {
+for(const count of [295,300,302]) {
  const expanded=fixture({files:capacityFiles.slice(0,count)});
  add('unrelated main update preserves all '+count+' members',
   fixture({files:capacityFiles.slice(0,count),extras:[{path:'README.md',content:'updated\n'}]}).raw,
