@@ -24,6 +24,25 @@ if ($launcherScript.Contains('"') -or $splashLauncherScript.Contains('"') -or $P
     throw 'Launcher and profile paths must not contain quote characters.'
 }
 
+$sourceHead = ''
+try { $sourceHead = (& git -C $repositoryRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $sourceHead = '' }
+if ($sourceHead.Length -ne 40 -or $sourceHead -notmatch '^[a-f0-9]{40}') {
+    throw 'Unable to prove the repository source head for Starfield VR shortcut installation.'
+}
+$shortcutSourcePaths = @(
+    'scripts/windows/install-starfield-vr-desktop-shortcut.ps1',
+    'scripts/windows/launch-starfield-vr-with-splash.ps1',
+    'scripts/windows/launch-starfield-vr.ps1'
+)
+$dirtyShortcutSource = (& git -C $repositoryRoot status --porcelain --untracked-files=no -- $shortcutSourcePaths 2>$null | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw 'Unable to verify Starfield VR shortcut source against the current repository head.'
+}
+if ($dirtyShortcutSource) {
+    throw "Starfield VR shortcut installation blocked dirty reviewed source: $dirtyShortcutSource"
+}
+$splashLauncherSha256 = (Get-FileHash -LiteralPath $splashLauncherScript -Algorithm SHA256).Hash.ToLowerInvariant()
+
 $desktopPath = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
 if (-not $desktopPath) {
     throw 'Unable to resolve the current user Desktop folder.'
@@ -60,13 +79,20 @@ $proofRoot = Join-Path $workspaceRoot 'vr'
 New-Item -ItemType Directory -Path $proofRoot -Force | Out-Null
 $proofPath = Join-Path $proofRoot 'starfield-vr-shortcut-install-current.json'
 $proof = [ordered]@{
-    schemaVersion = 'stephanos.starfield-vr-shortcut-install.v1'
+    schemaVersion = 'stephanos.starfield-vr-shortcut-install.v2'
     writtenAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     goal = 1591
     workerGoal = 1595
     shortcutName = 'Starfield VR'
     shortcutPath = $shortcutPath
+    targetPath = $powershellExecutable
+    arguments = $arguments
+    workingDirectory = $repositoryRoot
     splashLauncherScript = $splashLauncherScript
+    splashLauncherSha256 = $splashLauncherSha256
+    sourceHead = $sourceHead
+    sourceClean = $true
+    sourcePaths = $shortcutSourcePaths
     launcherScript = $launcherScript
     profilePath = $ProfilePath
     iconPath = $iconPath

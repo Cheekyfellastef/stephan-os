@@ -36,3 +36,5 @@ export function getSystemPanelRestorablePanelIds() {
 export function isSystemPanelDefaultEnabled(panelId = '') {
   return RESTORE_ENABLED_BY_DEFAULT.has(String(panelId));
 }
+
+// Fixed frontend source admission requires canonical LF deployment bytes.

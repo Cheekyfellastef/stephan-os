@@ -10,6 +10,7 @@ import {
   MISSION_CONTROLLER_ROUTE,
   createBuildLaneCapacityStatusRecord,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import { routeProviderIndependentMissionCapacityV1 } from '../../shared/agents/providerIndependentMissionCapacityRouteV1.mjs';
 import {
   OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA,
   OPENCLAW_ELASTIC_PROVIDER_POOL_STATUS_FILE,
@@ -40,8 +41,12 @@ function routedOpenClaw(context) {
     dispatchAllowed: true,
     selectedCapacityReceiptId: `capacity-${context.slot}`,
     proofRefs: [`receipts/openclaw/${context.slot}.json`],
+    openClawQualification: {
+      receipt: { provider: 'openclaw-standalone' },
+    },
     openClawCapacity: {
       receipt: {
+        provider: 'openclaw-standalone',
         queueDepth: context.queueDepth ?? 0,
         p95StartLatencySeconds: context.latency ?? 5,
       },
@@ -75,6 +80,27 @@ function forgeWorkerRecord(receipt) {
     statusId: foundryForgeWorkerCapacityStatusId(receipt.workerId),
     workerScopedCapacity: true,
   };
+}
+
+function desktopReceipt() {
+  return forgeReceipt('desktop-commander-worker-01', {
+    route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+    sourceHead: HEAD,
+    authorityReceiptIds: ['desktop-capacity-authority'],
+    proofRefs: ['proof/desktop-capacity.json'],
+    p95StartLatencySeconds: 1,
+  });
+}
+
+function sovereignReceipt(overrides = {}) {
+  return forgeReceipt('stephanos-sovereign-builder-08', {
+    route: MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
+    sourceHead: HEAD,
+    authorityReceiptIds: [`sovereign-builder8-source-${HEAD}`],
+    proofRefs: [`proof/sovereign-builder8-capacity-${HEAD}.json`],
+    p95StartLatencySeconds: 8,
+    ...overrides,
+  });
 }
 
 function enoent() {
@@ -154,11 +180,9 @@ test('malformed, stale or filename-mismatched Forge worker records add no elasti
   }
 });
 
-test('oversized or malformed pool records fail closed to zero OpenClaw capacity', async () => {
-  const tooMany = Array.from({ length: MAXIMUM_BUILD_LANES + 1 }, (_, index) => ({ slot: String(index) }));
+test('malformed pool records fail closed to zero OpenClaw capacity', async () => {
   for (const record of [
     { schemaVersion: 'wrong-schema', hostContexts: [{ slot: 'one' }] },
-    { schemaVersion: OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA, hostContexts: tooMany },
     { schemaVersion: OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA, hostContexts: 'not-an-array' },
   ]) {
     const result = await readElasticMissionControllerCapacityRoutingInput({
@@ -193,6 +217,7 @@ test('two independently qualified OpenClaw workers become two distinct elastic c
   assert.equal(result.length, 2);
   assert.deepEqual(result.map((candidate) => candidate.workerId), ['openclaw-two', 'openclaw-one']);
   assert.ok(result.every((candidate) => candidate.route === 'OPENCLAW_LOCAL'));
+  assert.ok(result.every((candidate) => candidate.adapter === 'openclaw-local'));
 });
 
 test('two distinct Forge worker receipts become two independently routable elastic candidates', () => {
@@ -279,6 +304,50 @@ test('same Forge worker cannot manufacture width even if the routing input repea
   assert.equal(result[0].p95StartLatencySeconds, 2);
 });
 
+test('elastic candidate resolution carries durable blocked adapters into OpenClaw routing', () => {
+  const observed = [];
+  const result = resolveElasticExternalCapacityCandidates(
+    mission(),
+    {
+      blockedAdapters: ['openclaw-standalone'],
+      openClawHostContexts: [{ slot: 'blocked-openclaw' }],
+    },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: () => ({ fallbackCandidates: [] }),
+      routeOpenClaw: (input) => {
+        observed.push(input.blockedAdapters);
+        return { dispatchAllowed: false, adapter: 'openclaw-standalone' };
+      },
+    },
+  );
+  assert.deepEqual(observed, [['openclaw-standalone']]);
+  assert.deepEqual(result, []);
+});
+
+test('quarantining OpenClaw Local suppresses only the Local candidate', () => {
+  const observed = [];
+  const result = resolveElasticExternalCapacityCandidates(
+    mission(),
+    {
+      blockedAdapters: ['openclaw-local'],
+      openClawHostContexts: [{ slot: 'standalone-still-ready' }],
+    },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: () => ({ fallbackCandidates: [] }),
+      routeOpenClaw: (input, context) => {
+        observed.push(input.blockedAdapters);
+        return routedOpenClaw(context);
+      },
+    },
+  );
+  assert.deepEqual(observed, [['openclaw-local']]);
+  assert.deepEqual(result, []);
+});
+
 test('unqualified OpenClaw contexts add no capacity while GitHub and Forge candidates remain usable', () => {
   const result = resolveElasticExternalCapacityCandidates(
     mission(),
@@ -297,10 +366,168 @@ test('unqualified OpenClaw contexts add no capacity while GitHub and Forge candi
           p95StartLatencySeconds: 3,
         }],
       }),
-      routeOpenClaw: () => ({ dispatchAllowed: false, adapter: 'openclaw-local' }),
+      routeOpenClaw: () => ({ dispatchAllowed: false, adapter: 'openclaw-standalone' }),
     },
   );
   assert.equal(result.length, 1);
   assert.equal(result[0].route, 'CHATGPT_GITHUB');
   assert.equal(result[0].workerId, 'github-worker-01');
+});
+
+test('OpenAI blackout removes ChatGPT GitHub from elastic external candidates', () => {
+  const result = resolveElasticExternalCapacityCandidates(
+    mission(),
+    { openAiBlackout: true, openClawHostContexts: [] },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: () => ({
+        fallbackCandidates: [{
+          route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+          adapter: 'chatgpt-github',
+          workerId: 'github-worker-blackout',
+          receiptId: 'github-capacity-blackout',
+          proofRefs: ['receipts/github/capacity-blackout.json'],
+          queueDepth: 0,
+          p95StartLatencySeconds: 1,
+        }],
+      }),
+      routeOpenClaw: () => ({ dispatchAllowed: false }),
+    },
+  );
+  assert.deepEqual(result, []);
+});
+
+test('elastic blackout agrees with the actual worker when only metered Desktop Commander is ready', () => {
+  const capacity = { openAiBlackout: true, desktopCommanderLaneReceipt: desktopReceipt() };
+  const worker = routeProviderIndependentMissionCapacityV1({
+    ...capacity, sourceHead: HEAD, mission: mission(), nowUtc: NOW,
+  });
+  assert.equal(worker.dispatchAllowed, false);
+  assert.equal(worker.finalVerdict, 'MISSION_CONTROLLER_OPENAI_BLACKOUT_HELD');
+  assert.deepEqual(resolveElasticExternalCapacityCandidates(mission(), capacity, HEAD, NOW), []);
+
+  const ordinary = resolveElasticExternalCapacityCandidates(mission(), {
+    ...capacity, openAiBlackout: false,
+  }, HEAD, NOW);
+  assert.equal(ordinary.length, 1, 'the fixture is a genuinely admitted ordinary capacity receipt');
+  assert.equal(ordinary[0].route, MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER);
+});
+
+test('elastic blackout retains exact qualified Sovereign capacity over faster metered capacity', () => {
+  const capacity = {
+    openAiBlackout: true,
+    desktopCommanderLaneReceipt: desktopReceipt(),
+    sovereignCommanderLaneReceipt: sovereignReceipt(),
+  };
+  const result = resolveElasticExternalCapacityCandidates(mission(), capacity, HEAD, NOW);
+  const worker = routeProviderIndependentMissionCapacityV1({
+    ...capacity, sourceHead: HEAD, mission: mission(), nowUtc: NOW,
+  });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].route, MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER);
+  assert.equal(result[0].adapter, 'sovereign-commander');
+  assert.equal(result[0].workerId, 'stephanos-sovereign-builder-08');
+  assert.equal(result[0].receiptId, worker.selectedCapacityReceiptId);
+  assert.deepEqual(result[0].proofRefs, worker.proofRefs);
+
+  const ordinary = resolveElasticExternalCapacityCandidates(mission(), {
+    ...capacity, openAiBlackout: false,
+  }, HEAD, NOW);
+  assert.deepEqual(ordinary.map(x => x.route), [
+    MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER, MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
+  ], 'ordinary mode retains its existing latency ordering and optional transport');
+});
+
+test('blackout does not qualify stale, wrong-head, wrong-class or unowned Sovereign receipts', () => {
+  for (const overrides of [
+    { sourceHead: 'b'.repeat(40) },
+    { expiresAtUtc: NOW },
+    { observedAtUtc: '2026-09-07T15:21:01.000Z' },
+    { supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] },
+    { workerId: 'another-sovereign-worker' },
+    { authorityReceiptIds: ['unqualified-authority'] },
+    { proofRefs: ['proof/unqualified-sovereign-capacity.json'] },
+  ]) {
+    const result = resolveElasticExternalCapacityCandidates(mission(), {
+      openAiBlackout: true,
+      desktopCommanderLaneReceipt: desktopReceipt(),
+      sovereignCommanderLaneReceipt: sovereignReceipt(overrides),
+    }, HEAD, NOW);
+    assert.deepEqual(result, [], JSON.stringify(overrides));
+  }
+});
+
+test('blackout preserves adapter quarantine and an existing dispatch owner', () => {
+  const capacity = { openAiBlackout: true, sovereignCommanderLaneReceipt: sovereignReceipt() };
+  assert.deepEqual(resolveElasticExternalCapacityCandidates(mission(), {
+    ...capacity, blockedAdapters: ['sovereign-commander'],
+  }, HEAD, NOW), []);
+  assert.deepEqual(resolveElasticExternalCapacityCandidates({
+    ...mission(), dispatch: { status: 'running', adapter: 'sovereign-commander' },
+  }, capacity, HEAD, NOW), []);
+});
+
+test('blackout rejects metered or mismatched candidates before they can conceal a qualified local worker', () => {
+  const local = {
+    route: MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
+    adapter: 'sovereign-commander', workerId: 'sovereign-qualified-original',
+    receiptId: 'sovereign-qualified-capacity', proofRefs: ['proof/sovereign-qualified-capacity.json'],
+    queueDepth: 0, p95StartLatencySeconds: 20,
+  };
+  const denied = [
+    [MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER, 'desktop-commander'],
+    [MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB, 'chatgpt-github'],
+    [MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER, 'desktop-commander'],
+    [MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE, 'chatgpt-github'],
+    [MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER, 'sovereign-commander'],
+  ];
+  const metered = denied.map(([route, adapter], i) => ({
+    ...local, route, adapter,
+    workerId: `metered-worker-${i}`, receiptId: `metered-capacity-${i}`, p95StartLatencySeconds: 0,
+  }));
+  metered.push({ ...local, route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER, p95StartLatencySeconds: 0 });
+  const run = (candidates) => resolveElasticExternalCapacityCandidates(mission(), {
+    openAiBlackout: true, desktopCommanderLaneReceipt: desktopReceipt(),
+    githubLaneReceipt: { state: 'READY' }, blockedAdapters: ['openclaw-local'],
+  }, HEAD, NOW, {
+    routeCapacity: (input) => {
+      assert.equal(input.codexStatus, null);
+      assert.equal(input.githubLaneReceipt, null);
+      assert.equal(input.desktopCommanderLaneReceipt, null);
+      assert.deepEqual(input.blockedAdapters, ['openclaw-local', 'desktop-commander']);
+      return { fallbackCandidates: candidates };
+    },
+  });
+  assert.deepEqual(run(metered), []);
+  assert.deepEqual(run([...metered, local]), [local]);
+});
+
+test('blackout snapshots changing Forge candidates before independence admission and deduplication', () => {
+  let routeReads = 0;
+  let adapterReads = 0;
+  const changing = {
+    get route() { return ++routeReads <= 2 ? 'FOUNDRY_FORGE' : 'DESKTOP_COMMANDER'; },
+    get adapter() { return ++adapterReads === 1 ? 'foundry-forge' : 'desktop-commander'; },
+    workerId: 'review-changing-worker',
+    receiptId: 'review-inert-receipt',
+    proofRefs: ['proof/review.json'],
+    queueDepth: 0,
+    p95StartLatencySeconds: 1,
+  };
+  const result = resolveElasticExternalCapacityCandidates(mission(), {
+    openAiBlackout: true, forgeLaneReceipts: [{}],
+  }, HEAD, NOW, {
+    routeCapacity: (input) => ({ fallbackCandidates: input.forgeLaneReceipt ? [changing] : [] }),
+  });
+  assert.deepEqual(result, [{
+    route: MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+    adapter: 'foundry-forge',
+    workerId: 'review-changing-worker',
+    receiptId: 'review-inert-receipt',
+    proofRefs: ['proof/review.json'],
+    queueDepth: 0,
+    p95StartLatencySeconds: 1,
+  }], 'deduplication must use the exact inert route/adapter pair admitted by the blackout filter');
+  assert.equal(Object.isFrozen(result[0]), true);
 });

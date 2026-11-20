@@ -104,7 +104,7 @@ test('diagnostic restart authority preserves watchdog child-exit reserve plus te
   assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS > 0);
   assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS < MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS);
   assert.ok(MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS < MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS);
-  assert.equal(WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS, 10_000);
+  assert.equal(WORKER_WATCHDOG_CHILD_EXIT_RESERVE_MS, 15_000);
   assert.equal(
     MISSION_WORKER_DIAGNOSTIC_LINK_DEADLINE_MS - MISSION_WORKER_DIAGNOSTIC_LINK_CHILD_TIMEOUT_MS,
     MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS,
@@ -148,7 +148,7 @@ test('default route physically inspects exact main before StartApprovedWorkerTas
   assert.equal(calls[1].options.deadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
-  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:50.000Z');
   assert.equal(result.deadlineUtc, result.childDeadlineUtc);
   assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
@@ -229,7 +229,7 @@ test('uses only StartApprovedWorkerTask with the canonical watchdog timeout and 
   assert.equal(observed.options.deadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
-  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:50.000Z');
   assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
   assert.match(observed.probeScriptPath, /probe-mission-orchestrator-worker-watchdog\.ps1$/i);
@@ -302,7 +302,7 @@ test('bounded child timeout or untyped execution failure returns a typed termina
   assert.equal(result.error, undefined);
   assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
-  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:50.000Z');
   assert.equal(result.childTimeoutMs, WORKER_WATCHDOG_START_TIMEOUT_MS);
   assert.equal(result.terminalPublicationReserveMs, MISSION_WORKER_DIAGNOSTIC_LINK_TERMINAL_PUBLICATION_RESERVE_MS);
 });
@@ -322,7 +322,7 @@ test('rejects a success receipt bound to the outer diagnostic deadline instead o
   assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_SUCCESS_PROOF_INVALID');
   assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
-  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:50.000Z');
 });
 
 test('cannot claim success without fresh exact-head canonical launch proof', async () => {
@@ -345,7 +345,7 @@ test('successful link bridges only watchdog decision and leaves downstream safeg
   assert.equal(result.deadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.childDeadlineUtc, '2026-09-01T18:01:25.000Z');
   assert.equal(result.restartAuthorityMs, MISSION_WORKER_DIAGNOSTIC_LINK_RESTART_AUTHORITY_MS);
-  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:45.000Z');
+  assert.equal(result.diagnosticDeadlineUtc, '2026-09-01T18:01:50.000Z');
   assert.equal(result.bypassedWatchdogDecision, true);
   assert.equal(result.normalWatchdogPolicyModified, false);
   assert.equal(result.persistentBypassInstalled, false);

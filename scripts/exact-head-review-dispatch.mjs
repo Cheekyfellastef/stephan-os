@@ -36,6 +36,11 @@ import {
   mapGitHubIndependentReviewJobV1,
   mapGitHubIndependentReviewRunV1,
 } from '../shared/agents/exactHeadIndependentReviewRunV1.mjs';
+import {
+  evaluateOperatorLaneContainmentV1,
+} from '../shared/agents/operatorLaneContainmentV1.mjs';
+import { selectExactHeadDiscoveryWindowV1 } from '../shared/agents/exactHeadReviewDiscoveryWindowV1.mjs';
+import { admitExactHeadReviewTriggerV1 } from '../shared/agents/exactHeadReviewTriggerThrottleV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-exact-head-review-dispatch-v1';
@@ -403,7 +408,9 @@ async function postPrComment({ owner, repo, token, prNumber, body }) {
 
 async function discoverCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin, triggeringArtifact }) {
   const openPullRequests = await listOpenPullRequests({ owner, repo, token });
-  const candidates = (await mapWithConcurrency(openPullRequests, 8, async (rawPr) => {
+  const boundedCandidates = selectExactHeadDiscoveryWindowV1(openPullRequests);
+  console.log(`EXACT_HEAD_REVIEW_DISCOVERY_BOUNDED total=${openPullRequests.length} selected=${boundedCandidates.length}`);
+  const candidates = (await mapWithConcurrency(boundedCandidates, 8, async (rawPr) => {
     const prNumber = positiveInteger(rawPr?.number);
     if (!prNumber) return null;
     const mappedComments = (await githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token })).map(mapComment);
@@ -487,9 +494,21 @@ async function main() {
   console.log(`EXACT_HEAD_REVIEW_LANE_AUTHORITY=${laneAuthorityLogin}`);
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
-  const triggeringArtifact = triggeringIndependentReviewArtifact();
   const planOnly = text(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY).toLowerCase() === 'true';
   const manualPrNumber = parseOptionalManualPrNumber(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
+  const trigger = admitExactHeadReviewTriggerV1({
+    eventName: text(process.env.GITHUB_EVENT_NAME),
+    event,
+    planOnly,
+    manuallyRequestedPr: manualPrNumber !== null,
+  });
+  if (!trigger.allowDiscovery) {
+    console.log(`EXACT_HEAD_REVIEW_TRIGGER_HELD=${trigger.reason}`);
+    appendOutput('targets', '[]');
+    appendOutput('decision', 'REVIEW_DISCOVERY_TRIGGER_HELD');
+    return;
+  }
+  const triggeringArtifact = triggeringIndependentReviewArtifact();
   const explicitOwnerReviewRequest = explicitOwnerExactHeadReviewRequest({ event, laneAuthorityLogin });
   const requestedNumbers = candidateReviewPrNumbers({ event, manualPrNumber });
   const contextLoader = requestedNumbers.length ? loadRequestedCanonicalContexts : discoverCanonicalContexts;
@@ -533,9 +552,17 @@ async function main() {
   const results = [];
   let stalled = false;
   for (const context of contexts.sort((left, right) => left.pr.number - right.pr.number)) {
+    const operatorContainment = evaluateOperatorLaneContainmentV1({
+      comments: context.comments,
+      repository,
+      prNumber: context.pr.number,
+      branch: context.pr.headRef,
+      trustedOperatorLogin: laneAuthorityLogin,
+    });
     const coordinatorComments = normalizeReviewCoordinatorMarkerComments(context.comments, { laneAuthorityLogin });
     const decision = evaluateExactHeadReviewDispatch({
       repository,
+      operatorContainment,
       now: new Date().toISOString(),
       receiptTimeoutMs: timeoutMinutes * 60 * 1000,
       trustedCoordinatorLogin: MACHINE_COORDINATOR_SENTINEL_LOGIN,

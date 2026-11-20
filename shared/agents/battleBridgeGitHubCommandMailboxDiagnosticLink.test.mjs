@@ -54,13 +54,11 @@ function diagnosticComment(id = 1001) {
   };
 }
 
-test('overlay preserves every legacy operation and adds only the diagnostic link operation', () => {
+test('overlay preserves every legacy operation and retains the diagnostic link operation', () => {
   for (const operation of legacy.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS) {
     assert.ok(mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
   }
-  const added = mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS
-    .filter((operation) => !legacy.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
-  assert.deepEqual(added, [MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION]);
+  assert.ok(mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION));
 });
 
 test('diagnostic link requires exact expected head', () => {

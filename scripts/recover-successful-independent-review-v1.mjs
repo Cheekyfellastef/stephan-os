@@ -16,6 +16,7 @@ import {
   loadWorkflowDispatchRuns,
   reconcileExistingLaunchReceiptV1,
 } from './launch-missing-independent-review-v1.mjs';
+import { findExistingIndependentReviewEvidenceHintV1 } from '../shared/agents/independentReviewExistingEvidenceFenceV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-independent-review-successful-artifact-recovery-v1';
@@ -23,6 +24,10 @@ const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({ login: 'github-actions[b
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const MAX_PAGES = 20;
 const LAUNCH_RECEIPT_HEADING = '## Provider-neutral independent-review missing-run launch receipt';
+const TERMINAL_RECOVERY_POLL_INTERVAL_MS = 2000;
+const TERMINAL_RECOVERY_MAX_POLLS = 30;
+const CANONICAL_WORKFLOW_ID = 318073448;
+const REVIEW_SHA256 = /^[a-f0-9]{64}$/i;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -110,6 +115,22 @@ export function selectSuccessfulReviewRecoveryLaunchReceiptV1(comments, {
   return matches[0];
 }
 
+export async function waitForTerminalReviewReconciliationV1(initialReconciliation, readNextReconciliation, {
+  enabled = false,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  let reconciliation = initialReconciliation;
+  if (!enabled || reconciliation?.reconciliation !== 'WAIT_RUNNING') return reconciliation;
+  if (typeof readNextReconciliation !== 'function' || typeof sleep !== 'function') {
+    throw new Error('terminal review recovery polling requires read and sleep functions');
+  }
+  for (let poll = 0; poll < TERMINAL_RECOVERY_MAX_POLLS && reconciliation?.reconciliation === 'WAIT_RUNNING'; poll += 1) {
+    await sleep(TERMINAL_RECOVERY_POLL_INTERVAL_MS);
+    reconciliation = await readNextReconciliation();
+  }
+  return reconciliation;
+}
+
 export function buildSuccessfulReviewArtifactRecoveryV1(reconciliation = {}) {
   if (reconciliation?.reconciliation !== 'ALREADY_SUCCESSFUL') {
     return Object.freeze({
@@ -163,6 +184,91 @@ async function loadCanonicalWorkflow(owner, repo, token, receipt) {
   return workflow;
 }
 
+// An owner hint is not a review result. Bind it to canonical live GitHub
+// run, workflow, PR/head/base, and immutable artifact before consumption.
+export function validateOwnerHintReviewArtifactReadbackV1({ workflow, run, artifacts, pr, hint } = {}) {
+  const runId=positiveInteger(hint?.runId), artifactId=positiveInteger(hint?.artifactId);
+  const digest=text(hint?.sha256).toLowerCase();
+  if (!runId || !artifactId || !REVIEW_SHA256.test(digest)) throw new Error('owner review hint identity incomplete');
+  if (positiveInteger(workflow?.id)!==CANONICAL_WORKFLOW_ID
+    || text(workflow?.path)!==INDEPENDENT_REVIEW_WORKFLOW_PATH
+    || text(workflow?.name)!==INDEPENDENT_REVIEW_WORKFLOW_NAME
+    || text(workflow?.state).toLowerCase()!=='active') throw new Error('unqualified review workflow');
+  if (positiveInteger(run?.id)!==runId || positiveInteger(run?.workflow_id)!==CANONICAL_WORKFLOW_ID
+    || text(run?.path)!==INDEPENDENT_REVIEW_WORKFLOW_PATH
+    || !['pull_request_target','pull_request','workflow_dispatch'].includes(text(run?.event))
+    || text(run?.status)!=='completed' || text(run?.conclusion)!=='success'
+    || !positiveInteger(run?.run_attempt)
+    || text(run?.head_sha).toLowerCase()!==text(pr?.headSha).toLowerCase()
+    || text(run?.head_branch)!==text(pr?.headRef)) throw new Error('review run stale or mismatched');
+  const matches=Array.isArray(run?.pull_requests) && run.pull_requests.filter((entry)=>
+    positiveInteger(entry?.number)===positiveInteger(pr?.number)
+    && text(entry?.head?.sha).toLowerCase()===text(pr?.headSha).toLowerCase()
+    && text(entry?.head?.ref)===text(pr?.headRef)
+    && text(entry?.base?.sha).toLowerCase()===text(pr?.baseSha).toLowerCase()
+    && text(entry?.base?.ref)==='main'
+    && positiveInteger(entry?.head?.repo?.id)>0 && entry?.head?.repo?.id===entry?.base?.repo?.id);
+  if (!matches || matches.length!==1) throw new Error('review run lacks exact PR/head/base binding');
+  const name=`stephanos-independent-review-${runId}-attempt-${run.run_attempt}`;
+  const artifactMatches=Array.isArray(artifacts) && artifacts.filter((entry)=>
+    positiveInteger(entry?.id)===artifactId && text(entry?.name)===name && entry?.expired===false
+    && text(entry?.digest).toLowerCase()===`sha256:${digest}`
+    && positiveInteger(entry?.workflow_run?.id)===runId
+    && text(entry?.workflow_run?.head_sha).toLowerCase()===text(pr?.headSha).toLowerCase()
+    && text(entry?.workflow_run?.head_branch)===text(pr?.headRef));
+  if (!artifactMatches || artifactMatches.length!==1) throw new Error('immutable review artifact readback mismatch');
+  return Object.freeze({decision:'RECOVER_SUCCESSFUL_REVIEW_ARTIFACT',recoveryRequired:true,
+    runId,runAttempt:positiveInteger(run.run_attempt),artifactName:name});
+}
+
+// The review workflow is an approval boundary and must remain unchanged.
+// Recover owner-only hints through the same authenticated GitHub comments the
+// launcher already reads, then independently validate the actual run/artifact.
+// Never treat a comment or a supplied environment hint as review approval.
+export function selectRecoverableOwnerReviewHintV1({
+  comments, repository, pr, suppliedHint = null,
+} = {}) {
+  const observed = findExistingIndependentReviewEvidenceHintV1({
+    comments, repository, prNumber: pr?.number, branch: pr?.headRef,
+    expectedHead: pr?.headSha, expectedBase: pr?.baseSha,
+  });
+  if (!['NO_EXISTING_EVIDENCE_HINT', 'HOLD_EXISTING_REVIEW_NEEDS_READBACK'].includes(observed.status)) {
+    throw new Error('owner review hint inventory is invalid or conflicting');
+  }
+  const supplied = Boolean(suppliedHint && (
+    text(suppliedHint.runId) || text(suppliedHint.artifactId) || text(suppliedHint.sha256)
+  ));
+  if (observed.status === 'NO_EXISTING_EVIDENCE_HINT'
+    || observed.kind !== 'OWNER_REVIEW_ARTIFACT_REFERENCE') {
+    if (supplied) throw new Error('supplied review hint lacks original owner evidence');
+    return null;
+  }
+  const matching = comments.filter((entry) => positiveInteger(entry?.id) === observed.commentId);
+  const owner = matching.length === 1 ? matching[0] : null;
+  const authored = Date.parse(owner?.created_at);
+  if (!owner || owner?.user?.login !== 'Cheekyfellastef'
+    || owner?.user?.id !== 267490109 || owner?.user?.type !== 'User'
+    || owner?.author_association !== 'OWNER'
+    || !Number.isFinite(authored)
+    || owner?.created_at !== owner?.updated_at) {
+    throw new Error('owner review hint provenance not immutable');
+  }
+  const hint = {
+    runId: positiveInteger(observed.runId),
+    artifactId: positiveInteger(observed.artifactId),
+    sha256: text(observed.sha256).toLowerCase(),
+  };
+  if (!hint.runId || !hint.artifactId || !REVIEW_SHA256.test(hint.sha256)) {
+    throw new Error('owner review hint artifact identity incomplete');
+  }
+  if (supplied && (positiveInteger(suppliedHint.runId) !== hint.runId
+    || positiveInteger(suppliedHint.artifactId) !== hint.artifactId
+    || text(suppliedHint.sha256).toLowerCase() !== hint.sha256)) {
+    throw new Error('supplied review hint conflicts with original owner evidence');
+  }
+  return Object.freeze(hint);
+}
+
 async function main() {
   if (process.env.GITHUB_ACTIONS !== 'true') {
     throw new Error('successful independent-review artifact recovery may run only inside GitHub Actions');
@@ -190,6 +296,30 @@ async function main() {
     || pr.baseSha !== currentMain || pr.headSha !== expectedHead) {
     throw new Error('pull request no longer matches exact open current-main successful-review recovery identity');
   }
+  const hint = selectRecoverableOwnerReviewHintV1({
+    comments, repository, pr,
+    suppliedHint: {
+      runId: process.env.STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HINT_RUN,
+      artifactId: process.env.STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HINT_ARTIFACT,
+      sha256: process.env.STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HINT_SHA256,
+    },
+  });
+  if (hint) {
+    const workflow=await loadCanonicalWorkflow(owner,repo,token,{workflowId:CANONICAL_WORKFLOW_ID});
+    const [run,index]=await Promise.all([
+      githubRequest(`/repos/${owner}/${repo}/actions/runs/${hint.runId}`,{token}),
+      githubRequest(`/repos/${owner}/${repo}/actions/runs/${hint.runId}/artifacts?per_page=100`,{token}),
+    ]);
+    if (!Array.isArray(index?.artifacts) || index.total_count>index.artifacts.length) throw new Error('artifact index exceeds bounded read');
+    const recovered=validateOwnerHintReviewArtifactReadbackV1({workflow,run,artifacts:index.artifacts,pr,hint});
+    console.log(`INDEPENDENT_REVIEW_SUCCESSFUL_ARTIFACT_RECOVERY=${recovered.decision}`);
+    appendOutput('decision',recovered.decision);
+    appendOutput('recovery_required','true');
+    appendOutput('run_id',recovered.runId);
+    appendOutput('run_attempt',recovered.runAttempt);
+    appendOutput('artifact_name',recovered.artifactName);
+    return;
+  }
   const launchReceipt = selectSuccessfulReviewRecoveryLaunchReceiptV1(comments, {
     repository,
     prNumber,
@@ -197,8 +327,14 @@ async function main() {
     expectedBase: pr.baseSha,
   });
   const workflow = await loadCanonicalWorkflow(owner, repo, token, launchReceipt);
-  const runs = await loadWorkflowDispatchRuns(owner, repo, positiveInteger(workflow.id), token, launchReceipt);
-  const reconciliation = reconcileExistingLaunchReceiptV1({ launchReceipt, runs });
+  const readReconciliation = async () => {
+    const runs = await loadWorkflowDispatchRuns(owner, repo, positiveInteger(workflow.id), token, launchReceipt);
+    return reconcileExistingLaunchReceiptV1({ launchReceipt, runs });
+  };
+  let reconciliation = await readReconciliation();
+  reconciliation = await waitForTerminalReviewReconciliationV1(reconciliation, readReconciliation, {
+    enabled: reconciliation?.reconciliation === 'WAIT_RUNNING',
+  });
   const recovery = buildSuccessfulReviewArtifactRecoveryV1(reconciliation);
 
   console.log(`INDEPENDENT_REVIEW_SUCCESSFUL_ARTIFACT_RECOVERY=${recovery.decision}`);

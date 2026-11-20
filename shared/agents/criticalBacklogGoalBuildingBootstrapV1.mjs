@@ -2,6 +2,70 @@ import { DEFAULT_CRITICAL_BACKLOG } from './criticalBacklogConveyor.mjs';
 
 export const GOAL_BUILDING_SELF_HOSTING_MISSION_ID = 'critical-2002-goal-building-self-hosting';
 export const GOAL_BUILDING_SELF_HOSTING_ITEM_ID = 'goal-building-self-hosting';
+export const LEGACY_RECOVERY_NON_BLOCKING_ISSUE = 1291;
+export const LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID = 'critical-1291-worker-watchdog-repair';
+export const LEGACY_RECOVERY_SUCCESSOR_ISSUES = Object.freeze([1814, 1885, 1889, 1818]);
+export const NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE = Object.freeze({
+  issueNumber: LEGACY_RECOVERY_NON_BLOCKING_ISSUE,
+  missionId: LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+  state: 'OPEN_NON_BLOCKING',
+  successorIssueNumbers: LEGACY_RECOVERY_SUCCESSOR_ISSUES,
+  reason: 'Legacy #1291 recovery acceptance remains visible, but newer out-of-band recovery owners now carry the unfinished acceptance. It must not consume or freeze the canonical goal-building track.',
+});
+export const LEGACY_COMPLETED_RETIRED_ISSUE = 1507;
+export const LEGACY_COMPLETED_RETIRED_MISSION_ID = 'critical-1507-post-sync-runtime-refresh';
+export const RETIRED_COMPLETED_LEGACY_ACCEPTANCE = Object.freeze({
+  issueNumber: LEGACY_COMPLETED_RETIRED_ISSUE,
+  missionId: LEGACY_COMPLETED_RETIRED_MISSION_ID,
+  state: 'CLOSED_RETIRED',
+  successorIssueNumbers: Object.freeze([2158]),
+  reason: 'Legacy #1507 is closed/completed and its command-authority role has migrated to canonical issue #2158. Its historical Mission Orchestrator record must remain visible without consuming construction capacity.',
+});
+export const COMPLETED_DISPATCH_CONVEYOR_ISSUES = Object.freeze([1292, 1293]);
+export const COMPLETED_DISPATCH_CONVEYOR_MISSION_ID = 'critical-1292-1293-dispatch-conveyor';
+export const COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCES = Object.freeze(
+  COMPLETED_DISPATCH_CONVEYOR_ISSUES.map((issueNumber) => Object.freeze({
+    issueNumber,
+    missionId: COMPLETED_DISPATCH_CONVEYOR_MISSION_ID,
+    state: 'CLOSED_RETIRED',
+    successorIssueNumbers: Object.freeze([]),
+    reason: 'The #1292/#1293 dispatch queue and automated dispatcher acceptance is already satisfied on canonical main by its full required test contract. Do not create another no-op mission; preserve every persisted mission record so canonical terminal and proof-parking gates still control its construction capacity.',
+  })),
+);
+// Keep the existing singular export for consumers of the primary issue identity.
+export const COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCE = COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCES[0];
+export const SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES = Object.freeze([
+  NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE,
+  RETIRED_COMPLETED_LEGACY_ACCEPTANCE,
+  ...COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCES,
+]);
+
+// Source-level completion prevents new dispatch missions. It is not release
+// evidence for an existing lane: leave all of that mission's persisted records
+// in the canonical conveyor projection, including active and unparked BLOCKED
+// records, until its ordinary terminal or proof-parking gates free capacity.
+const SELF_HOSTING_NON_SCHEDULABLE_MISSION_IDS = new Set(
+  [NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE, RETIRED_COMPLETED_LEGACY_ACCEPTANCE]
+    .map((acceptance) => acceptance.missionId),
+);
+const SELF_HOSTING_RETIRED_BACKLOG_MISSION_IDS = new Set(
+  SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES.map((acceptance) => acceptance.missionId),
+);
+
+export function projectSelfHostingCriticalMissionRecords(missionRecords = []) {
+  const records = Array.isArray(missionRecords) ? missionRecords : [];
+  const nonBlockingPersistedMissionIds = records
+    .filter((record) => SELF_HOSTING_NON_SCHEDULABLE_MISSION_IDS.has(String(record?.missionId || '').trim()))
+    .map((record) => String(record.missionId).trim());
+  const schedulableMissionRecords = records.filter(
+    (record) => !SELF_HOSTING_NON_SCHEDULABLE_MISSION_IDS.has(String(record?.missionId || '').trim()),
+  );
+  return Object.freeze({
+    schedulableMissionRecords: Object.freeze([...schedulableMissionRecords]),
+    nonBlockingPersistedMissionIds: Object.freeze([...new Set(nonBlockingPersistedMissionIds)].sort()),
+    nonBlockingMissionAcceptances: SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
+  });
+}
 
 const SELF_HOSTING_ITEM = Object.freeze({
   itemId: GOAL_BUILDING_SELF_HOSTING_ITEM_ID,
@@ -52,7 +116,11 @@ const SELF_HOSTING_ITEM = Object.freeze({
   }),
 });
 
+const SCHEDULABLE_CRITICAL_BACKLOG = DEFAULT_CRITICAL_BACKLOG.filter(
+  (entry) => !SELF_HOSTING_RETIRED_BACKLOG_MISSION_IDS.has(entry?.mission?.missionId),
+);
+
 export const SELF_HOSTING_CRITICAL_BACKLOG = Object.freeze([
-  ...DEFAULT_CRITICAL_BACKLOG,
+  ...SCHEDULABLE_CRITICAL_BACKLOG,
   SELF_HOSTING_ITEM,
 ]);

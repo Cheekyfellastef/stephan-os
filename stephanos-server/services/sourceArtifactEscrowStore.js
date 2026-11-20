@@ -1,13 +1,19 @@
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, mkdir, readFile, readlink, rm, unlink, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { copyFile, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import {
   SOURCE_ARTIFACT_ESCROW_V1_SCHEMA,
   SOURCE_ARTIFACT_KIND,
 } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { buildSourceWorkerCompletionProofV1 } from '../../shared/agents/sourceWorkerCompletionProofV1.mjs';
+import { buildOfflinePublicationOutboxRecordV1 } from '../../shared/agents/offlinePublicationOutboxV1.mjs';
+import {
+  renameAtomicJsonWithRetry,
+  resolveSharedWorkspacePath,
+  validateSharedWorkspaceWriteAncestors,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 
 export const SOURCE_ARTIFACT_COMPLETE_FILE_BUNDLE_V1_SCHEMA = 'stephanos.source-artifact-complete-file-bundle.v1';
@@ -17,7 +23,8 @@ const SHA40 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const ZERO_SHA = '0'.repeat(40);
 const SAFE_PATH = /^(?!\/)(?![A-Za-z]:\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+ -]+(?:\/[A-Za-z0-9._@+ -]+)*$/;
-const FORBIDDEN_PATH = /(^|\/)(?:\.git|node_modules|runtime|runtime-data|stephanos-server\/data)(?:\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
+const FORBIDDEN_PATH = /^(?:apps\/stephanos\/dist|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules|runtime-data|stephanos-server\/data)(?:\/|$)|(^|\/)[^/]*\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
+const RUNTIME_STATE_SEGMENT = /(^|\/)runtime(?:\/|$)/i;
 
 function text(value) { return String(value ?? '').trim(); }
 function positiveInteger(value) {
@@ -34,8 +41,21 @@ function within(parent, child) {
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }
 function safePath(value) {
-  const normalized = text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
-  return SAFE_PATH.test(normalized) && !FORBIDDEN_PATH.test(normalized) ? normalized : '';
+  // Preserve raw Git path identity before handling separator/dot aliases.
+  if (typeof value !== 'string' || value !== value.trim()) return '';
+  // Never rewrite the raw Git path into an alias of a different tracked object.
+  if (value.includes('\\') || value.startsWith('./')) return '';
+  const normalized = value;
+  // shared/runtime contains tracked Stephanos source modules, not mutable
+  // root runtime state. Keep every other nested runtime segment excluded.
+  const canonicalSourceRuntime = normalized.startsWith('shared/runtime/')
+    && !RUNTIME_STATE_SEGMENT.test(normalized.slice('shared/runtime/'.length));
+  const runtimeState = RUNTIME_STATE_SEGMENT.test(normalized) && !canonicalSourceRuntime;
+  // Interior dot components are aliases that can bypass generated/state path exclusions.
+  if (normalized.split('/').some((part) => part === '.' || /[. ]$/.test(part)
+      || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:[.]|$)/i.test(part))) return '';
+  return SAFE_PATH.test(normalized) && !FORBIDDEN_PATH.test(normalized) && !runtimeState
+    ? normalized : '';
 }
 function exactIso(value) {
   const ms = Date.parse(text(value));
@@ -58,6 +78,9 @@ function validateArtifactFile(file = {}, changedFile = {}) {
   const digest = text(file.sha256).toLowerCase();
   const mode = text(file.mode);
   const deleted = file.deleted === true;
+  // The shared/runtime source exception admits real tracked executable files,
+  // never a Git link that can redirect into excluded state or secret paths.
+  if (mode === '120000' && path.startsWith('shared/runtime/')) return { ok: false, reason: 'SOURCE_ARTIFACT_FILE_MODE_INVALID' };
   if (!path || path !== safePath(changedFile.path)) return { ok: false, reason: 'SOURCE_ARTIFACT_FILE_PATH_INVALID' };
   if (!SHA40.test(beforeBlobSha) || !SHA40.test(afterBlobSha) || !SHA256.test(digest)) return { ok: false, reason: 'SOURCE_ARTIFACT_FILE_IDENTITY_INVALID' };
   if (beforeBlobSha !== text(changedFile.beforeBlobSha).toLowerCase()
@@ -99,8 +122,18 @@ function validatedBundleInput(input = {}) {
   if (!changedFiles.length || changedFiles.length !== artifactFiles.length || requiredTests.length === 0) return { ok: false, reason: 'SOURCE_ARTIFACT_ESCROW_CONTENT_REQUIRED' };
   const evidenceCommands = new Set(evidenceReceipts.filter((item) => item?.verified === true).map((item) => text(item.testCommand)).filter(Boolean));
   if (!requiredTests.every((command) => evidenceCommands.has(command))) return { ok: false, reason: 'SOURCE_ARTIFACT_ESCROW_TEST_PROOF_REQUIRED' };
-  const byPath = new Map(artifactFiles.map((file) => [safePath(file?.path), file]));
-  if (byPath.size !== artifactFiles.length || byPath.has('')) return { ok: false, reason: 'SOURCE_ARTIFACT_ESCROW_FILE_SET_INVALID' };
+  // A duplicated canonical changed path must never silently crowd out another
+  // artifact path when Map lookup reconstructs the complete-file bundle.
+  const changedPaths = changedFiles.map((file) => safePath(file?.path));
+  const artifactPaths = artifactFiles.map((file) => safePath(file?.path));
+  // Windows path identity is case-insensitive; refuse collisions in both sets.
+  // Preserve exact spelling across changed-file and artifact-file bindings.
+  const distinctWin32 = (paths) => paths.every(Boolean)
+    && new Set(paths.map((path) => path.toLowerCase())).size === paths.length;
+  if (!distinctWin32(changedPaths) || !distinctWin32(artifactPaths)) {
+    return { ok: false, reason: 'SOURCE_ARTIFACT_ESCROW_FILE_SET_INVALID' };
+  }
+  const byPath = new Map(artifactFiles.map((file, index) => [artifactPaths[index], file]));
   const files = [];
   let byteLength = 0;
   for (const changed of changedFiles) {
@@ -162,7 +195,7 @@ export async function persistSourceArtifactEscrowV1(input = {}, options = {}) {
 
   const createdAtUtc = prepared.bundle.completedAtUtc;
   const expiresAtUtc = new Date(Date.parse(createdAtUtc) + 30 * 24 * 60 * 60 * 1000).toISOString();
-  return Object.freeze({
+  const escrow = Object.freeze({
     schemaVersion: SOURCE_ARTIFACT_ESCROW_V1_SCHEMA,
     artifactKind: SOURCE_ARTIFACT_KIND.COMPLETE_FILE_BUNDLE,
     missionId: prepared.bundle.missionId,
@@ -187,6 +220,56 @@ export async function persistSourceArtifactEscrowV1(input = {}, options = {}) {
     testVerdicts: prepared.bundle.testVerdicts,
     diffCheckVerdict: 'PASS',
   });
+  // Persist the complete exact-byte escrow authority beside its immutable bundle.
+  // Missing sidecars cannot be reconstructed later by a publication consumer.
+  const sidecarPath = resolve(artifactRoot, `${completeArtifactSha256}.escrow.json`);
+  const sidecarBytes = Buffer.from(`${JSON.stringify(escrow, null, 2)}\n`, 'utf8');
+  const sidecarTemp = resolve(artifactRoot, `${completeArtifactSha256}.${process.pid}.${Date.now()}.escrow.tmp`);
+  await writeFile(sidecarTemp, sidecarBytes, { flag: 'wx', mode: 0o600 });
+  try {
+    try { await copyFile(sidecarTemp, sidecarPath, fsConstants.COPYFILE_EXCL); }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+  } finally { await unlink(sidecarTemp).catch(() => {}); }
+  const sidecarReadback = await readFile(sidecarPath);
+  if (!sidecarReadback.equals(sidecarBytes)) return null;
+  return escrow;
+}
+
+export async function persistOfflinePublicationOutboxV1(escrow = {}, options = {}) {
+  const runtime = resolveSharedWorkspaceRuntimeConfig({
+    env: options.env || process.env,
+    root: options.sharedWorkspaceRoot,
+    repoRoot: options.repoRoot || process.cwd(),
+  });
+  if (!runtime.ok) return null;
+  const nowUtc = options.now instanceof Date
+    ? options.now.toISOString()
+    : text(options.nowUtc) || new Date().toISOString();
+  const built = buildOfflinePublicationOutboxRecordV1(escrow, { nowUtc });
+  if (!built.ok) return null;
+  const resolved = resolveSharedWorkspacePath({
+    root: runtime.root,
+    repoRoot: options.repoRoot || process.cwd(),
+    segments: ['publication-outbox', 'pending', built.record.outboxId + '.json'],
+  });
+  if (!resolved.ok) return null;
+  await mkdir(dirname(resolved.path), { recursive: true, mode: 0o700 });
+  const initialAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!initialAncestors.ok) return null;
+
+  const payload = Buffer.from(`${JSON.stringify(built.record, null, 2)}\n`, 'utf8');
+  const tempPath = `${resolved.path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!publicationAncestors.ok) return null;
+    await renameAtomicJsonWithRetry(tempPath, resolved.path, options);
+  } finally {
+    await unlink(tempPath).catch(() => {});
+  }
+  const readback = await readFile(resolved.path);
+  if (!readback.equals(payload)) return null;
+  return Object.freeze({ ...built.record, path: resolved.path });
 }
 
 function stagedEntry(run, worktreePath, indexEnv, path) {
@@ -202,7 +285,10 @@ function stagedEntry(run, worktreePath, indexEnv, path) {
 async function sourceArtifactIdentityFromWorktree(action, execution, claim, options = {}) {
   const worktreePath = resolve(text(action?.worktreePath));
   const changedPaths = (Array.isArray(execution?.changedFiles) ? execution.changedFiles : []).map(safePath).filter(Boolean).sort();
-  if (!worktreePath || !changedPaths.length || changedPaths.length !== execution.changedFiles.length || new Set(changedPaths).size !== changedPaths.length) throw new Error('SOURCE_ARTIFACT_CHANGED_FILE_SET_INVALID');
+  if (!worktreePath || !changedPaths.length || changedPaths.length !== execution.changedFiles.length
+      || new Set(changedPaths.map((path) => path.toLowerCase())).size !== changedPaths.length) {
+    throw new Error('SOURCE_ARTIFACT_CHANGED_FILE_SET_INVALID');
+  }
   const run = options.runCommand;
   if (typeof run !== 'function') throw new Error('SOURCE_ARTIFACT_BOUNDED_RUNNER_REQUIRED');
   const env = options.env || process.env;
@@ -233,15 +319,32 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
       const staged = stagedEntry(run, worktreePath, indexEnv, path);
       let bytes = Buffer.alloc(0);
       if (!staged.deleted) {
-        const absolutePath = resolve(worktreePath, path);
-        if (!within(worktreePath, absolutePath)) throw new Error('SOURCE_ARTIFACT_PATH_ESCAPE_BLOCKED');
-        bytes = staged.mode === '120000' ? Buffer.from(await readlink(absolutePath), 'utf8') : await readFile(absolutePath);
-        if (gitBlobSha(bytes) !== staged.blobSha) throw new Error(`SOURCE_ARTIFACT_BLOB_CONTENT_MISMATCH:${path}`);
+        const blob = run(
+          'git.exe',
+          ['-C', worktreePath, 'cat-file', 'blob', staged.blobSha],
+          { cwd: worktreePath, env: indexEnv, encoding: null },
+        );
+        if (blob.error || blob.status !== 0) {
+          throw new Error(`SOURCE_ARTIFACT_BLOB_READ_FAILED:${path}`);
+        }
+        bytes = Buffer.isBuffer(blob.stdout)
+          ? blob.stdout
+          : Buffer.from(String(blob.stdout || ''), 'utf8');
+        if (gitBlobSha(bytes) !== staged.blobSha) {
+          throw new Error(`SOURCE_ARTIFACT_BLOB_CONTENT_MISMATCH:${path}`);
+        }
       }
       const digest = sha256(bytes);
       const identity = Object.freeze({ path, beforeBlobSha, afterBlobSha: staged.blobSha, sha256: digest });
       changedFiles.push(identity);
       artifactFiles.push(Object.freeze({ ...identity, mode: staged.mode, deleted: staged.deleted, contentBase64: bytes.toString('base64') }));
+    }
+    // The scheduler normalizes resource repository IDs to lowercase. Only
+    // restore the fixed, allowlisted canonical identity for the escrow
+    // authority; never allow caller-supplied repositories into signed bundles.
+    const requestedRepository = text(action.repository);
+    if (requestedRepository.toLowerCase() !== 'cheekyfellastef/stephan-os') {
+      throw new Error('SOURCE_ARTIFACT_CANONICAL_REPOSITORY_REQUIRED');
     }
     const grant = options.actionGrant || {};
     const hasPrBinding = Object.hasOwn(grant, 'prNumber');
@@ -249,7 +352,7 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
     return Object.freeze({
       missionId: text(action.missionId),
       actionId: text(action.actionId),
-      repository: text(action.repository),
+      repository: 'Cheekyfellastef/stephan-os',
       canonicalIssue: positiveInteger(grant.issueNumber),
       canonicalPr: canonicalPrValue,
       canonicalBranch: text(action.branch),
@@ -265,9 +368,20 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
   }
 }
 
+// Capture remains the existing bounded Git operation. Native source-task callers
+// capture inside their owned Job; this export adds no claim or execution authority.
+export { sourceArtifactIdentityFromWorktree as captureSourceArtifactIdentityFromWorktreeV1 };
+
 export async function finalizeSourceArtifactEscrowFromWorktreeV1(action, execution, claim, options = {}) {
   if (execution?.success !== true || !Array.isArray(execution.changedFiles) || execution.changedFiles.length === 0) return execution;
   const identity = await sourceArtifactIdentityFromWorktree(action, execution, claim, options);
+  return finalizeSourceArtifactEscrowFromCapturedIdentityV1(action, execution, identity, options);
+}
+
+// Data-only completion from the existing captured identity. The owning caller
+// must independently prove its exact claim and native release before invoking it.
+export async function finalizeSourceArtifactEscrowFromCapturedIdentityV1(action, execution, identity, options = {}) {
+  if (execution?.success !== true || !Array.isArray(execution.changedFiles) || execution.changedFiles.length === 0) return execution;
   const persist = typeof options.persistSourceArtifactEscrow === 'function'
     ? options.persistSourceArtifactEscrow
     : (input) => persistSourceArtifactEscrowV1(input, {
@@ -285,12 +399,27 @@ export async function finalizeSourceArtifactEscrowFromWorktreeV1(action, executi
     commitMessage: text(options.commitMessage) || `Complete ${action.missionId}`,
     persistSourceArtifactEscrow: persist,
   });
+  let offlinePublicationOutbox = null;
+  if (completion.testsPassed === true && completion.sourceArtifactEscrow) {
+    const persistOutbox = typeof options.persistOfflinePublicationOutbox === 'function'
+      ? options.persistOfflinePublicationOutbox
+      : (escrow) => persistOfflinePublicationOutboxV1(escrow, {
+        env: options.env || process.env,
+        sharedWorkspaceRoot: options.sharedWorkspaceRoot,
+        repoRoot: options.repoRoot || process.cwd(),
+      });
+    offlinePublicationOutbox = await persistOutbox(completion.sourceArtifactEscrow);
+    if (!offlinePublicationOutbox) {
+      throw new Error('OFFLINE_PUBLICATION_OUTBOX_REQUIRED');
+    }
+  }
   return Object.freeze({
     ...execution,
     stage: completion.testsPassed ? 'TESTED' : 'SOURCE_CHANGED',
     testsPassed: completion.testsPassed === true,
     sourceArtifactEscrow: completion.sourceArtifactEscrow || null,
     sourceArtifactIdentity: identity,
+    offlinePublicationOutbox,
     completionProofVerdict: completion.finalVerdict,
   });
 }
