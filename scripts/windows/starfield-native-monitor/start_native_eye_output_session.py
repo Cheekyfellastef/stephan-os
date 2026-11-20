@@ -102,6 +102,7 @@ def write_new(path, raw):
 
 class Store:
     def __init__(self, directory):
+        self.dll_hash = DLL_HASH
         self.path = Path(directory) / SESSION_NAME
         self.lock = self.path.with_suffix(".lock")
         self.version = None
@@ -129,6 +130,9 @@ class Store:
                     raise Blocked("Operation lock identity changed; preserving it")
                 self.lock.unlink()
 
+    def new_fields(self):
+        return {}
+
     def exists(self):
         plain_path(self.path)
         return self.path.exists()
@@ -137,7 +141,7 @@ class Store:
         state = read_json(self.path)
         if (state.get("schema") != SCHEMA or state.get("workspace") != str(WORKSPACE)
                 or state.get("handoffSha256") != HANDOFF_HASH
-                or state.get("reviewedDllSha256") != DLL_HASH
+                or state.get("reviewedDllSha256") != self.dll_hash
                 or not re.fullmatch(r"[0-9a-f]{32}", state.get("sessionId", ""))):
             raise Blocked("Existing session identity differs")
         self.version = digest(self.path)
@@ -195,11 +199,12 @@ def start(store, host):
             raise Blocked("Session or running game appeared during admission")
         state = {"schema": SCHEMA, "sessionId": uuid.uuid4().hex, "workspace": str(WORKSPACE),
                  "stage": "RESERVED_ONE_ATTEMPT", "createdUtc": utc(), "events": [],
-                 "handoffSha256": HANDOFF_HASH, "reviewedDllSha256": DLL_HASH,
+                 "handoffSha256": HANDOFF_HASH, "reviewedDllSha256": store.dll_hash,
                  "sourceArchiveSha256": ARCHIVE_HASH, "verification": proof,
                  "launchRequested": False, "process": None, "injected": False,
                  "captureAttempted": False, "saveLoadedConfirmed": False,
                  "headsetNeeded": False, "priorProxyReceipt": host.previous_proxy_receipt()}
+        state.update(store.new_fields())
         store.save(state, new=True)
         try:
             advance(store, state, "PROXY_ISOLATION_INTENT")
@@ -358,6 +363,12 @@ $rows=@(); foreach($p in @(Get-Process -ErrorAction Stop | Where-Object {$_.Proc
         return bool(saved and saved.get("record", {}).get("stage") == "isolated"
                     and self.proxy_receipt() == saved)
 
+    def verify_attempt_history(self):
+        for entry in SOURCE.iterdir():
+            name = entry.name.lower()
+            if (name.startswith("native-eye-output-") and name.endswith(".jsonl")) or ("eye-output" in name and "session" in name and entry.is_file()):
+                raise Blocked("Existing native-eye-output attempt/session found: " + entry.name)
+
     def preflight(self):
         handoff_path = OUTPUTS / "Starfield-VR-HANDOFF.json"
         if digest(handoff_path) != HANDOFF_HASH:
@@ -375,10 +386,7 @@ $rows=@(); foreach($p in @(Get-Process -ErrorAction Stop | Where-Object {$_.Proc
                     "handoff": str(handoff_path), "archive": handoff["archive"]}
         if json.dumps(read_json(checkpoint_path), sort_keys=True) != json.dumps(expected, sort_keys=True):
             raise Blocked("Current native-eye-output checkpoint is not the saved unrun experiment")
-        for entry in SOURCE.iterdir():
-            name = entry.name.lower()
-            if (name.startswith("native-eye-output-") and name.endswith(".jsonl")) or ("eye-output" in name and "session" in name and entry.is_file()):
-                raise Blocked("Existing native-eye-output attempt/session found: " + entry.name)
+        self.verify_attempt_history()
         if digest(GAME) != GAME_HASH or self.proxy_state() != "restored" or self.games():
             raise Blocked("Expected idle game and restored proxy were not verified")
         plain_path(STEAM)
@@ -455,7 +463,7 @@ def summary(state, store):
     keys = ("sessionId", "stage", "createdUtc", "updatedUtc", "launchRequested",
             "handoffSha256", "reviewedDllSha256", "sourceArchiveSha256", "verification",
             "injected", "captureAttempted", "saveLoadedConfirmed", "headsetNeeded",
-            "gameExitObserved", "normalExitProven", "proxyRestored", "closeResult", "error", "cleanupError", "nextAction")
+            "sessionProfile", "gameExitObserved", "normalExitProven", "proxyRestored", "closeResult", "error", "cleanupError", "nextAction")
     result = {key: state[key] for key in keys if key in state}
     result["statePath"] = str(store.path)
     result["process"] = state.get("process")

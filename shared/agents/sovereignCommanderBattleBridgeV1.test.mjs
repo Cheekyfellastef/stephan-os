@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 import {
   SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  parseSovereignCommanderTailnetOutputV1,
   executeSovereignCommanderInstallOnBattleBridge,
   validateSovereignCommanderInstallCommandShape,
 } from './sovereignCommanderBattleBridgeV1.mjs';
@@ -50,6 +51,31 @@ function response({ status = 200, body = null, sessionId = '' } = {}) {
     async text() { return serialized; },
   };
 }
+
+test('native Serve banner plus pretty route JSON is a single exact tailnet proof', () => {
+  const expected = tailnetReceipt();
+  assert.deepEqual(parseSovereignCommanderTailnetOutputV1(JSON.stringify(expected)), expected);
+  assert.deepEqual(
+    parseSovereignCommanderTailnetOutputV1('Tailscale Serve configured\r\n' + JSON.stringify(expected, null, 2) + '\r\n'),
+    expected,
+  );
+});
+
+test('tailnet parser rejects ambiguous, foreign, extra and oversized output', () => {
+  const valid = JSON.stringify(tailnetReceipt(), null, 2);
+  for (const raw of [
+    '',
+    'Tailscale configured without proof',
+    'No line break before JSON ' + valid,
+    'Configured\n' + valid + '\ntrailing output',
+    'Configured\n{}\n' + valid,
+    'Configured\n' + valid + '\n{}',
+    'Configured\n' + valid.slice(0, -1),
+    'Configured\n' + JSON.stringify({ schemaVersion: 'wrong' }),
+    'Configured\n' + JSON.stringify([tailnetReceipt()]),
+    'Configured\n' + 'x'.repeat(32_769) + '\n' + valid,
+  ]) assert.equal(parseSovereignCommanderTailnetOutputV1(raw), null);
+});
 
 test('sovereign bootstrap command is exact-head and rejects widened fields', () => {
   const valid = validateSovereignCommanderInstallCommandShape(command());

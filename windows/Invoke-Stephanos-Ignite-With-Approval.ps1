@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-  [string]$RepositoryRoot = ''
+  [string]$RepositoryRoot = '',
+  [switch]$Unattended
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,6 +55,17 @@ $battleBridgeSupervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'st
 
 function Write-IgniteApprovalLog([string]$Message) {
   Write-Host "[IGNITION APPROVAL] $Message"
+}
+
+function Test-IgnitionAttendedActionAvailable([string]$RequiredAction) {
+  if (-not [bool]$Unattended) { return $true }
+  if ($RequiredAction -cnotin @('OPENCLAW_SERVICE_RESTART','SOURCE_DIVERGENCE_RECOVERY','SOURCE_MERGE_COMPLETION')) {
+    throw 'IGNITION_ATTENDED_ACTION_KIND_UNPROVEN'
+  }
+  $packet = [ordered]@{ schemaVersion = 'stephanos.ignition-attended-action-required.v1'; blocker = 'ATTENDED_ACTION_REQUIRED';
+    requiredAction = $RequiredAction; sourceHead = $requestedHead }
+  Write-Host ('STEPHANOS_IGNITION_ATTENDED_ACTION_REQUIRED=' + ($packet | ConvertTo-Json -Compress))
+  return $false
 }
 
 function Get-FreshCanonicalIgnitionOutcome([DateTime]$FreshAfterUtc, [string]$ExpectedHead) {
@@ -184,6 +196,7 @@ function Test-OpenClawRestartAvailable($Packet) {
 }
 
 function Show-OpenClawRestartPopup($Packet) {
+  if (-not (Test-IgnitionAttendedActionAvailable -RequiredAction 'OPENCLAW_SERVICE_RESTART')) { return 'attended-action-required' }
   $approvalAvailable = Test-OpenClawRestartAvailable $Packet
   $approvedCaseText = if ($approvalAvailable) { 'Approved safe case:
 - Restart OpenClaw service' } else { 'Approved safe case:
@@ -371,6 +384,7 @@ It will not push, unlock OpenClaw, dispatch Codex, or mark merge readiness.
 }
 
 function Invoke-ApprovedSourceMergeCheck($Packet) {
+  if (-not (Test-IgnitionAttendedActionAvailable -RequiredAction 'SOURCE_MERGE_COMPLETION')) { return 2 }
   Write-IgniteApprovalLog "operator approved source merge check; running trial merge: $sourceMergeCheckCommand"
   & git merge --no-commit --no-ff origin/main
   $mergeExitCode = $LASTEXITCODE
@@ -398,6 +412,7 @@ function Invoke-ApprovedSourceMergeCheck($Packet) {
 }
 
 function Show-IgniteRecoveryPopup($Packet) {
+  if (-not (Test-IgnitionAttendedActionAvailable -RequiredAction 'SOURCE_DIVERGENCE_RECOVERY')) { return 'attended-action-required' }
   $approvalAvailable = Test-GeneratedDistRecoveryAvailable $Packet
   $sourceDivergence = -not $approvalAvailable -and $Packet.localOnlyDistOnly -ne $true
   $message = Format-ApprovalPacketText -Packet $Packet -ApprovalAvailable $approvalAvailable
@@ -538,6 +553,7 @@ if (Test-SovereignCommanderControlPlaneAutohealEligible -Preflight $preflight) {
 $packet = ConvertFrom-RepairPacketLine -Lines $lines
 if ($null -ne $packet -and $packet.packetType -eq 'openclaw-startup-connect-recovery-v1') {
   $approvalAction = Show-OpenClawRestartPopup -Packet $packet
+  if ($approvalAction -ceq 'attended-action-required') { exit 2 }
   if ($approvalAction -eq 'openclaw-service-restart') {
     Write-IgniteApprovalLog "operator approved OpenClaw service restart; running: $approvedOpenClawRestartCommand"
     & cmd.exe /d /c $approvedOpenClawRestartCommand
@@ -553,6 +569,7 @@ if ($null -eq $packet -or $packet.reason -ne 'ff-only-divergence') {
 }
 
 $approvalAction = Show-IgniteRecoveryPopup -Packet $packet
+if ($approvalAction -ceq 'attended-action-required') { exit 2 }
 if ($approvalAction -eq 'source-merge-check') {
   exit (Invoke-ApprovedSourceMergeCheck -Packet $packet)
 }
