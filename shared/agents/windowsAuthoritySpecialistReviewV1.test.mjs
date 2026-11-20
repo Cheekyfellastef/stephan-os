@@ -792,3 +792,49 @@ test('specialist entry refuses accessor-backed or inherited root review evidence
   assert.equal(rejectedSymbol.eligible, true, 'unread unrelated symbol accessor must preserve normal route');
   assert.equal(symbolCalls, 0, 'irrelevant symbol getter must not execute');
 });
+
+
+test('specialist entry denies nested Proxy review evidence before any sibling can evaluate traps', () => {
+  const verdict = 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE';
+  assert.notEqual(analyzeWindowsAuthoritySpecialistReview(input()).finalVerdict, verdict,
+    'normal literal review payload remains routed');
+  const cases = [
+    ['analysis', (claim, hostile) => { claim.analysis = hostile(claim.analysis); }],
+    ['analysis.findings', (claim, hostile) => { claim.analysis.findings = hostile(claim.analysis.findings); }],
+    ['analysis.finding', (claim, hostile) => { claim.analysis.findings[0] = hostile(claim.analysis.findings[0]); }],
+    ['analysis.counts', (claim, hostile) => { claim.analysis.counts = hostile(claim.analysis.counts); }],
+    ['sources', (claim, hostile) => { claim.sources = hostile(claim.sources); }],
+    ['source entry', (claim, hostile) => { claim.sources = [hostile({ path: 'untrusted.ps1' })]; }],
+    ['lineage', (claim, hostile) => { claim.lineageEvidence = hostile(claim.lineageEvidence); }],
+    ['lineage parents', (claim, hostile) => { claim.lineageEvidence.parents = hostile(claim.lineageEvidence.parents); }],
+    ['lineage comparison', (claim, hostile) => { claim.lineageEvidence.comparison = hostile(claim.lineageEvidence.comparison); }],
+    ['analysis prototype', (claim, hostile) => { Object.setPrototypeOf(claim.analysis, hostile({})); }],
+  ];
+  for (const [label, mutate] of cases) {
+    let traps = 0;
+    const hostile = (value) => new Proxy(value, {
+      get() { traps++; throw new Error('nested Proxy get ' + label); },
+      ownKeys() { traps++; throw new Error('nested Proxy ownKeys ' + label); },
+      getPrototypeOf() { traps++; throw new Error('nested Proxy prototype ' + label); },
+    });
+    const claim = input();
+    mutate(claim, hostile);
+    const result = analyzeWindowsAuthoritySpecialistReview(claim);
+    assert.equal(traps, 0, label + ': no untrusted trap may execute');
+    assert.equal(result.finalVerdict, verdict, label);
+    assert.equal(result.eligible, false, label);
+    assert.equal(result.clean, false, label);
+    assert.deepEqual(result.proofRefs, [], label);
+    for (const authority of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(result[authority], false, label + ': ' + authority);
+    }
+  }
+  const revoked = Proxy.revocable([], {});
+  revoked.revoke();
+  const claim = input();
+  claim.analysis.findings = revoked.proxy;
+  const denied = analyzeWindowsAuthoritySpecialistReview(claim);
+  assert.equal(denied.finalVerdict, verdict);
+  assert.deepEqual(denied.proofRefs, []);
+});

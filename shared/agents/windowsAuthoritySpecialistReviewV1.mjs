@@ -149,6 +149,27 @@ const STARFIELD_VR_LAUNCHER_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHE
 const STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0];
 
 
+// A sibling specialist may inspect nested evidence before its own P0 route
+// is known. Refuse hostile Proxy envelopes without invoking a single trap.
+// Keep the walk bounded and inspect own DATA descriptors only: accessors are
+// never evaluated by this preflight. Strict child evidence guards still apply.
+function unsafeNestedReviewEvidence(value, seen = new Set(), depth = 0) {
+  if (value === null || typeof value !== 'object') return false;
+  if (types.isProxy(value)) return true;
+  if (seen.has(value)) return false;
+  if (depth >= 10 || seen.size >= 512) return true;
+  seen.add(value);
+  if (types.isProxy(Object.getPrototypeOf(value))) return true;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > 512) return true;
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor && Object.hasOwn(descriptor, 'value')
+      && unsafeNestedReviewEvidence(descriptor.value, seen, depth + 1)) return true;
+  }
+  return false;
+}
+
 function inertCompositeField(value, key) {
   // Walk literal data descriptors only. Never execute a getter while selecting
   // the specialist route; strict own-field checks still decide admission.
@@ -399,6 +420,25 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
       finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_EVIDENCE',
     });
   }
+  // A literal root can conceal an executable Proxy in a nested finding,
+  // source or lineage array. Check before any sibling specialist dispatch.
+  const untrustedNestedEvidence = ['analysis', 'sources', 'lineageEvidence'].some((key) => {
+    const field = Object.getOwnPropertyDescriptor(input, key);
+    return field && Object.hasOwn(field, 'value') && unsafeNestedReviewEvidence(field.value);
+  });
+  if (untrustedNestedEvidence) {
+    return Object.freeze({
+      schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
+      eligible: false,
+      clean: false,
+      reviewedPaths: Object.freeze([]),
+      findings: Object.freeze([]),
+      proofRefs: Object.freeze([]),
+      ...REVIEW_AUTHORITY_BOUNDARY,
+      finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE',
+    });
+  }
+
   // Original #2315 source-only review, never an installed native-signer qualification.
   const mailboxNative = canonicalMailboxNative.analyzeWindowsAuthorityCanonicalMailboxNativeEvidenceReviewV1(input);
   if (mailboxNative.eligible) return mailboxNative;
