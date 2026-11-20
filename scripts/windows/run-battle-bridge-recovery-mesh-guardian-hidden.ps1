@@ -13,6 +13,7 @@ $mailboxTaskName = 'Stephanos Battle Bridge GitHub Command Mailbox'
 $guardianId = 'stephanos-battle-bridge-recovery-mesh-guardian-v1'
 $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $githubCli = 'C:\Program Files\GitHub CLI\gh.exe'
+$nodeExe = 'C:\Program Files\nodejs\node.exe'
 $fixedPowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $wscriptExe = 'C:\Windows\System32\wscript.exe'
 $scheduledTaskMutationScope = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_OR_MAILBOX_ONLY'
@@ -164,14 +165,14 @@ function Read-FixedGitText {
 
 function Read-FixedGitHubText {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
-    $text = (& $githubCli @Arguments 2>$null | Out-String).Trim()
+    $text = (& $nodeExe $githubObservationCli 'text' @Arguments 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $text) { Stop-Guardian -Blocker 'FIXED_GITHUB_READ_FAILED' }
     return $text
 }
 
 function Read-FixedGitHubJson {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
-    $raw = (& $githubCli @Arguments 2>$null | Out-String).Trim()
+    $raw = (& $nodeExe $githubObservationCli 'json' @Arguments 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $raw) { Stop-Guardian -Blocker 'FIXED_GITHUB_COMPARE_READ_FAILED' }
     try { return $raw | ConvertFrom-Json }
     catch { Stop-Guardian -Blocker 'FIXED_GITHUB_COMPARE_JSON_INVALID' }
@@ -292,11 +293,12 @@ function Get-TaskHealth {
 }
 
 if (-not $env:USERPROFILE) { Stop-Guardian -Blocker 'USERPROFILE_REQUIRED' }
-foreach ($fixedExecutable in @($gitExe, $githubCli, $fixedPowerShellExe, $wscriptExe)) {
+foreach ($fixedExecutable in @($gitExe, $githubCli, $nodeExe, $fixedPowerShellExe, $wscriptExe)) {
     if (-not (Test-Path -LiteralPath $fixedExecutable -PathType Leaf)) { Stop-Guardian -Blocker 'FIXED_EXECUTABLE_MISSING' }
 }
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
+$githubObservationCli = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\recovery-mesh-guardian-github-observation.mjs'))
 $mailboxStatePath = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos\shared-agent-workspace\github-command-mailbox\state.json'))
 $mailboxInstallerPath = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-github-command-mailbox.ps1'
 $recoveryInstallerPath = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-recovery-mesh.ps1'
@@ -313,7 +315,8 @@ $authoritySourcePaths = @(
     'scripts/battle-bridge-github-command-mailbox.mjs',
     'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
     'scripts/battle-bridge-recovery-mesh.mjs',
-    'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1'
+    'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
+    'scripts/recovery-mesh-guardian-github-observation.mjs'
 )
 
 if (-not (Test-Path -LiteralPath $repoRoot -PathType Container)) { Stop-Guardian -Blocker 'CANONICAL_REPOSITORY_MISSING' }
