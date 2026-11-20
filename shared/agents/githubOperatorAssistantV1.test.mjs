@@ -549,7 +549,9 @@ test('explicit malformed GitHub HEAD identities cannot inherit green review-read
 
 test('claimed HEAD cannot substitute for absent GitHub HEAD when promoting review readiness',()=>{
  const claimed='a'.repeat(40);
- for(const headFields of [{},{headSha:''},{headRefOid:null}]){
+ const absent=[undefined,null,''];
+ const headCases=[{},...absent.flatMap(headSha=>absent.map(headRefOid=>({headSha,headRefOid})))];
+ for(const headFields of headCases){
   const briefing=buildGitHubOperatorBriefing({pullRequests:[{
    number:1500,publicationVerified:true,checksStatus:'pass',claimedHeadSha:claimed,...headFields,
   }]});
@@ -562,4 +564,24 @@ test('claimed HEAD cannot substitute for absent GitHub HEAD when promoting revie
  }]});
  assert.equal(verified.status,'PASS');
  assert.equal(verified.readyForReview.length,1);
+});
+
+test('raw malformed HEAD aliases remain invalid beside a valid claim or observed alias',()=>{
+ const valid='a'.repeat(40);
+ const classify=headFields=>buildGitHubOperatorBriefing({pullRequests:[{
+  number:1500,publicationVerified:true,checksStatus:'pass',claimedHeadSha:valid,...headFields,
+ }]});
+ for(const bad of ['not-a-sha','z'.repeat(40),valid+'  ',' ',42,0,false,{},[],[valid]]){
+  for(const headFields of [{headSha:bad},{headRefOid:bad},{headSha:valid,headRefOid:bad},{headSha:bad,headRefOid:valid}]){
+   const result=classify(headFields);
+   assert.equal(result.status,'BLOCKED',JSON.stringify(headFields));
+   assert.equal(result.readyForReview.length,0);
+   assert.equal(result.blocked[0].kind,'pr-head-invalid',JSON.stringify(headFields));
+  }
+ }
+ for(const headFields of [{headSha:'',headRefOid:valid},{headSha:valid,headRefOid:''}]){
+  const result=classify(headFields);
+  assert.equal(result.status,'BLOCKED');
+  assert.equal(result.blocked[0].kind,'pr-head-invalid');
+ }
 });

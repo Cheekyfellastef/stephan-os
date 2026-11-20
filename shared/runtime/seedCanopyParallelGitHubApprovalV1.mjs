@@ -12,8 +12,11 @@ const ID_PATTERN = /^[1-9][0-9]{0,12}$/;
 const TIMESPAN = 24 * 60 * 60 * 1000;
 
 export function validateSeedParallelApprovalReferenceV1(reference) {
-  return reference?.schemaVersion === SEED_PARALLEL_APPROVAL_REF_SCHEMA
-    && ID_PATTERN.test(String(reference?.commentId || ''))
+  if (reference?.schemaVersion !== SEED_PARALLEL_APPROVAL_REF_SCHEMA) return false;
+  const commentId = reference.commentId;
+  return (typeof commentId === 'string'
+      || (typeof commentId === 'number' && Number.isSafeInteger(commentId)))
+    && ID_PATTERN.test(String(commentId))
     && Object.keys(reference || {}).sort().join(',') === 'commentId,schemaVersion';
 }
 
@@ -45,7 +48,7 @@ export async function verifySeedParallelOwnerGitHubApprovalV1({
   const created = Date.parse(comment.created_at || '');
   const updated = Date.parse(comment.updated_at || '');
   if (!Number.isFinite(created) || created > nowMs || nowMs - created > TIMESPAN
-    || !Number.isFinite(updated) || updated > nowMs)
+    || !Number.isFinite(updated) || updated !== created || updated > nowMs)
     return blocked('GITHUB_APPROVAL_NOT_FRESH');
   const body = String(comment.body || '');
   const match = body.match(new RegExp('\\`\\`\\`' + MARKER + '\\s*([\\s\\S]*?)\\`\\`\\`'));

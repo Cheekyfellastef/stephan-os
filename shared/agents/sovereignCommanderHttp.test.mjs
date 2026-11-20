@@ -623,9 +623,11 @@ async function runNativeGuardianFixture(httpUrl) {
       options.onPrepared({ RootPid: 123, RootCreatedAtUtc: '2026-10-30T12:00:00Z' });
       return promise;
     },
-    consumeFixedRuntimeTerminalProvenanceV1(result, binding) {
+    consumeFixedRuntimeCompletionV1(result, binding) {
       const stored = terminalProof.get(result); terminalProof.delete(result);
-      return stored === binding.requestId;
+      return stored === binding.requestId ? Object.freeze({ executionCustodyReleased: true,
+        operationDisposition: result.ok ? 'SUCCEEDED'
+          : result.reason === 'FIXED_RUNTIME_OPERATION_CANCELLED' ? 'CANCELLED' : 'FAILED' }) : null;
     },
     consumeFixedRuntimePrelaunchExclusionV1(result, binding) {
       const stored = exclusionProof.get(result); exclusionProof.delete(result);

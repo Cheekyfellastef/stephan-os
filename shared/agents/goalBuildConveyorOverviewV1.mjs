@@ -7,6 +7,17 @@ const count = value => Number.isInteger(value) && value >= 0 ? value : null;
 const fresh = (value, now, age) => Number.isFinite(time(value)) && time(value) <= now
   && now - time(value) <= age;
 
+const SIGNED_STAGE_PREREQUISITES = Object.freeze({
+  admission: [4, 5, 7],
+  select: [4, 5, 7, 6],
+  claim: [4, 5, 7, 6, 18],
+  pickup: [4, 5, 7, 6, 18, 19],
+  edit: [4, 5, 7, 6, 18, 19, 20],
+  test: [4, 5, 7, 6, 18, 19, 20],
+  proof: [4, 5, 7, 6, 18, 19, 20, 21],
+  merge: [4, 5, 7, 6, 18, 19, 20, 21, 22],
+});
+
 // Gate 20 is intentionally shared: the publisher proves diff + tests together.
 // No existing distinct commit receipt exists in this projection. A PR, source SHA,
 // terminal execution or merge must never be substituted for a builder commit.
@@ -21,18 +32,57 @@ const FLOW = [
 export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Date.now(), staleAfterMs = MAX_AGE, statusRecords } = {}) {
   const maxAgeMs = Math.max(1000, Math.min(MAX_AGE, Number(staleAfterMs) || MAX_AGE));
   const ledger = projection.goalBuildGateObservatory;
-  const admittedLedger = ledger?.schemaVersion === 'stephanos.goal-build-gate-observatory.v1'
+  // Diagnostic provenance must be producer-owned; inherited wrapper fields are not signed evidence.
+  const ledgerBindingFields = ['schemaVersion', 'diagnosticOnly', 'approvalAuthority',
+    'mergeAuthority', 'sourceHead', 'observedAtUtc', 'observationStatus', 'gates'];
+  const ledgerOwnProvenance = ledger !== null && typeof ledger === 'object'
+    && !Array.isArray(ledger)
+    && ledgerBindingFields.every(field => Object.prototype.hasOwnProperty.call(ledger, field));
+  const admittedLedger = ledgerOwnProvenance
+    && ledger.schemaVersion === 'stephanos.goal-build-gate-observatory.v1'
     && ledger.diagnosticOnly === true && ledger.approvalAuthority === false && ledger.mergeAuthority === false
     && /^[a-f0-9]{40}$/.test(ledger.sourceHead || '')
     && ['EVIDENCE_AVAILABLE', 'STALE'].includes(ledger.observationStatus);
-  const ledgerLive = admittedLedger && ledger.observationStatus === 'EVIDENCE_AVAILABLE'
+  const ledgerFresh = admittedLedger && ledger.observationStatus === 'EVIDENCE_AVAILABLE'
     && fresh(ledger.observedAtUtc, nowMs, maxAgeMs);
   // Keep the existing logical handoff trace visible, but never elevate its
   // structural WORKER/CLAIM flags into signed physical execution proof.
   // A projected wrapper is refreshed by each HTTP read. In the backend only the
   // original publisher record may establish observation time (including absence).
-  const latestStatus = id => array(statusRecords).filter(record => record.statusId === id)
-    .sort((a, b) => time(b.timestampUtc) - time(a.timestampUtc))[0];
+  // Multiple records claiming the same canonical status ID at the same newest
+  // timestamp have ambiguous provenance. Never pick the first healthy record.
+  // This is read-only display truth; it is not a native grant or worker claim.
+  const latestStatus = id => {
+    let latest;
+    let latestTime = -Infinity;
+    let ambiguous = false;
+    for (const record of array(statusRecords)) {
+      if (!record || typeof record !== 'object' || Array.isArray(record)
+        || !Object.prototype.hasOwnProperty.call(record, 'statusId')
+        || record.statusId !== id) continue;
+      const observed = time(record?.timestampUtc);
+      if (!Number.isFinite(observed)) continue;
+      if (observed > latestTime) {
+        latest = record;
+        latestTime = observed;
+        ambiguous = false;
+      } else if (observed === latestTime) {
+        ambiguous = true;
+      }
+    }
+    return ambiguous ? undefined : latest;
+  };
+  // A diagnostic stage is not current-source-qualified merely because its
+  // signed feed is recent. Bind it to an independent current Core observation,
+  // rejecting missing, future, inherited or conflicting source identities.
+  const core = latestStatus('stephanos-core-daemon-current');
+  const ownCore = key => core !== null && typeof core === 'object'
+    && Object.prototype.hasOwnProperty.call(core, key);
+  const coreKnown = ownCore('sourceHead') && ownCore('timestampUtc')
+    && /^[a-f0-9]{40}$/.test(core?.sourceHead || '');
+  const coreLive = coreKnown && fresh(core.timestampUtc, nowMs, maxAgeMs);
+  const ledgerSourceQualified = coreLive && ledger?.sourceHead === core.sourceHead;
+  const ledgerLive = ledgerFresh && ledgerSourceQualified;
   const heartbeat = latestStatus('autonomy-build-track-current');
   const track = statusRecords ? heartbeat?.autonomyTrack : projection.autonomyBuildTrack;
   const originalTimes = [time(heartbeat?.timestampUtc), time(track?.timestampUtc)];
@@ -59,15 +109,80 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const traceGateByStage = { admission: 'ELIGIBLE_GOAL', select: 'SELECT', claim: 'CLAIM',
     pickup: 'WORKER', edit: 'SOURCE_CHANGED', test: 'TESTED', proof: 'REVIEW_HANDOFF' };
   const gates = admittedLedger ? array(ledger.gates) : [];
-  const gateLive = gate => ledgerLive && fresh(gate?.observedAtUtc, nowMs, maxAgeMs)
-    && Boolean(gate?.proofRef);
+  // A diagnostic feed is not native execution authority. Only canonical,
+  // unique, own gate IDs and own nonblank string refs can promote signed
+  // stage GREEN. Do not choose an arbitrary first PASS for conflicting IDs.
+  const ownGateValue = (gate, key) => gate && typeof gate === 'object'
+    && !Array.isArray(gate) ? Object.getOwnPropertyDescriptor(gate, key)?.value : undefined;
+  const gateId = gate => ownGateValue(gate, 'id');
+  const proofRef = gate => {
+    const value = ownGateValue(gate, 'proofRef');
+    return typeof value === 'string' && value.trim() ? value.trim() : '';
+  };
+  const seenGateIds = new Set();
+  const gateIdentitiesQualified = gates.every(gate => {
+    const id = gateId(gate);
+    if (!Number.isInteger(id) || id < 1 || id > 23 || seenGateIds.has(id)) return false;
+    seenGateIds.add(id);
+    return true;
+  });
+  // A malformed current FAIL must not be silently discarded, letting
+  // otherwise positive stages appear GREEN with unknown opposing evidence.
+  const failedGateEvidenceQualified = gates.every(gate =>
+    ownGateValue(gate, 'status') !== 'FAIL' || Boolean(proofRef(gate)));
+  const gateLive = gate => ledgerLive && gateIdentitiesQualified
+    && failedGateEvidenceQualified && Boolean(proofRef(gate))
+    && fresh(ownGateValue(gate, 'observedAtUtc'), nowMs, maxAgeMs);
+  // Source-only BUILDING reports cannot certify a physical pickup.
+  // This read-only adapter consumes only the upstream qualified signed gate.
+  // A signed gate-19 status does not, by itself, establish a causally valid
+  // pickup. Its signed prerequisite (gate 18) must be current and PASS, and
+  // no current veto may contradict the admission. A diagnostic gate remains
+  // different from a worker-scoped STARTED receipt.
+  const currentVeto = gates.some(gate => gateLive(gate) && gate.status === 'FAIL');
+  // A signed pickup cannot be operationally GREEN before its admission,
+  // SELECT and CLAIM predecessors have their own distinct current proof.
+  // A gate-19 diagnostic is still not a worker-scoped STARTED receipt.
+  const pickupPrerequisites = [4, 5, 7, 6, 18, 19];
+  // A shared proofRef does not independently prove multiple prerequisite gates.
+  // This diagnostic is never a worker-scoped authenticated STARTED receipt.
+  const pickupProofRefs = pickupPrerequisites.map(id => {
+    const matching = gates.filter(gate => gateId(gate) === id);
+    return matching.length === 1 ? proofRef(matching[0]) : '';
+  });
+  const distinctPickupProofRefs = pickupProofRefs.every(Boolean)
+    && new Set(pickupProofRefs).size === pickupPrerequisites.length;
+  const signedPickup = ledgerLive && !currentVeto && distinctPickupProofRefs
+    && pickupPrerequisites.every(id => {
+      const matching = gates.filter(gate => gateId(gate) === id);
+      return matching.length === 1 && ownGateValue(matching[0], 'status') === 'PASS'
+        && gateLive(matching[0]);
+    }) ? gates.find(gate => gateId(gate) === 19) : null;
+  const signedPickupRef = signedPickup?.proofRef || '';
   const stages = FLOW.map(([id, label, gateIds]) => {
-    const observations = gateIds.map(number => gates.find(gate => gate.id === number));
-    const failure = observations.find(gate => gateLive(gate) && gate.status === 'FAIL');
-    const passed = observations.length > 0 && observations.every(gate => gateLive(gate) && gate.status === 'PASS');
-    const stale = observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && gate.proofRef);
+    const observations = gateIds.map(number => gates.find(gate => gateId(gate) === number));
+    const failure = observations.find(gate => gateLive(gate) && ownGateValue(gate, 'status') === 'FAIL');
+    // A signed later-stage event is observable, but cannot certify causal
+    // progression past an absent, failed or stale upstream gate. Keep its
+    // proofRef diagnostic without promoting an incomplete chain to GREEN.
+    const prerequisiteIds = SIGNED_STAGE_PREREQUISITES[id] || [];
+    const prerequisiteGates = prerequisiteIds.map(number =>
+      gates.filter(gate => gateId(gate) === number));
+    const causalProofRefs = prerequisiteGates.map(group =>
+      group.length === 1 ? proofRef(group[0]) : '');
+    const causalClosure = prerequisiteIds.length > 0 && !currentVeto
+      && prerequisiteGates.every(group => group.length === 1
+        && gateLive(group[0]) && ownGateValue(group[0], 'status') === 'PASS')
+      && causalProofRefs.every(Boolean)
+      && new Set(causalProofRefs).size === prerequisiteIds.length;
+    const passed = observations.length > 0
+      && observations.every(gate => gateLive(gate) && ownGateValue(gate, 'status') === 'PASS')
+      && causalClosure && (id !== 'pickup' || Boolean(signedPickup));
+    // Gate 19 remains diagnostic: worker-scoped STARTED has not been proven.
+    const diagnosticPickup = id === 'pickup' && passed;
+    const stale = ledgerSourceQualified && observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && proofRef(gate));
     const waiting = ledgerLive && observations.some(gate => gate?.status === 'WAITING_FOR_PREREQUISITE');
-    const state = failure ? 'BLOCKED' : passed ? 'PROVEN' : stale ? 'STALE' : waiting ? 'WAITING' : 'UNKNOWN';
+    const state = failure ? 'BLOCKED' : diagnosticPickup ? 'DIAGNOSTIC' : passed ? 'PROVEN' : stale ? 'STALE' : waiting ? 'WAITING' : 'UNKNOWN';
     const historicalGate = trackKnown && Number.isFinite(time(trackAt)) && time(trackAt) <= nowMs
       ? array(track.gates).find(gate => gate.id === traceGateByStage[id]) : null;
     const traceGate = trackLive ? historicalGate : null;
@@ -75,42 +190,62 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       pickup: 'Pickup reported', edit: 'Edit reported', test: 'Test run reported', proof: 'Review handoff reported' };
     const operationalLabels = { PASS: passedLabels[id] || 'Observed',
       WAITING: 'Waiting here', FAIL: 'Blocked here', BLOCKED: 'Blocked here', NOT_REACHED: 'Not reached' };
+    // Logical PASS is an unqualified report, not a signed material gate receipt.
+    // Only the separate independently verified checkpoint can display GREEN.
     const operational = historicalGate ? { state: historicalGate.state, truth: trackLive ? 'CURRENT' : 'STALE',
       label: operationalLabels[historicalGate.state] || 'No stage report',
       reason: historicalGate.reason || '', observedAtUtc: trackAt, expiresAtUtc: trace.expiresAtUtc,
       trafficLight: !trackLive ? 'AMBER' : ['FAIL', 'BLOCKED'].includes(historicalGate.state) ? 'RED'
         : historicalGate.state === 'WAITING' || (id === 'pickup' && historicalGate.state === 'PASS') ? 'AMBER'
-          : historicalGate.state === 'PASS' ? 'GREEN' : 'GREY' } : null;
-    return { id, label, state, trafficLight: failure ? 'RED' : passed ? 'GREEN' : stale || waiting ? 'AMBER' : 'GREY',
+          : historicalGate.state === 'PASS' ? 'AMBER' : 'GREY' } : null;
+    return { id, label, state, trafficLight: failure ? 'RED' : diagnosticPickup ? 'AMBER' : passed ? 'GREEN' : stale || waiting ? 'AMBER' : 'GREY',
       operational,
       traceState: traceGate?.state || '', traceReason: traceGate?.reason || '',
       gateIds, expiresAtUtc: passed || failure ? new Date(Math.min(time(ledger.observedAtUtc),
         ...observations.filter(gateLive).map(gate => time(gate.observedAtUtc))) + maxAgeMs).toISOString() : '',
-      proofRefs: observations.flatMap(gate => gate?.proofRef ? [gate.proofRef] : []),
+      proofRefs: observations.flatMap(gate => proofRef(gate) ? [proofRef(gate)] : []),
       reason: failure?.typedBlocker || (id === 'commit' ? 'No distinct commit receipt is published by the current feed.'
         : id === 'edit' || id === 'test' ? 'Gate 20 proves source diff and tests together.'
-          : passed ? 'Current signed checkpoint proof.' : 'Awaiting current signed checkpoint proof.') };
+          : diagnosticPickup ? 'Signed gate 19 is diagnostic-only; an authenticated worker-scoped STARTED receipt is absent.'
+            : passed ? 'Current signed checkpoint proof.' : 'Awaiting current signed checkpoint proof.') };
   });
   const build = projection.stephanosBuildTruth;
   const buildKnown = build?.schemaVersion === 'stephanos.sovereign-build-truth.v1';
   const buildLive = buildKnown && build.truth === 'CURRENT'
     && ['BUILDING', 'BLOCKED', 'HELD', 'QUEUED', 'IDLE_GREEN'].includes(build.state)
     && fresh(build.observedAtUtc, nowMs, maxAgeMs);
-  const buildingGoals = buildLive ? array(build.goals).filter(goal => goal.state === 'BUILDING'
-    && goal.builder && array(goal.proofRefs).length && fresh(goal.lastMaterialProgressAtUtc, nowMs, maxAgeMs)) : [];
+  // The verified 23-gate public projection contains *no signed goal/worker
+  // execution identity*. Its one gate-19 proofRef can be copied into arbitrary
+  // goal, controller or lane reports; matching that string is NOT an authentic
+  // worker-specific pickup. Fail closed on physical per-goal GREEN/count until
+  // the existing original publisher exposes independently qualified, distinct
+  // source/claim/goal/worker-bound pickup records. Preserve reported goals
+  // separately in the Octopus inventory rather than manufacturing pickups.
+  const buildingGoals = [];
   const workers = [...new Map(buildingGoals.map(goal => [goal.builder, {
     id: goal.builder, goals: buildingGoals.filter(other => other.builder === goal.builder)
       .map(other => ({ issue: other.issue, title: other.title })),
   }])).values()];
-  const controllers = array(projection.controllerFleet?.controllers).map(controller => ({
-    id: controller.controllerId, title: controller.title || controller.controllerId,
-    state: controller.activityState || 'UNKNOWN',
-    truth: controller.freshness === 'CURRENT' && fresh(controller.timestampUtc, nowMs, maxAgeMs)
-      ? 'CURRENT' : controller.freshness === 'UNKNOWN' ? 'UNKNOWN' : 'STALE',
-    trafficLight: controller.trafficLight || 'GREY',
-    expiresAtUtc: fresh(controller.timestampUtc, nowMs, maxAgeMs)
-      ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
-  }));
+  // A controller cannot inherit a green light or a future expiry from an old
+  // status report. Freshness and reported traffic light are separate facts.
+  const controllers = array(projection.controllerFleet?.controllers).map(controller => {
+    // Current and positive GREEN must be established by producer-owned fields,
+    // never by an inherited wrapper. Negative owned reports remain visible.
+    const own = field => Object.prototype.hasOwnProperty.call(controller, field);
+    const current = own('freshness') && own('timestampUtc')
+      && controller.freshness === 'CURRENT' && fresh(controller.timestampUtc, nowMs, maxAgeMs);
+    const reportedLight = own('trafficLight') ? String(controller.trafficLight || '').toUpperCase() : '';
+    const greenQualified = ['controllerId', 'activityState', 'freshness', 'timestampUtc', 'trafficLight']
+      .every(own) && controller.activityState !== 'BUILDING';
+    return {
+      id: controller.controllerId, title: controller.title || controller.controllerId,
+      state: controller.activityState || 'UNKNOWN',
+      truth: current ? 'CURRENT' : controller.freshness === 'UNKNOWN' ? 'UNKNOWN' : 'STALE',
+      trafficLight: current && ['GREEN', 'AMBER', 'RED', 'GREY'].includes(reportedLight)
+        ? reportedLight === 'GREEN' ? greenQualified ? 'GREEN' : 'AMBER' : reportedLight : 'GREY',
+      expiresAtUtc: current ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
+    };
+  });
   // Read-only Octopus inventory, not an invented fleet of target-capacity slots.
   // A lane-specific verified receipt and fresh material timestamp are needed
   // before any *individual* lane can claim to be building.
@@ -123,8 +258,9 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       observedAtUtc, live, expiresAtUtc: live ? new Date(time(observedAtUtc) + maxAgeMs).toISOString() : '',
       state: live ? String(item.activityState || 'UNKNOWN') : observedAtUtc ? 'STALE' : 'UNKNOWN',
       blocker: live ? String(item.blocker || '') : '',
-      materialActions: live && item.activityState === 'BUILDING' && array(item.proofRefs).length
-        ? count(item.materialActionsSucceeded) : null,
+      // A shared diagnostic gate ref cannot credit material work to a
+      // specific controller without a scoped independent execution receipt.
+      materialActions: null,
       namedLanes: array(item.materialLanes).length + array(item.activeLanes).length + array(item.parkedLanes).length,
     };
   });
@@ -137,8 +273,11 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     const source = array(controller.materialLanes).map((lane, index) => {
       const laneId = String(lane?.laneId || ownerId + '-material-' + (index + 1));
       const proofRef = String(lane?.proofRef || '');
-      const proven = live && controller.activityState === 'BUILDING' && proofRef
-        && verified.has(proofRef) && fresh(lane?.lastMaterialActionAtUtc, nowMs, maxAgeMs);
+      const proven = live && controller.activityState === 'BUILDING'
+        && Boolean(signedPickupRef) && proofRef === signedPickupRef
+        && verified.has(proofRef) && fresh(lane?.lastMaterialActionAtUtc, nowMs, maxAgeMs)
+        && buildingGoals.some(goal => goal.builder === lane?.workerId
+          && String(goal.issue || '') === String(lane?.goalId || ''));
       return { id:ownerId + ':' + laneId, laneId, controller:owner,
         workerId:String(lane?.workerId || ''), goalId:String(lane?.goalId || ''),
         source:'material-lane observation', blocker:String(lane?.blocker || ''),
@@ -165,12 +304,11 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     .map(goal=>String(goal?.builder||'')).filter(Boolean))];
   const octopusBuilders=observedBuilderIds.map(id=>{
     const goals=array(build.goals).filter(goal=>goal.builder===id);
-    const proven=buildLive && goals.some(goal=>goal.state==='BUILDING'
-      && array(goal.proofRefs).length && fresh(goal.lastMaterialProgressAtUtc,nowMs,maxAgeMs));
-    const blocked=buildLive && goals.some(goal=>goal.state==='BLOCKED');
-    return {id,state:!buildLive?'STALE_OR_UNKNOWN':proven?'PROVEN_BUILD'
-      :blocked?'BLOCKED_REPORTED':'REPORTED_UNVERIFIED',
-      light:!buildLive?'GREY':proven?'GREEN':blocked?'RED':'AMBER',
+    const proven=buildingGoals.some(goal=>goal.builder===id);
+    const blocked=buildLive && (build.state==='BLOCKED' || goals.some(goal=>goal.state==='BLOCKED'));
+    return {id,state:!buildLive?'STALE_OR_UNKNOWN':blocked?'BLOCKED_REPORTED'
+      :proven?'PROVEN_BUILD':'REPORTED_UNVERIFIED',
+      light:!buildLive?'GREY':blocked?'RED':proven?'GREEN':'AMBER',
       goals:goals.map(goal=>({issue:String(goal.issue||''),state:String(goal.state||'UNKNOWN')})),
       expiresAtUtc:buildLive?new Date(time(build.observedAtUtc)+maxAgeMs).toISOString():''};
   });
@@ -232,6 +370,17 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     const prior = byCapacityIdentity.get(receipt.id);
     if (!prior || time(receipt.observedAtUtc) > time(prior.observedAtUtc)) {
       byCapacityIdentity.set(receipt.id, receipt);
+    } else if (time(receipt.observedAtUtc) === time(prior.observedAtUtc)) {
+      // An equal-clock second publisher is not newer authority. Preserve exact
+      // duplicates only; distinct receipts for one worker/route are ambiguous.
+      // Once ambiguous at a timestamp, a later equal-clock record cannot clear it.
+      const sameReceipt = !prior.ambiguousAtSameTime
+        && ['state', 'receiptId', 'queueDepth', 'expiresAtUtc'].every(
+          key => prior[key] === receipt[key]);
+      if (!sameReceipt) byCapacityIdentity.set(receipt.id, {
+        ...prior, state: 'UNKNOWN', trafficLight: 'GREY', receiptId: '',
+        queueDepth: null, expiresAtUtc: '', ambiguousAtSameTime: true,
+      });
     }
   }
   const octopusCapacityBuilders = [...byCapacityIdentity.values()]
@@ -280,9 +429,6 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       ? build.state === 'IDLE_GREEN' ? 'IDLE' : build.state : 'UNKNOWN';
   const state = bottleneck ? 'BLOCKED' : buildLive ? buildState : trackLive
     ? ['FAIL', 'BLOCKED'].includes(track.currentState) ? 'BLOCKED' : 'WAITING' : buildState;
-  const core = latestStatus('stephanos-core-daemon-current');
-  const coreKnown = /^[a-f0-9]{40}$/.test(core?.sourceHead || '');
-  const coreLive = coreKnown && fresh(core.timestampUtc, nowMs, maxAgeMs);
   // Each service must have an independently timestamped health observation.
   // A stopped Core publisher cannot make a still-live worker/backend appear
   // stopped, and an HTTP read must never renew an old observation.
@@ -294,10 +440,23 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const watchdog = latestStatus('battle-bridge-worker-watchdog-current');
   const workerProof = watchdog?.finalAssessment;
   const refresh = latestStatus('post-sync-runtime-refresh-current');
-  const backendProof = array(refresh?.resultTargets).find(target =>
+  // Contradictory canonical target identities are not a successful readback.
+  const backendTargets = array(refresh?.resultTargets).filter(target =>
     target?.targetId === 'stephanos-backend-8787');
+  const backendProof = backendTargets.length === 1 ? backendTargets[0] : null;
   const serviceProofAgeMs = Math.min(maxAgeMs, 2 * 60_000);
-  const workerProofValid = watchdog?.status === 'WORKER_WATCHDOG_HEALTHY'
+  // Positive native evidence requires producer-owned fields, not prototype decoration.
+  const ownProofField = (value, field) => value !== null && typeof value === 'object'
+    && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, field);
+  const watchdogOwnFields = ['statusId', 'timestampUtc', 'status', 'classification', 'finalAssessment'];
+  const workerOwnFields = ['finalVerdict', 'healthy', 'processHealthy', 'heartbeatFresh',
+    'heartbeatPidMatchesProcess', 'processLaunchIdentityValid',
+    'heartbeatLaunchIdentityMatchesProcess', 'repositoryFromCanonicalMain',
+    'heartbeatMatchesCanonicalRepositoryHead', 'remoteMainHeadProven',
+    'sourceHead', 'canonicalRepositoryHead', 'remoteMainHead'];
+  const workerProofValid = watchdogOwnFields.every(field => ownProofField(watchdog, field))
+    && workerOwnFields.every(field => ownProofField(workerProof, field))
+    && watchdog?.status === 'WORKER_WATCHDOG_HEALTHY'
     && watchdog?.classification === 'WORKER_WATCHDOG_HEALTHY'
     && workerProof?.finalVerdict === 'WORKER_WATCHDOG_HEALTHY'
     && workerProof?.healthy === true && workerProof?.processHealthy === true
@@ -312,18 +471,95 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     && workerProof.sourceHead === workerProof.canonicalRepositoryHead
     && workerProof.sourceHead === workerProof.remoteMainHead
     && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs);
-  const backendProofValid = refresh?.safeRefreshesCompleted === true
+  // A positive target readback must carry its own raw producer fields. Inherited
+  // prototype values can decorate an observation but cannot supply proof.
+  const backendRefreshFields = ['statusId', 'timestampUtc', 'safeRefreshesCompleted',
+    'unknownPathCount', 'unsafePathCount', 'afterHead', 'resultTargets'];
+  const backendTargetFields = ['targetId', 'ok', 'exactHeadProofOk',
+    'canonicalActionVerified', 'unrelatedTasksChanged', 'proofKind', 'blocker', 'sourceHead'];
+  const backendProofValid = backendTargets.length === 1
+    && backendRefreshFields.every(field => ownProofField(refresh, field))
+    && backendTargetFields.every(field => ownProofField(backendProof, field))
+    && refresh?.safeRefreshesCompleted === true
     && refresh?.unknownPathCount === 0 && refresh?.unsafePathCount === 0
     && backendProof?.ok === true && backendProof?.exactHeadProofOk === true
+    && backendProof?.canonicalActionVerified === true
+    && backendProof?.unrelatedTasksChanged === false
+    && backendProof?.proofKind === 'canonical-target-readback'
+    && (backendProof?.blocker === '' || backendProof?.blocker === null)
     && /^[a-f0-9]{40}$/.test(String(backendProof?.sourceHead || ''))
     && backendProof.sourceHead === refresh.afterHead
     && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs);
   const health = ['daemonHealthy', 'missionWorkerHealthy', 'backendHealthy'].map((field, index) => {
     const serviceId = index === 1 ? 'mission-worker' : index === 2 ? 'backend' : '';
-    const independent = serviceId ? runtimeServices.find(entry => entry?.serviceId === serviceId) : null;
+    // A first-match GREEN can conceal a later contradictory observation for the
+    // same service. Do not choose a winner or fall back to an aggregate when
+    // independent service identity is ambiguous.
+    const serviceMatches = serviceId
+      ? runtimeServices.filter(entry => entry?.serviceId === serviceId) : [];
+    if (serviceMatches.length > 1) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'AMBIGUOUS_INDEPENDENT_SERVICE_IDENTITY',
+    };
+    const independent = serviceMatches[0] || null;
+    // In-memory prototype decoration cannot establish producer-owned status.
+    // Reject incomplete independent service provenance without falling back to Core.
+    const independentFields = ['serviceId', 'sourceHead', 'freshness',
+      'observedAtUtc', 'trafficLight'];
+    if (independent && !independentFields.every(field => ownProofField(independent, field))) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'INCOMPLETE_INDEPENDENT_SERVICE_PROVENANCE',
+    };
     const independentLive = independent?.freshness === 'CURRENT'
       && fresh(independent?.observedAtUtc, nowMs, maxAgeMs);
     const independentLight = String(independent?.trafficLight || '').toUpperCase();
+    // A fresh independent GREEN cannot conceal a later or co-timed, source-matched
+    // explicit negative from the canonical native service observer.
+    // Independent GREEN is display truth, not a native execution grant.
+    // Missing, inherited or conflicting source heads cannot fall back to Core GREEN.
+    const independentHead = ownProofField(independent, 'sourceHead')
+      && typeof independent.sourceHead === 'string'
+      && /^[a-f0-9]{40}$/.test(independent.sourceHead) ? independent.sourceHead : '';
+    const independentHeadConflict = independentLive && independentLight === 'GREEN' && (
+      !independentHead
+      || (coreLive && core.sourceHead !== independentHead)
+      || (index === 1 && watchdog?.statusId === 'battle-bridge-worker-watchdog-current'
+        && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs)
+        && (!ownProofField(workerProof, 'sourceHead') || workerProof.sourceHead !== independentHead))
+      || (index === 2 && refresh?.statusId === 'post-sync-runtime-refresh-current'
+        && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs)
+        && (!ownProofField(refresh, 'afterHead') || refresh.afterHead !== independentHead
+          || backendTargets.length !== 1
+          || !ownProofField(backendProof, 'sourceHead')
+          || backendProof.sourceHead !== independentHead))
+    );
+    if (independentHeadConflict) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'UNBOUND_OR_CONFLICTING_INDEPENDENT_SERVICE_HEAD',
+    };
+    const canonicalNegativeVeto = independentLive && independentLight === 'GREEN'
+      && /^[a-f0-9]{40}$/.test(independentHead) && (
+        (index === 1 && watchdog?.statusId === 'battle-bridge-worker-watchdog-current'
+          && workerProof?.healthy === false
+          && workerProof?.sourceHead === independentHead
+          && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs)
+          && time(watchdog.timestampUtc) >= time(independent.observedAtUtc))
+        || (index === 2 && refresh?.statusId === 'post-sync-runtime-refresh-current'
+          && refresh?.safeRefreshesCompleted === false
+          && backendTargets.length === 1 && backendProof?.ok === false
+          && refresh.afterHead === independentHead
+          && backendProof?.sourceHead === independentHead
+          && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs)
+          && time(refresh.timestampUtc) >= time(independent.observedAtUtc))
+      );
+    if (canonicalNegativeVeto) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'NEWER_CANONICAL_NEGATIVE_VETO',
+    };
     if (independentLive && ['GREEN', 'RED', 'AMBER'].includes(independentLight)) {
       return {
         id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
@@ -338,6 +574,19 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     // identity, fresh PID-bound heartbeat and canonical source head. The
     // post-sync receipt proves the Backend's independently verified target,
     // even when desktop plugin-host activation remains separately blocked.
+    // A newer, source-bound Core observation supersedes an otherwise fresh
+    // native service proof from the previous protected-main head. The old
+    // process may be healthy, but it cannot certify the new source.
+    // Equal-clock cross-head evidence is ambiguous and also fails closed.
+    const nativeFallbackHead = index === 1 && workerProofValid ? workerProof.sourceHead
+      : index === 2 && backendProofValid ? backendProof.sourceHead : '';
+    const nativeFallbackAt = index === 1 ? watchdog?.timestampUtc : refresh?.timestampUtc;
+    if (nativeFallbackHead && coreLive && core.sourceHead !== nativeFallbackHead
+      && time(core.timestampUtc) >= time(nativeFallbackAt)) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'NEWER_CORE_SOURCE_HEAD_VETO',
+    };
     const fallback = index === 1 && workerProofValid
       ? { observedAtUtc: watchdog.timestampUtc, evidenceSource: 'CANONICAL_WORKER_WATCHDOG' }
       : index === 2 && backendProofValid
@@ -349,9 +598,31 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       expiresAtUtc: new Date(time(fallback.observedAtUtc) + serviceProofAgeMs).toISOString(),
       evidenceSource: fallback.evidenceSource,
     };
+    // An older healthy Core aggregate cannot override a newer, source-matched
+    // canonical explicit negative. Read-only display veto: never manufacture
+    // UNHEALTHY or native admission authority from a diagnostic observation.
+    const newerCanonicalNegative = coreLive && core[field] === true && (
+      (index === 1 && watchdog?.statusId === 'battle-bridge-worker-watchdog-current'
+        && workerProof?.healthy === false
+        && workerProof?.sourceHead === core.sourceHead
+        && fresh(watchdog.timestampUtc, nowMs, serviceProofAgeMs)
+        && time(watchdog.timestampUtc) > time(core.timestampUtc))
+      || (index === 2 && refresh?.statusId === 'post-sync-runtime-refresh-current'
+        && refresh?.safeRefreshesCompleted === false
+        && backendTargets.length === 1 && backendProof?.ok === false
+        && refresh.afterHead === core.sourceHead
+        && backendProof?.sourceHead === core.sourceHead
+        && fresh(refresh.timestampUtc, nowMs, serviceProofAgeMs)
+        && time(refresh.timestampUtc) > time(core.timestampUtc))
+    );
+    if (newerCanonicalNegative) return {
+      id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+      state: 'UNKNOWN', observedAtUtc: '', expiresAtUtc: '',
+      evidenceSource: 'NEWER_CANONICAL_NEGATIVE_VETO',
+    };
     return {
       id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
-      state: coreLive && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
+      state: coreLive && ownCore(field) && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
       observedAtUtc: coreKnown ? core.timestampUtc : '',
       expiresAtUtc: coreLive ? new Date(time(core.timestampUtc) + maxAgeMs).toISOString() : '',
       evidenceSource: coreKnown ? 'CORE_DAEMON_AGGREGATE' : 'UNAVAILABLE',

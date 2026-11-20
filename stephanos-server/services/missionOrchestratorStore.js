@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { KNOWN_MALFORMED_PATCH_REPAIR_V1, knownMalformedPatchEvidenceMatchesV1 } from '../../shared/agents/knownMalformedPatchRetryV1.mjs';
 import {
   appendFile,
   mkdir,
@@ -447,10 +448,34 @@ export async function appendMissionEvent(missionId, event, options = {}) {
       eventId,
       missionId: safeMissionId(missionId),
     };
+    const knownPatchRetry = text(preparedEvent.eventType).toUpperCase() === 'AGENT_FAILURE_RETRY_ADMITTED'
+      && ((current.missionId === KNOWN_MALFORMED_PATCH_REPAIR_V1.missionId
+        && current.blockers?.includes(KNOWN_MALFORMED_PATCH_REPAIR_V1.blocker))
+        || preparedEvent.retryKnownMalformedPatchProof !== undefined);
+    if (knownPatchRetry) {
+      // A JSON event cannot promote caller-provided source/terminal claims.
+      // The server callback rechecks custody, owner plan and current source,
+      // then preserves the original worktree while this mission lock is held.
+      if (typeof options.authorizeKnownMalformedPatchRetry !== 'function') {
+        throw new Error('KNOWN_MALFORMED_PATCH_RETRY_AUTHENTICATOR_REQUIRED');
+      }
+      const proof = await options.authorizeKnownMalformedPatchRetry(structuredClone(current), structuredClone(preparedEvent));
+      if (!knownMalformedPatchEvidenceMatchesV1(proof, current, preparedEvent.retryPlanSourceHead)) {
+        throw new Error('KNOWN_MALFORMED_PATCH_RETRY_AUTHENTICATION_FAILED');
+      }
+      preparedEvent.retryKnownMalformedPatchProof = proof;
+    }
     if (preparedEvent.eventType === 'OPERATOR_APPROVAL_RECORDED') {
       preparedEvent.approvalTokenHash = sha256(preparedEvent.approvalToken);
     }
     const commit = async () => {
+      if (text(preparedEvent.eventType).toUpperCase() === 'EXTERNAL_PULL_REQUEST_MERGE_OBSERVED') {
+        // JSON events from generic clients cannot manufacture observation trust.
+        if (typeof options.authorizeExternalMergeObservation !== 'function') {
+          throw new Error('EXTERNAL_MERGE_OBSERVER_REQUIRED');
+        }
+        await options.authorizeExternalMergeObservation(current);
+      }
       let originalSourceAttemptFence = current.storeMetadata?.originalSourceAttemptFence;
       if (preparedEvent.originalSourceQuarantineRequested === true) {
         if (preparedEvent.eventType !== 'MISSION_CANCELLED'

@@ -22,6 +22,7 @@ import {
   postSyncRefreshTargetResultPass,
   projectPostSyncSovereignRelayObservation,
   projectPostSyncSovereignRelayProof,
+  projectPostSyncGovernorProof,
   projectPostSyncTargetFailureHistory,
   reducePostSyncTargetFailureHistory,
 } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
@@ -235,7 +236,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         spawnSyncFn,
       });
     },
-    refreshSovereignCommander({ afterHead, paths, requireSovereignRelayProof = false }) {
+    refreshSovereignCommander({ afterHead, paths, requireSovereignRelayProof = false, requireGovernorProof = false }) {
       const runnerPath = path.resolve(paths.repoRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
       const result = fixedRun('powershell.exe', [
         '-NoProfile',
@@ -298,19 +299,26 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         heartbeatAgeSeconds: payload?.relayDaemonHeartbeatAgeSeconds,
         blocker: payload?.relayDaemonBlocker,
       }, text(afterHead).toLowerCase());
+      const governorProof = projectPostSyncGovernorProof({
+        ...payload?.vrResourceGovernorAdoption,
+        watchdogSucceeded: receiptValid && payload?.vrResourceGovernorHealthy === true && [0, 3, 5].includes(result.status),
+      }, text(afterHead).toLowerCase());
+      const governorProofOk = !requireGovernorProof || governorProof !== null;
       const relayProofOk = !requireSovereignRelayProof || sovereignRelayProof !== null;
       return {
-        ok: receiptValid && exactHeadProofOk && relayProofOk,
+        ok: receiptValid && exactHeadProofOk && relayProofOk && governorProofOk,
         blocker: !payload
           ? 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID'
           : !receiptValid
             ? text(payload.blocker) || 'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID'
             : !exactHeadProofOk
               ? 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED'
-              : relayProofOk ? '' : 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN',
+              : !relayProofOk ? 'SOVEREIGN_RELAY_REFRESH_PROOF_UNPROVEN'
+                : governorProofOk ? '' : 'SOVEREIGN_GOVERNOR_REFRESH_PROOF_UNPROVEN',
         sourceHead,
         exactHeadProofOk,
-        freshProcessLoaded: receiptValid && relayProofOk,
+        freshProcessLoaded: receiptValid && relayProofOk && governorProofOk,
+        governorProof,
         sovereignRelayProof,
         sovereignRelayObservation,
         capabilityVersion: capabilityVersionAfter,
@@ -530,6 +538,8 @@ export async function runBattleBridgePostSyncRefresh({
 
     const plan = classifyPostSyncRefresh(changed.paths, {
       sovereignRelayRefreshRequired: retained.debt.sovereignRelayRefreshRequired,
+      governorRefreshRequired: retained.debt.governorRefreshRequired,
+      spatialAdoptionRequired: retained.debt.spatialAdoptionRequired,
     });
     if (retained.debt.requiredTargetIds.some(id => !plan.targetIds.includes(id))) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_RETAINED_TARGET_COVERAGE_UNPROVEN', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
@@ -573,6 +583,8 @@ export async function runBattleBridgePostSyncRefresh({
       afterHead: normalizedAfter,
       changedPaths: changed.paths,
       sovereignRelayRefreshRequired: retained.debt.sovereignRelayRefreshRequired,
+      governorRefreshRequired: retained.debt.governorRefreshRequired,
+      spatialAdoptionRequired: retained.debt.spatialAdoptionRequired,
       completedResults,
       adapters: {
         refreshUi: ({ afterHead: head }) => adapter.refreshUi({ afterHead: head }),
@@ -581,7 +593,7 @@ export async function runBattleBridgePostSyncRefresh({
         restartMissionWorker: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'mission-worker', afterHead: head, paths }),
         restartGitHubMailbox: ({ afterHead: head }) => adapter.restartGitHubMailbox({ afterHead: head, paths }),
         refreshSovereignCommander: ({ afterHead: head, plan: targetPlan }) => adapter.refreshSovereignCommander({ afterHead: head, paths,
-          requireSovereignRelayProof: targetPlan.sovereignRelayRefreshRequired }),
+          requireSovereignRelayProof: targetPlan.sovereignRelayRefreshRequired, requireGovernorProof: targetPlan.governorRefreshRequired }),
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
       onTargetComplete: async (results, observation) => {

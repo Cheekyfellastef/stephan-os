@@ -1,8 +1,138 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { stageControlTowerBuildRequestV1 } from '../../scripts/control-tower-build-request-v1.mjs';
 import { createControlTowerBuildRequestV1, validateControlTowerBuildRequestV1,
-  validateHistoricalControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
-import { inputs, fixture, HEAD, NOW } from './fixtures/controlTowerBuildV1.mjs';
+  validateHistoricalControlTowerBuildRequestV1, formatControlTowerOwnerCommandV1 } from './controlTowerBuildRequestV1.mjs';
+import { inputs, fixture, ownerCommentInputs, HEAD, NOW, API } from './fixtures/controlTowerBuildV1.mjs';
+
+test('exact owner comment and independent immutable readback prepare the existing two closed operations', () => {
+  for (const operation of ['BUILD_NEXT_ELIGIBLE_GOAL', 'OBSERVE_CONTROL_SYSTEM']) {
+    const f = ownerCommentInputs(operation);
+    const result = createControlTowerBuildRequestV1(f.event, f.env, HEAD, NOW, f.readback);
+    assert.equal(result.ok, true, result.blocker);
+    assert.equal(result.request.operation, operation);
+    assert.equal(result.request.requestId, 'control-tower-comment-700-1');
+    assert.equal(result.request.runId, 100);
+    assert.equal(result.request.createdAtUtc, f.comment.created_at);
+    assert.equal(result.request.expiresAtUtc, '2026-10-28T12:09:59.000Z');
+    assert.equal(result.request.ownerCommentSha256, f.readback.bodySha256);
+    for (const flag of ['admissionGranted', 'mergeAuthority', 'runtimeMutationAuthority', 'leaseSeizureAllowed', 'arbitraryShellAllowed'])
+      assert.equal(result.request[flag], false);
+  }
+});
+
+test('owner-comment ingress refuses missing readback, edited or foreign identities, expired consent and source drift', () => {
+  const cases = [
+    ['missing readback', f => { f.readback = null; }],
+    ['edited event', f => { f.event.action = 'edited'; }],
+    ['retired issue', f => { f.event.issue.number = 3149; }],
+    ['PR comment', f => { f.event.issue.pull_request = {}; }],
+    ['event sender ID', f => { f.event.sender.id = 1; }],
+    ['event comment ID', f => { f.event.comment.id = 701; }],
+    ['event owner ID', f => { f.event.comment.user.id = 1; }],
+    ['event owner type', f => { f.event.comment.user.type = 'Bot'; }],
+    ['actor ID', f => { f.env.GITHUB_ACTOR_ID = '1'; }],
+    ['triggering actor', f => { f.env.GITHUB_TRIGGERING_ACTOR = 'github-actions[bot]'; }],
+    ['workflow source', f => { f.env.GITHUB_WORKFLOW_SHA = 'b'.repeat(40); }],
+    ['rerun', f => { f.env.GITHUB_RUN_ATTEMPT = '2'; }],
+    ['live owner ID', f => { f.comment.user.id = 1; }],
+    ['live owner login', f => { f.comment.user.login = 'github-actions[bot]'; }],
+    ['live owner type', f => { f.comment.user.type = 'Bot'; }],
+    ['live edited', f => { f.comment.updated_at = NOW; }],
+    ['live issue URL', f => { f.comment.issue_url = API + '/issues/3149'; }],
+    ['live PR', f => { f.issue.pull_request = {}; }],
+    ['closed mailbox', f => { f.issue.state = 'closed'; }],
+    ['locked mailbox', f => { f.issue.locked = true; }],
+    ['saturated mailbox', f => { f.issue.comments = 2200; }],
+    ...[undefined, null, '10', false].map(value => ['unproven live comment count ' + value, f => { f.issue.comments = value; }]),
+    ...[undefined, null, '10', false].map(value => ['unproven event comment count ' + value, f => { f.event.issue.comments = value; }]),
+    ['foreign repository', f => { f.issue.repository_url = 'https://api.github.com/repos/foreign/repo'; }],
+    ['stale comment', f => { f.comment.created_at = f.comment.updated_at = '2026-10-28T11:50:20.000Z'; }],
+    ['future comment', f => { f.comment.created_at = f.comment.updated_at = '2026-10-28T12:00:21.000Z'; }],
+    ['changed body', f => { f.comment.body = formatControlTowerOwnerCommandV1({ ...f.command, operation: 'OBSERVE_CONTROL_SYSTEM' }); }],
+    ['forged input fields', f => { f.event.inputs = { operation: 'OBSERVE_CONTROL_SYSTEM' }; }],
+  ];
+  for (const [label, mutate] of cases) {
+    const f = ownerCommentInputs(); mutate(f);
+    assert.equal(createControlTowerBuildRequestV1(f.event, f.env, HEAD, NOW, f.readback).ok, false, label);
+  }
+});
+
+test('owner-comment grammar accepts only the exact closed packet and never caller identity, commands or grants', () => {
+  const changes = [
+    command => ({ ...command, operation: 'repair-stephanos' }),
+    command => ({ ...command, operation: 'BUILD_NEXT_ELIGIBLE_GOAL ' }),
+    command => ({ ...command, expectedMain: 'b'.repeat(40) }),
+    command => ({ ...command, schemaVersion: 'other' }),
+    ...['authenticated', 'operatorId', 'command', 'path', 'url', 'arguments', 'goalId', 'admissionGranted', 'expiresAtUtc']
+      .map(key => command => ({ ...command, [key]: true })),
+  ];
+  for (const change of changes) {
+    const f = ownerCommentInputs();
+    f.comment.body = f.event.comment.body = '<!-- stephanos-control-tower-owner-command-v1 -->\n```json\n'
+      + JSON.stringify(change(f.command), null, 2) + '\n```';
+    assert.equal(createControlTowerBuildRequestV1(f.event, f.env, HEAD, NOW, f.readback).ok, false);
+  }
+  for (const change of [body => body + '\n', body => 'please execute\n' + body,
+    body => body.replace('"operation":', '"operation": "OBSERVE_CONTROL_SYSTEM", "operation":')]) {
+    const f = ownerCommentInputs(); f.comment.body = f.event.comment.body = change(f.comment.body);
+    assert.equal(createControlTowerBuildRequestV1(f.event, f.env, HEAD, NOW, f.readback).ok, false);
+  }
+});
+
+test('a second authentic run keeps the comment request identity and cannot renew its ten-minute window', () => {
+  const first = fixture({ ownerComment: true }), later = fixture({ ownerComment: true, runId: 101 });
+  assert.equal(first.request.requestId, later.request.requestId);
+  assert.notEqual(first.request.runId, later.request.runId);
+  assert.equal(first.request.createdAtUtc, later.request.createdAtUtc);
+  assert.equal(first.request.expiresAtUtc, later.request.expiresAtUtc);
+  assert.equal(validateControlTowerBuildRequestV1(first.request, first.run, HEAD, NOW).ok, true);
+  assert.equal(validateControlTowerBuildRequestV1(later.request, later.run, HEAD, NOW).ok, true);
+  for (const patch of [{ createdAtUtc: NOW, expiresAtUtc: '2026-10-28T12:10:20.000Z' },
+    { requestId: 'control-tower-build-100-1' }, { ownerCommentId: 701 },
+    { ownerCommentIssueNumber: 3149 }, { ownerCommentSha256: 'not-a-digest' }])
+    assert.equal(validateControlTowerBuildRequestV1({ ...first.request, ...patch }, first.run, HEAD, NOW).ok, false);
+  const expired = '2026-10-28T12:10:00.000Z';
+  assert.equal(validateControlTowerBuildRequestV1(first.request, first.run, HEAD, expired).ok, false);
+  assert.equal(validateHistoricalControlTowerBuildRequestV1(first.request, first.run, HEAD, expired).ok, true);
+});
+
+test('real Actions producer performs exact independent comment reads and never stages after edit or main movement', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'ct-comment-producer-'));
+  t.after(() => rmSync(root, { recursive: true }));
+  for (const mode of ['valid', 'edited', 'main-moved']) {
+    const f = ownerCommentInputs(), directory = join(root, mode);
+    const { mkdirSync } = await import('node:fs'); mkdirSync(directory);
+    const eventPath = join(directory, 'event.json'); writeFileSync(eventPath, JSON.stringify(f.event));
+    const calls = []; let mains = 0;
+    const fetchImpl = async (url, init) => {
+      calls.push({ url, init });
+      assert.equal(init.method, 'GET'); assert.equal(init.redirect, 'error');
+      assert.equal(init.headers.Authorization, 'Bearer fixture-producer');
+      if (url === API + '/git/ref/heads/main') return Response.json({ ref: 'refs/heads/main',
+        object: { sha: mode === 'main-moved' && ++mains > 1 ? 'b'.repeat(40) : HEAD } });
+      if (url === API + '/issues/comments/700') return Response.json(mode === 'edited' ? { ...f.comment, updated_at: NOW } : f.comment);
+      if (url === f.issue.url) return Response.json(f.issue);
+      throw Error('UNEXPECTED_PRODUCER_ENDPOINT');
+    };
+    const invoke = () => stageControlTowerBuildRequestV1({
+      env: { ...f.env, GITHUB_TOKEN: 'fixture-producer', GITHUB_EVENT_PATH: eventPath, RUNNER_TEMP: directory },
+      now: () => NOW, fetchImpl,
+    });
+    const artifact = join(directory, 'control-tower-build-request.json');
+    if (mode === 'valid') {
+      const result = await invoke(); assert.deepEqual(JSON.parse(readFileSync(artifact)), result);
+      assert.equal(result.requestId, 'control-tower-comment-700-1');
+      assert.equal(calls.length, 4);
+    } else {
+      await assert.rejects(invoke, /READBACK_INVALID|MAIN_MOVED/);
+      assert.equal(existsSync(artifact), false);
+    }
+  }
+});
 
 test('owner dispatch defaults to the next canonically eligible build, with no grant', () => {
   const { event, env } = inputs();

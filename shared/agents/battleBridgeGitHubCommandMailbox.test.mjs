@@ -60,6 +60,37 @@ test('original source quarantine requires an indivisible exact lease and mission
     { now, authorLogin: 'Cheekyfellastef' }).ok, false);
 });
 
+test('prospective UNKNOWN processing quarantine is exact claim/revision bound and closed-world', () => {
+  const missionId = 'critical-1574-elastic-goal';
+  const actionId = missionId + '-r5-101c4622bbe4';
+  const packet = command({
+    operation: 'CANCEL_MISSION_ORCHESTRATOR_MISSION',
+    missionId,
+    commandId: 'quarantine-1574-r5-unknown',
+    reason: 'Prospectively contain the exact UNKNOWN processing claim only.',
+    prospectiveOrphanQuarantineRequested: true,
+    sourceExecutionId: actionId,
+    sourceExecutionLeaseKey: missionId + '-r5-lease',
+    processingClaimSha256: 'a'.repeat(64),
+    expectedMissionRevision: 6,
+  });
+  const accepted = validateBattleBridgeGitHubCommand(packet, { now, authorLogin: 'Cheekyfellastef' });
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  assert.equal(accepted.command.processingClaimSha256, 'a'.repeat(64));
+  for (const mutation of [
+    { expectedMissionRevision: 5 },
+    { sourceExecutionLeaseKey: missionId + '-r6-lease' },
+    { processingClaimSha256: 'nope' },
+    { sourceExecutionId: missionId + '-r4-101c4622bbe4' },
+    { originalLeaseId: missionId + '-r5-lease' },
+    { legacyOrphanQuarantineRequested: true },
+  ]) {
+    const result = validateBattleBridgeGitHubCommand({ ...packet, ...mutation },
+      { now, authorLogin: 'Cheekyfellastef' });
+    assert.equal(result.ok, false, JSON.stringify(mutation));
+  }
+});
+
 function scopedDelivery(overrides = {}) {
   return {
     prNumber: 1668,
