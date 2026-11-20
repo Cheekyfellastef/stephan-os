@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { resolveStephanosConversationLineage } from './stephanosConversationLineageV1.mjs';
 
 export const STEPHANOS_RICH_CONVERSATIONAL_RESPONSE_SCHEMA_VERSION = 'stephanos.rich-conversational-response.v1';
 
@@ -81,6 +82,7 @@ function boundedObject(value) {
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) return null;
   if (Object.getOwnPropertySymbols(value).length > 0) return null;
+  if (Object.values(Object.getOwnPropertyDescriptors(value)).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return null;
   return value;
 }
 
@@ -188,13 +190,16 @@ export function buildStephanosRichConversationalResponseV1(input = {}) {
     const directAnswer = safeText(answer.answerText);
     if (!directAnswer) return invalid(['direct-answer-invalid']);
     const questionId = safeText(question.questionId, 128);
-    const roundId = safeText(question.roundId, 128);
-    if (!SAFE_REF.test(questionId) || !SAFE_REF.test(roundId)) return invalid(['continuity-identity-invalid']);
+    const lineage = resolveStephanosConversationLineage({
+      ...(Object.hasOwn(question, 'roundId') ? { roundId: question.roundId } : {}),
+      correlationId: packet.correlationId === undefined ? question.roundId : packet.correlationId,
+    });
+    if (!SAFE_REF.test(questionId) || !lineage.valid) return invalid(['continuity-identity-invalid']);
     const evidenceRefs = safeRefs(answer.evidenceRefs, 64);
     const epistemicState = safeText(answer.epistemicState, 128) || 'UNKNOWN';
     const verdict = safeText(answer.answerVerdict, 128) || 'ANSWERED_PARTIAL';
     const claim = Object.freeze({
-      claimId: `claim-${digest(`${roundId}:${questionId}:${directAnswer}`).slice(0, 20)}`,
+      claimId: `claim-${digest(`${lineage.correlationId}:${questionId}:${directAnswer}`).slice(0, 20)}`,
       text: directAnswer,
       epistemicState,
       evidenceRefs,
@@ -230,7 +235,9 @@ export function buildStephanosRichConversationalResponseV1(input = {}) {
       recommendedAction: safeRecommendedAction(structured.recommendedAction),
       approvalState: safeApprovalState(structured.approvalState),
       visualisationCandidates: Object.freeze([...new Set(candidates)]),
-      continuity: Object.freeze({ roundId, questionId }),
+      continuity: Object.freeze(lineage.kind === 'FORMAL_ROUND'
+        ? { roundId: lineage.roundId, questionId }
+        : { conversationMode: lineage.kind, correlationId: lineage.correlationId, questionId }),
       authority: authorityBoundary(),
     });
     return Object.freeze({
