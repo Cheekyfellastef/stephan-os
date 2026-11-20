@@ -61,7 +61,7 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
     const execution = resolveGit({ platform, environment: env });
     const result = spawn(execution.executable, [
       ...execution.fixedConfigArgs,
-      ...(probe ? probe.repositoryArgs() : ['--git-dir=' + join(root, '.git'), '--work-tree=' + root]),
+      ...(probe ? probe.repositoryArgs() : ['--git-dir=' + posix.join(root, '.git'), '--work-tree=' + root]),
       ...args,
     ], {
       cwd: root, encoding: 'utf8', shell: false, windowsHide: true, timeout: 12_000,
