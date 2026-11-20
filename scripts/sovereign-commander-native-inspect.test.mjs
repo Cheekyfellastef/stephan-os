@@ -8,7 +8,8 @@ import { inspectSovereignControlSystemV1, parseSovereignControlSystemInspectionA
   readSovereignGovernorDiagnosticV1 }
   from './sovereign-commander-native-inspect.mjs';
 import { projectSovereignControlSystemStatusV1, SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1,
-  SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1 }
+  SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1,
+  SOVEREIGN_CONTROL_SYSTEM_QUALIFICATION_DIAGNOSTIC_CODES_V1 }
   from '../shared/agents/sovereignControlSystemStatusV1.mjs';
 import { callSovereignMaintenanceOwnerV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
@@ -671,6 +672,148 @@ test('typed native denials survive; malformed success and arbitrary errors never
     assert.equal(report.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
     assert.equal(JSON.stringify(report).includes('PRIVATE_SECRET'), false);
   }
+});
+
+test('every declared qualification denial survives public projection without additional observations', async () => {
+  const codes = SOVEREIGN_CONTROL_SYSTEM_QUALIFICATION_DIAGNOSTIC_CODES_V1;
+  assert.equal(codes.length, 60);
+  for (const [index, qualificationDiagnosticCode] of codes.entries()) {
+    const f = fixture();
+    f.options.dependencies.inspectRuntime = () => {
+      f.calls.push('native');
+      return { ok: false, reason: qualificationDiagnosticCode,
+        ...(index % 2 ? { sourceHead: HEAD } : {}),
+        dispatchAllowed: true, executionCustodyReleased: true, profiles: ['SOURCE_TASK_V1'],
+        sourceCode: 'PRIVATE_SOURCE_CODE', sourceStep: 'PRIVATE_SOURCE_STEP',
+        sourceConfiguration: { value: 'PRIVATE_CONFIGURATION' }, stderr: 'PRIVATE_NATIVE_ERROR' };
+    };
+    const report = await inspectSovereignControlSystemV1(f.options);
+    assert.equal(report.observationCompleted, true);
+    assert.equal(report.nativeRuntime.available, true);
+    assert.equal(report.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(report.nativeRuntime.qualificationDiagnosticCode, qualificationDiagnosticCode);
+    assert.equal(Object.isFrozen(report.nativeRuntime), true);
+    const published = projectSovereignControlSystemStatusV1(report);
+    assert.equal(published.nativeRuntime.qualificationDiagnosticCode, qualificationDiagnosticCode);
+    assert.equal(published.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(published.nativeRuntime.qualificationObserved, false);
+    assert.equal(published.observationOnly, true);
+    for (const forbidden of ['dispatchAllowed', 'executionCustodyReleased', 'profiles',
+      'sourceCode', 'sourceStep', 'sourceConfiguration', 'stderr']) {
+      assert.equal(Object.hasOwn(report.nativeRuntime, forbidden), false);
+      assert.equal(Object.hasOwn(published.nativeRuntime, forbidden), false);
+    }
+    assert.equal(JSON.stringify(published).includes('PRIVATE_'), false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(published))), published);
+    assert.ok(Buffer.byteLength(JSON.stringify(published)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+    assert.deepEqual(f.calls, ['source', 'governor', 'caller', 'owner', 'health', 'protocol',
+      'owner', 'native', 'ledger', 'source']);
+  }
+});
+
+test('qualification details cannot invent a cause from generic, private or coerced native reasons', async () => {
+  let invoked = 0;
+  const code = 'FIXED_RUNTIME_SOURCE_PROOF_READ';
+  for (const reason of [undefined, null, 1, true, Symbol('PRIVATE_SYMBOL'), [], {}, new String(code),
+    { toString() { invoked++; return code; } }, 'x'.repeat(10000), 'C:\\PRIVATE\\native.json',
+    'FIXED_RUNTIME_SOURCE_PROOF_PRIVATE_TOKEN', 'CANONICAL_GIT_PROBE_PRIVATE_TOKEN',
+    'MAINTENANCE_RECOVERY_PRIVATE_TOKEN', 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN']) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => ({ ok: false,
+      reason, qualificationDiagnosticCode: code, sourceCode: code, sourceStep: 'PRIVATE_STEP' }) }).options);
+    const published = projectSovereignControlSystemStatusV1(report);
+    assert.equal(report.nativeRuntime.available, true);
+    assert.equal(report.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(Object.hasOwn(published.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(JSON.stringify(published).includes('PRIVATE_'), false);
+  }
+  assert.equal(invoked, 0);
+});
+
+test('qualification denial capture rejects native accessors, inherited values and symbol keys without invoking them', async () => {
+  let invoked = 0;
+  const code = 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN';
+  const accessorRows = ['reason', 'sourceHead', 'qualificationDiagnosticCode'].map(key => {
+    const row = { ok: false, reason: code };
+    Object.defineProperty(row, key, { get() { invoked++; return key === 'sourceHead' ? HEAD : code; } });
+    return row;
+  });
+  for (const native of [...accessorRows, Object.assign(Object.create({ reason: code }), { ok: false }),
+    { ok: false, reason: code, [Symbol('PRIVATE_SYMBOL')]: code }]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => native }).options);
+    assert.equal(report.nativeRuntime.available, false);
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(report).nativeRuntime,
+      'qualificationDiagnosticCode'), false);
+  }
+  assert.equal(invoked, 0);
+});
+
+test('qualification detail requires an actual failed result and no conflicting native source', async () => {
+  const code = 'FIXED_RUNTIME_GIT_CLOSURE_CHANGED';
+  for (const native of [
+    { ok: true, reason: code, sourceHead: HEAD, observedAtUtc: NOW, profiles: [] },
+    { ok: 'false', reason: code }, { reason: code },
+    { ok: false, reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING', qualificationDiagnosticCode: code },
+    { ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD', qualificationDiagnosticCode: code },
+    ...['e'.repeat(40), '', undefined, null, 1, [], {}]
+      .map(sourceHead => ({ ok: false, reason: code, sourceHead })),
+  ]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => native }).options);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(report).nativeRuntime,
+      'qualificationDiagnosticCode'), false);
+    if (native.ok === true) assert.equal(report.nativeRuntime.qualificationObserved, true);
+    else assert.equal(report.nativeRuntime.qualificationObserved, false);
+  }
+  for (const message of [code, 'EACCES: PRIVATE_NATIVE_PATH']) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => { throw Error(message); } }).options);
+    assert.equal(report.nativeRuntime.available, false);
+    assert.equal(report.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+  }
+});
+
+test('source drift and expected-main mismatch remove qualification details without another native inspection', async () => {
+  for (const finalRead of [() => 'e'.repeat(40), () => { throw Error('PRIVATE_SOURCE_PATH'); }]) {
+    let sourceReads = 0, nativeCalls = 0;
+    const report = await inspectSovereignControlSystemV1(fixture({
+      readSourceHead: () => ++sourceReads === 1 ? HEAD : finalRead(),
+      inspectRuntime: () => { nativeCalls++; return { ok: false, reason: 'FIXED_RUNTIME_SOURCE_PROOF_HEAD_CHANGED' }; },
+    }).options);
+    assert.equal(report.observationCompleted, false);
+    assert.equal(report.nativeRuntime.reason, 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED');
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(report).nativeRuntime,
+      'qualificationDiagnosticCode'), false);
+    assert.equal(sourceReads, 2); assert.equal(nativeCalls, 1);
+  }
+  const wrong = fixture(); wrong.options.expectedMain = 'e'.repeat(40);
+  const refused = await inspectSovereignControlSystemV1(wrong.options);
+  assert.equal(Object.hasOwn(refused.nativeRuntime, 'qualificationDiagnosticCode'), false);
+  assert.deepEqual(wrong.calls, ['source']);
+});
+
+test('qualification and owner refusal details coexist without proving either owner custody or runtime qualification', async () => {
+  const report = await inspectSovereignControlSystemV1(fixture({
+    readOwner: () => { throw Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'),
+      { diagnosticCode: 'OWNER_LISTENER_UNPROVEN' }); },
+    inspectRuntime: () => ({ ok: false, reason: 'RUNTIME_SOURCE_PROOF_PROTECTED_CLOSURE_CHANGED' }),
+  }).options);
+  const published = projectSovereignControlSystemStatusV1(report);
+  assert.equal(published.owner.reason, 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+  assert.equal(published.owner.diagnosticCode, 'OWNER_LISTENER_UNPROVEN');
+  assert.equal(published.owner.available, false);
+  assert.equal(published.owner.stable, false);
+  assert.equal(published.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+  assert.equal(published.nativeRuntime.qualificationDiagnosticCode, 'RUNTIME_SOURCE_PROOF_PROTECTED_CLOSURE_CHANGED');
+  assert.equal(published.nativeRuntime.qualificationObserved, false);
+  assert.equal(published.observationOnly, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(published)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
 });
 
 test('actual fixed-runtime governor vocabulary survives observation and public projection without authority', async () => {
