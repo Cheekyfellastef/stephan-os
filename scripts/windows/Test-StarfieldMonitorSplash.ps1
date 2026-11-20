@@ -83,7 +83,7 @@ function Reset-MonitorFixture {
         ClosedReceived = $false; TransportFailed = $false; ProviderSlotReleased = $true; SafeToClose = $true
         DurableCustodyReleased = $true; DurableCustodyReason = 'fixture-no-custody'
         Busy = $false; Mode = 'ready'; AllowedActions = @('prepare', 'close'); ConfirmationToken = $null
-        RunId = $null; GameProcess = $null; GameProcessIdentity = $null; Result = $null; DetailText = ''; FocusAttemptedRunId = ''; FocusAttemptCount = 0
+        RunId = $null; GameProcess = $null; GameProcessIdentity = $null; WitnessedRunId = $null; Result = $null; DetailText = ''; FocusAttemptedRunId = ''; FocusAttemptCount = 0
         LastCleanupDiagnosticKey = ''; StartedAtUtc = $null; ExitedAtUtc = $null
     }
     $script:focusRetryTimer = [pscustomobject]@{ StartCalls = 0; StopCalls = 0 }
@@ -238,6 +238,46 @@ try {
         Assert-True $rejected 'Same-run process retarget after a null frame was accepted'
         Assert-True ($monitorState.GameProcessIdentity.pid -eq 54321 -and
             $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Rejected retarget changed identity or sent confirmation'
+    }
+    Invoke-Fixture 'one child cannot replace the native run ID after waiting or a null cleanup frame' {
+        foreach ($variant in @('direct', 'null-gap')) {
+            Reset-MonitorFixture
+            Send-FixtureFrame (New-StateFrame 'waiting')
+            Assert-True ($monitorState.WitnessedRunId -ceq ('1' * 32)) 'Initial run identity was not witnessed'
+            if ($variant -ceq 'null-gap') {
+                $missing = New-StateFrame 'waiting'
+                $missing.eventSequence = 2
+                $missing.runId = $null
+                $missing.process = $null
+                $missing.confirmationToken = $null
+                $missing.allowedActions = @('cancel', 'close')
+                Send-FixtureFrame $missing
+                Assert-True ($monitorState.WitnessedRunId -ceq ('1' * 32) -and
+                    $monitorState.GameProcessIdentity.pid -eq 54321) 'Null cleanup frame erased witnessed identities'
+            }
+            $changed = New-StateFrame 'waiting'
+            $changed.eventSequence = if ($variant -ceq 'null-gap') { 3 } else { 2 }
+            $changed.runId = '9' * 32
+            $changed.confirmationToken = '8' * 32
+            $rejected = $false
+            try { Send-FixtureFrame $changed }
+            catch { $rejected = $_.Exception.Message -ceq 'monitor-state-run-identity-drift' }
+            Assert-True $rejected ('Changed runId was admitted for the same child: ' + $variant)
+            Assert-True ($monitorState.WitnessedRunId -ceq ('1' * 32) -and
+                $monitorState.GameProcessIdentity.pid -eq 54321 -and
+                $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Rejected new run changed custody or dispatched input'
+        }
+    }
+    Invoke-Fixture 'a native game process without its run ID is rejected' {
+        Reset-MonitorFixture
+        $frame = New-StateFrame 'waiting'
+        $frame.runId = $null
+        $rejected = $false
+        try { Send-FixtureFrame $frame }
+        catch { $rejected = $_.Exception.Message -ceq 'monitor-state-process-without-run' }
+        Assert-True $rejected 'Unbound native game process was admitted'
+        Assert-True (-not $monitorState.WitnessedRunId -and -not $monitorState.GameProcessIdentity -and
+            $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Invalid frame created native authority'
     }
     Invoke-Fixture 'failed foreground transfer consumes neither token nor request sequence' {
         Reset-MonitorFixture
