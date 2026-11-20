@@ -497,6 +497,37 @@ test('composite review refuses contradictory typed counts and verdict before del
       analysis: { ...analysis, ...overrides }, sources,
     });
     assert.equal(review().clean, true, 'baseline confirms registered positive proof paths');
+
+    // Positive two-P0 reviews cannot execute unrelated accessors or a
+    // shadowed Array#find while splitting evidence into child reviews.
+    for (const kind of ['array-find', 'analysis-extra', 'input-extra']) {
+      let getterCalls = 0;
+      const unsafeFindings = analysis.findings.map((entry) => ({ ...entry }));
+      const unsafeAnalysis = { ...analysis, findings: unsafeFindings };
+      const unsafeInput = {
+        repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+        analysis: unsafeAnalysis, sources,
+      };
+      const explosive = () => {
+        getterCalls++;
+        throw new Error('UNTRUSTED_COMPOSITE_GETTER_EXECUTED');
+      };
+      if (kind === 'array-find') {
+        Object.defineProperty(unsafeFindings, 'find', { enumerable: true, get: explosive });
+      } else if (kind === 'analysis-extra') {
+        Object.defineProperty(unsafeAnalysis, 'untrustedExtra', { enumerable: true, get: explosive });
+      } else {
+        Object.defineProperty(unsafeInput, 'untrustedExtra', { enumerable: true, get: explosive });
+      }
+      const safe = analyzeWindowsAuthoritySpecialistReview(unsafeInput);
+      assert.equal(getterCalls, 0, kind + ' must not invoke untrusted getter');
+      assert.equal(safe.eligible, true, kind);
+      assert.equal(safe.clean, true, kind + ' must preserve literal P0 evidence');
+      for (const authority of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+        assert.equal(safe[authority], false, kind + ' cannot grant ' + authority);
+      }
+    }
+
     // Accessor-backed upstream P0 claims cannot be laundered through child reviews.
     for (const field of ['counts', 'verdict', 'clean']) {
       const forged = { ...analysis, clean: false };

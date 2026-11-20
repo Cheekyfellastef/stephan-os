@@ -193,8 +193,39 @@ function starfieldVrCompositeFindings(analysis = {}) {
     new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]));
 }
 
-function singleFindingAnalysis(analysis, finding) {
-  return Object.freeze({ ...analysis, findings: Object.freeze([finding]), counts: Object.freeze({ P0: 1, P1: 0, P2: 0 }) });
+function singleFindingAnalysis(finding) {
+  // Split into literal one-P0 evidence, never spread untrusted analysis.
+  return Object.freeze({
+    findings: Object.freeze([finding]),
+    counts: Object.freeze({ P0: 1, P1: 0, P2: 0 }),
+    verdict: 'findings',
+    clean: false,
+  });
+}
+
+function compositeChildInput(input, finding) {
+  // Retain own data fields without executing caller-defined accessors.
+  const next = {};
+  for (const key of Object.keys(input)) {
+    const slot = Object.getOwnPropertyDescriptor(input, key);
+    if (slot && Object.hasOwn(slot, 'value')) {
+      Object.defineProperty(next, key, {
+        value: slot.value, enumerable: true, configurable: true, writable: true,
+      });
+    }
+  }
+  next.analysis = singleFindingAnalysis(finding);
+  return Object.freeze(next);
+}
+
+function literalCompositeFinding(findings, path) {
+  // Strict envelope validation preceded this call. Never use the potentially
+  // shadowed Array#find on untrusted review evidence.
+  for (const index of ['0', '1']) {
+    const entry = Object.getOwnPropertyDescriptor(findings, index)?.value;
+    if (entry?.path === path) return entry;
+  }
+  return null;
 }
 
 /**
@@ -263,16 +294,10 @@ function analyzeStarfieldVrCompositeReview(input = {}) {
   if (!exactTwoP0CompositeEnvelope(input.analysis) || !exactCompositeFindingScalars(findings)) {
     return rejectedCompositeEnvelope([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
   }
-  const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
-  const launcherFinding = findings.find((item) => item.path === STARFIELD_VR_LAUNCHER_SCRIPT_PATH);
-  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
-    ...input,
-    analysis: singleFindingAnalysis(input.analysis, splashFinding),
-  });
-  const launcher = starfieldVrLauncher.analyzeWindowsAuthorityStarfieldVrLauncherReviewV1({
-    ...input,
-    analysis: singleFindingAnalysis(input.analysis, launcherFinding),
-  });
+  const splashFinding = literalCompositeFinding(findings, STARFIELD_VR_SPLASH_LAUNCH_PATH);
+  const launcherFinding = literalCompositeFinding(findings, STARFIELD_VR_LAUNCHER_SCRIPT_PATH);
+  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1(compositeChildInput(input, splashFinding));
+  const launcher = starfieldVrLauncher.analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(compositeChildInput(input, launcherFinding));
   if (!splash.eligible || !launcher.eligible) return null;
   const combinedFindings = Object.freeze([...(splash.findings || []), ...(launcher.findings || [])]);
   const reviewedPaths = Object.freeze([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
@@ -305,16 +330,10 @@ function analyzeStarfieldVrAerCompositeReview(input = {}) {
   if (!exactTwoP0CompositeEnvelope(input.analysis) || !exactCompositeFindingScalars(findings)) {
     return rejectedCompositeEnvelope([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
   }
-  const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
-  const aerFinding = findings.find((item) => item.path === STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH);
-  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
-    ...input,
-    analysis: singleFindingAnalysis(input.analysis, splashFinding),
-  });
-  const aer = starfieldVrAerObserve.analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1({
-    ...input,
-    analysis: singleFindingAnalysis(input.analysis, aerFinding),
-  });
+  const splashFinding = literalCompositeFinding(findings, STARFIELD_VR_SPLASH_LAUNCH_PATH);
+  const aerFinding = literalCompositeFinding(findings, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH);
+  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1(compositeChildInput(input, splashFinding));
+  const aer = starfieldVrAerObserve.analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1(compositeChildInput(input, aerFinding));
   if (!splash.eligible || !aer.eligible) return null;
   const combinedFindings = Object.freeze([...(splash.findings || []), ...(aer.findings || [])]);
   const reviewedPaths = Object.freeze([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
