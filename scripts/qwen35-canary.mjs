@@ -98,16 +98,27 @@ try {
         if (abortIfGamingRevoked()) {
           fail(gamingRevocationBlocker, { elapsedMs });
         } else {
-        const content = String(body?.message?.content || '').trim();
-        const passed = content === EXPECTED;
+        // An echoed marker is not proof that the requested model ran or
+        // completed. Require literal Ollama response identity and completion.
+        const content = typeof body?.message?.content === 'string'
+          ? body.message.content.trim() : '';
+        const returnedModel = typeof body?.model === 'string' ? body.model : '';
+        const completed = body?.done === true;
+        const modelMatches = returnedModel === MODEL;
+        const passed = modelMatches && completed && content === EXPECTED;
+        const finalVerdict = !modelMatches ? 'QWEN35_CANARY_MODEL_IDENTITY_UNPROVEN'
+          : !completed ? 'QWEN35_CANARY_COMPLETION_UNPROVEN'
+            : passed ? 'QWEN35_CANARY_GREEN' : 'QWEN35_CANARY_RESPONSE_MISMATCH';
         process.stdout.write(`${JSON.stringify({
           schemaVersion: 'stephanos.qwen35-canary.v1',
           ok: passed,
-          model: String(body?.model || MODEL),
+          requestedModel: MODEL,
+          model: returnedModel.slice(0, 128) || null,
+          completionProven: completed,
           expected: EXPECTED,
           response: content,
           elapsedMs,
-          finalVerdict: passed ? 'QWEN35_CANARY_GREEN' : 'QWEN35_CANARY_RESPONSE_MISMATCH',
+          finalVerdict,
         })}\n`);
         if (!passed) process.exitCode = 3;
         }
