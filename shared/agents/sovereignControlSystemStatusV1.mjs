@@ -44,6 +44,55 @@ export function sovereignControlSystemGovernorObservationCodeV1(value) {
     ? value : 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_UNPROVEN';
 }
 
+// A reason for missing owner evidence is not owner identity or custody proof.
+const OWNER_DIAGNOSTIC_CODES = new Set([
+  'OWNER_CIM_LISTENER_QUERY_FAILED', 'OWNER_LISTENER_UNPROVEN', 'OWNER_LISTENER_NOT_PRIVATE',
+  'OWNER_CIM_PROCESS_QUERY_FAILED', 'OWNER_PROCESS_UNPROVEN', 'OWNER_COMMAND_LINE_UNAVAILABLE',
+  'OWNER_COMMAND_LINE_MISMATCH', 'OWNER_IMAGE_MISMATCH', 'OWNER_PROCESS_BIRTH_UNAVAILABLE',
+  'OWNER_NATIVE_QUERY_UNAVAILABLE', 'OWNER_NATIVE_ACCESS_DENIED', 'OWNER_NATIVE_OPEN_FAILED',
+  'OWNER_NATIVE_PROCESS_EXITED', 'OWNER_NATIVE_BIRTH_UNPROVEN', 'OWNER_NATIVE_BIRTH_MISMATCH',
+  'OWNER_NATIVE_IMAGE_UNPROVEN', 'OWNER_NATIVE_IMAGE_MISMATCH', 'OWNER_IMAGE_HASH_UNPROVEN',
+  'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN',
+  'OWNER_OBSERVER_TIMEOUT', 'OWNER_OBSERVER_FAILED', 'OWNER_OBSERVER_INVALID_RECEIPT',
+]);
+
+export function sovereignControlSystemOwnerDiagnosticCodeV1(value) {
+  return typeof value === 'string' && OWNER_DIAGNOSTIC_CODES.has(value)
+    ? value : 'OWNER_OBSERVER_INVALID_RECEIPT';
+}
+
+export const SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1 = Object.freeze([
+  'PHASE', 'OVERRIDE', 'LOAD', 'COOLDOWN', 'ACTIVE', 'FLAT_GAME', 'AIR_LINK',
+  'REAL_AIR_LINK', 'VIRTUAL_AIR_LINK', 'PREPARE_LEASE', 'LOCAL_MODEL', 'HEAVY_MODEL',
+]);
+
+// Retain the original admission sample through at most 15 seconds of diagnostic
+// return time after its existing 30-second freshness check. This grants no
+// admission, and historical reprojection compares original times, never now.
+export function projectSovereignControlSystemGovernorPermissionV1(value, nativeObservedAtUtc) {
+  try {
+    const row = record(value), observedAtUtc = utc(row.observedAtUtc), nativeTime = utc(nativeObservedAtUtc);
+    if (Object.keys(row).sort().join(',') !== 'failed,observedAtUtc' || !observedAtUtc || !nativeTime)
+      return null;
+    const age = Date.parse(nativeTime) - Date.parse(observedAtUtc);
+    const labels = row.failed, predicates = SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1;
+    if (age < 0 || age > 45000 || !Array.isArray(labels) || Object.getPrototypeOf(labels) !== Array.prototype
+      || labels.length < 1 || labels.length > predicates.length || Reflect.ownKeys(labels).length !== labels.length + 1)
+      return null;
+    const descriptors = Object.getOwnPropertyDescriptors(labels), failed = [];
+    let previous = -1;
+    for (let index = 0; index < labels.length; index++) {
+      const descriptor = descriptors[index];
+      if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string') return null;
+      const position = predicates.indexOf(descriptor.value);
+      if (position <= previous) return null;
+      previous = position;
+      failed.push(descriptor.value);
+    }
+    return Object.freeze({ observedAtUtc, failed: Object.freeze(failed) });
+  } catch { return null; }
+}
+
 // Deliberately closed: an uppercase exception message is not public telemetry.
 const CODES = new Set([
   UNKNOWN,
@@ -253,7 +302,11 @@ export function projectSovereignControlSystemStatusV1(value) {
       ...(c.result.available && typeof c.row.administratorEnabled === 'boolean'
         ? { administratorEnabled: c.row.administratorEnabled } : {}) };
     const owner = { ...o.result, available: o.result.available && Boolean(o.result.observedAtUtc),
-      stable: o.result.available && Boolean(o.result.observedAtUtc) && o.row.stable === true };
+      stable: o.result.available && Boolean(o.result.observedAtUtc) && o.row.stable === true,
+      ...(Object.hasOwn(o.row, 'diagnosticCode') && o.row.available === false && o.row.stable === false
+        && o.result.reason === 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN'
+        && source.available && source.stable && source.reason === '' && source.expectedMainMatches !== false
+        ? { diagnosticCode: sovereignControlSystemOwnerDiagnosticCodeV1(o.row.diagnosticCode) } : {}) };
     const guardianValid = g.result.available && owner.available && owner.stable
       && ['enabled', 'running', 'scheduled', 'maintenanceInFlight'].every(key => typeof g.row[key] === 'boolean')
       && ['HELD', 'NOT_HELD_REPORTED', 'UNKNOWN'].includes(g.row.custodyState);
@@ -277,8 +330,13 @@ export function projectSovereignControlSystemStatusV1(value) {
       && source.available && source.stable && source.reason === '' && (!expectedMain || expectedMain === sourceHead)
       && Object.hasOwn(n.row, 'governorHoldCode')
       ? sovereignControlSystemGovernorHoldCodeV1(n.row.governorHoldCode) : '';
+    const governorPermission = governorHoldCode === 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED'
+      && (!Object.hasOwn(n.row, 'sourceHead') || nativeHead === sourceHead)
+      && Object.hasOwn(n.row, 'governorPermission')
+      ? projectSovereignControlSystemGovernorPermissionV1(n.row.governorPermission, n.result.observedAtUtc) : null;
     const nativeRuntime = { ...n.result, available: qualificationObserved || nativeDenial, qualificationObserved,
       ...(governorHoldCode ? { governorHoldCode } : {}),
+      ...(governorPermission ? { governorPermission } : {}),
       ...(nativeHead ? { sourceHead: nativeHead } : {}),
       ...(qualificationObserved ? { profiles: Object.freeze([...n.row.profiles]) } : {}),
       ...(utc(n.row.bootStartedAtUtc) && n.result.observedAtUtc

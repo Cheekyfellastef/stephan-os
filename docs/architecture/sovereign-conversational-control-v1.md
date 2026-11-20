@@ -121,6 +121,29 @@ admit a repair. Core census and writer-custody requirements remain unchanged.
 This governor diagnostic extension does not commission a different native
 owner or process-identity path.
 
+### Preserve the actual refusal detail
+
+The optional `owner.diagnosticCode` preserves the existing observer's closed
+`OWNER_*` failure code only when owner identity remains unproven and the source
+is stable. It carries no process identity, raw error text or recovery authority.
+The underlying `MAINTENANCE_MIGRATION_OWNER_UNPROVEN` refusal remains in force.
+
+For `FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED`, the optional
+`nativeRuntime.governorPermission` identifies the failed permission predicates
+and the original governor state's timestamp. It is derived from the same state
+that already passed the canonical workspace, file, schema, preparation, override
+and freshness checks. It does not read another file, resample the state or change
+any admission decision. The closed labels cover phase, override, load mode,
+cooldown, the six activity flags and the two model permissions; values such as
+paths, process IDs and model names are never projected.
+
+Both details are removed on source drift. Unknown owner diagnostic values become
+`OWNER_OBSERVER_INVALID_RECEIPT`; malformed governor details are omitted.
+Historical receipts without these details retain their existing bytes, and the complete
+public status remains subject to its 2048-byte bound. A failed permission label
+explains the observed refusal; it cannot grant qualification, clear a hold or
+prove that a repair subsequently ran.
+
 Exit zero and `observationCompleted:true` mean the observation completed. An
 authentic installation or normal-operator refusal is a completed observation,
 not a healthy runtime. Exit two means a bounded inspection could not complete.
