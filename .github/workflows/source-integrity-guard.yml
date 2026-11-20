@@ -36,4 +36,3 @@ jobs:
 
       - name: Guard regression (informational PR-controlled tests)
         run: node --test scripts/changed-source-integrity-guard.test.mjs
-
