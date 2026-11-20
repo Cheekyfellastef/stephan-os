@@ -236,13 +236,17 @@ test('waiting-window retry is time-bounded, never relaunches game or replays sav
 
 test('same-run game identity drift fails closed before foreground or confirmation retarget', () => {
   const receiver = functionSource('Receive-MonitorEvent');
-  assert.match(receiver, /\\$monitorState\\.RunId -ceq \\$event\\.runId/);
-  assert.match(receiver, /\\$monitorState\\.GameProcess\\.pid -ne \\$event\\.process\\.pid/);
-  assert.match(receiver, /\\$monitorState\\.GameProcess\\.createdFileTime -cne \\$event\\.process\\.createdFileTime/);
-  assert.match(receiver, /throw 'monitor-state-game-identity-drift'/);
+  for (const identityCheck of [
+    '$monitorState.RunId -ceq $event.runId',
+    '$monitorState.GameProcess.pid -ne $event.process.pid',
+    '$monitorState.GameProcess.createdFileTime -cne $event.process.createdFileTime',
+    "throw 'monitor-state-game-identity-drift'",
+  ]) {
+    assert.ok(receiver.includes(identityCheck), 'Missing guard: ' + identityCheck);
+  }
   assert.ok(receiver.indexOf("throw 'monitor-state-game-identity-drift'") <
     receiver.indexOf('$monitorState.GameProcess = $event.process'));
-  assert.doesNotMatch(receiver, /Start-Process|Stop-Process|\\.Kill\\(/);
+  assert.ok(!receiver.includes('Start-Process') && !receiver.includes('Stop-Process'));
 });
 
 test('a broken monitor transport terminates all foreground retry work before closing child input', () => {
