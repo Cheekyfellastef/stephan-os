@@ -226,7 +226,20 @@ test('Hybrid brings only the exact game window forward after the verified waitin
 test('waiting-window retry is time-bounded, never relaunches game or replays save confirmation', () => {
   const handoff = functionSource('Invoke-MonitorWaitingGameFocus');
   const receiver = functionSource('Receive-MonitorEvent');
-  assert.match(handoff, /\$processState\.CloseRequested -or \$monitorState\.FocusAttemptCount -ge 8/);
+  // The PowerShell cancellation predicate may gain additional safety stops.
+  // Prove each required guard lives in the fail-closed pre-attempt branch rather
+  // than requiring two nonadjacent predicates to appear next to each other.
+  const preAttemptGuards = handoff.match(/if \(([\s\S]*?)\) \{\s*\$focusRetryTimer\.Stop\(\);\s*return\s*\}/)?.[1];
+  assert.ok(preAttemptGuards, 'Focus retries must stop when the preflight rejects ownership');
+  for (const guard of [
+    '$processState.CloseRequested',
+    '$monitorState.CloseRequested',
+    '$monitorState.CloseSent',
+    '$monitorState.TransportFailed',
+    '$monitorState.FocusAttemptCount -ge 8',
+  ]) {
+    assert.ok(preAttemptGuards.includes(guard), 'Missing foreground retry abort guard: ' + guard);
+  }
   assert.match(handoff, /\$monitorState\.FocusAttemptedRunId -cne \$monitorState\.RunId/);
   assert.match(handoff, /\$result -ceq 'game-window-not-visible' -and \$monitorState\.FocusAttemptCount -lt 8/);
   assert.match(handoff, /\$focusRetryTimer\.Stop\(\)/);
