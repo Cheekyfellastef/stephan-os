@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import * as index from '../shared/agents/mailboxReceiptIndexGitHubMirror.mjs';
 import * as telemetry from '../shared/agents/codexBankedResetTelemetryMirror.mjs';
-import {evaluateMailboxRotationActionInventory} from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
+import {evaluateMailboxRotationActionInventory,MAILBOX_ROTATION_ACTIONS_PAGE_SIZE,MAILBOX_ROTATION_ACTIONS_MAX_PAGES} from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
 import {legacyPublicationContract,withMailboxActionEvidence} from '../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs';
 
 const sha=x=>typeof x==='string'&&/^[a-f0-9]{40}$/.test(x);
@@ -20,12 +20,32 @@ export function localMailboxPublicationRevocations(){
 
 // Fixed public GET evidence only. The production caller supplies its existing
 // authenticated GitHub reader; no caller controls endpoints or proof results.
+function readMailboxActionRuns(read,status){
+ const runs=[],seen=new Set();let total;
+ for(let page=1;page<=MAILBOX_ROTATION_ACTIONS_MAX_PAGES;page++){
+  const response=read(`actions/runs?status=${status}&per_page=${MAILBOX_ROTATION_ACTIONS_PAGE_SIZE}${page===1?'':`&page=${page}`}`);
+  if(!response||!Number.isSafeInteger(response.total_count)||response.total_count<0
+    ||response.total_count>MAILBOX_ROTATION_ACTIONS_PAGE_SIZE*MAILBOX_ROTATION_ACTIONS_MAX_PAGES
+    ||!Array.isArray(response.workflow_runs)||(total!==undefined&&response.total_count!==total))
+   throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
+  total=response.total_count;
+  if(response.workflow_runs.length!==Math.min(MAILBOX_ROTATION_ACTIONS_PAGE_SIZE,total-runs.length))
+   throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
+  for(const run of response.workflow_runs){
+   if(!Number.isSafeInteger(run?.id)||run.id<=0||seen.has(run.id))throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INVALID');
+   seen.add(run.id);runs.push(run);
+  }
+  if(runs.length===total)return{total_count:total,workflow_runs:runs};
+ }
+ throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
+}
+
 export function inventoryMailboxRotationExecution({read,activationHead,now=()=>new Date().toISOString(),local=localMailboxPublicationRevocations}={}){
  if(typeof read!=='function'||!sha(activationHead))throw Error('MAILBOX_ACTION_EVIDENCE_CONTEXT_INVALID');
  const main=(read('commits/main'))?.sha;
  if(!sha(main))throw Error('MAILBOX_ACTION_MAIN_UNPROVEN');
  const responses=[];
- for(const status of ['queued','in_progress','waiting','requested','pending'])responses.push(read(`actions/runs?status=${status}&per_page=100`));
+ for(const status of ['queued','in_progress','waiting','requested','pending'])responses.push(readMailboxActionRuns(read,status));
  const observedAt=now(),inventory=evaluateMailboxRotationActionInventory(responses,observedAt);
  const raw=responses.flatMap(r=>r.workflow_runs),proofs=[];
  const locals=local();let source=null;

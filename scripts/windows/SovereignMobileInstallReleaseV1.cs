@@ -41,8 +41,8 @@ namespace Stephanos.Sovereign {
     internal const int PackageLimit=16777216, EvidenceLimit=1048576, BootstrapLimit=32768;
     // Exact reviewed membership, independent of a caller's captured manifest.
     // Source changes deliberately update this pin; capacity alone admits nothing.
-    internal const int ExpectedPathCount=300;
-    internal const string ExpectedPathSetSha256="74a0678decb20799761e21bc4ed78dc120a01c20803532429ce01d5187b6057e";
+    internal const int ExpectedPathCount=302;
+    internal const string ExpectedPathSetSha256="62dd881fd8f0a25dbc26f73c4750d3be047960acaccc8577e0f7a2c8220973f9";
     static readonly UTF8Encoding Utf8=new UTF8Encoding(false,true);
     static readonly string[] PinKeys={"repository","action","machineHash","operatorSid","enrollmentGeneration",
       "sourceHead","sourceTree","packageSha256","closureSha256","releaseProofSha256","bootstrapSha256"};
