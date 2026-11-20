@@ -32,6 +32,7 @@ import {
   executeSovereignCommanderRemoteOnBattleBridge,
   safeCpuPressureSnapshotProjection,
   strictNativeFailureExitStatusV1,
+  safeStarfieldVrResourcePreflightProjection,
   diagnoseRescueIslandNativeReceiptInvalidV1,
   sovereignCommanderRemoteNetworkTimeoutMs,
   sovereignCommanderRemotePlanStepTimeoutMs,
@@ -5531,3 +5532,39 @@ test('bounded native failure evidence rejects coerced exit statuses for Starfiel
       'valid numeric native exit status must be retained exactly');
   }
 });
+
+test('Starfield resource preflight requires a genuinely numeric native child exit status', () => {
+  const governor = {
+    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    active: true,
+    profile: { parkAllModels: true },
+    localModelAllowed: false,
+    zeroLocalModelInvariant: true,
+    evictionHealthy: true,
+    loadedModelsAfter: [],
+  };
+  const observation = (status) => ({
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    command: { plan: { processId: 'starfield-vr-resource-preflight' } },
+    structuredContent: {
+      ok: true, status, stdout: JSON.stringify(governor), stderr: '', errorCode: '',
+    },
+  });
+
+  const valid = safeStarfieldVrResourcePreflightProjection(observation(0));
+  assert.equal(valid.ok, true);
+  assert.equal(valid.status, 0);
+  assert.equal(valid.finalVerdict, 'STARFIELD_VR_RESOURCE_PREFLIGHT_PASSED');
+  for (const malformed of [null, undefined, false, true, '', '0', '2', [], {}]) {
+    const projected = safeStarfieldVrResourcePreflightProjection(observation(malformed));
+    assert.ok(projected, 'malformed exit should yield a bounded failed projection');
+    assert.equal(projected.ok, false, 'malformed exit must fail closed');
+    assert.equal(projected.status, null);
+    assert.equal(projected.finalVerdict, 'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED');
+  }
+  const failed = safeStarfieldVrResourcePreflightProjection(observation(2));
+  assert.equal(failed.ok, false);
+  assert.equal(failed.status, 2);
+});
+
