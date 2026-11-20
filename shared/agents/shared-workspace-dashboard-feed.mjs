@@ -1,0 +1,456 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { throwIfWorkspaceReadAborted, waitForWorkspaceRead } from '../runtime/workspaceReadCancellation.mjs';
+import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
+import { projectSharedWorkspaceProofIndexV1 } from './sharedWorkspaceProofIndexV1.mjs';
+import { projectGoalBuildGateObservatoryV1 } from '../runtime/goalBuildGateObservatoryV1.mjs';
+import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
+import {
+  LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
+  LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA,
+} from './logicalGoalControllerFabricV1.mjs';
+import { resolveSharedWorkspacePath, validateSharedWorkspaceRecord, DEFAULT_STALE_AFTER_MS } from './sharedAgentWorkspaceStore.mjs';
+import { projectSharedWorkspaceOperationalFacts } from './sharedWorkspaceOperationalFactsV1.mjs';
+import { SHARED_WORKSPACE_BRAIN_STATE_FILE, projectSharedWorkspaceBrainStateV1 } from './sharedWorkspaceBrainStateV1.mjs';
+import {
+  SPECIALIZED_NON_DASHBOARD_STATUS_FILES,
+  isSharedWorkspaceSpecializedStatusFile,
+} from './sharedWorkspaceSpecializedStatusRegistryV1.mjs';
+
+export { SPECIALIZED_NON_DASHBOARD_STATUS_FILES };
+
+export const SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION = 'stephanos.shared-workspace-dashboard-feed.v1';
+export const DASHBOARD_FEED_STATES = Object.freeze({
+  LOADING: 'loading',
+  READY: 'ready',
+  STALE: 'stale',
+  UNAVAILABLE: 'unavailable',
+  ERROR: 'error',
+});
+export const SHARED_WORKSPACE_FEED_RECORD_SCOPES = Object.freeze({
+  CURRENT_STATE: 'current-state',
+  FULL_HISTORY: 'full-history',
+});
+export const MIN_DASHBOARD_FEED_POLL_INTERVAL_MS = 15_000;
+export const DEFAULT_DASHBOARD_FEED_POLL_INTERVAL_MS = 30_000;
+const RECORD_READ_CONCURRENCY = 16;
+const directoryReadFlights = new WeakMap();
+const readerBudgets = new WeakMap();
+
+// Share the I/O allowance across directories and overlapping consumers. A slow
+// file occupies one slot, never an entire batch; FIFO admission prevents a
+// large history scan from continually overtaking another waiting directory.
+async function withinReaderBudget(reader, operation) {
+  let budget = readerBudgets.get(reader);
+  if (!budget) {
+    budget = { active: 0, waiting: [] };
+    readerBudgets.set(reader, budget);
+  }
+  if (budget.active < RECORD_READ_CONCURRENCY) budget.active += 1;
+  else await new Promise(resolve => budget.waiting.push(resolve));
+  try { return await operation(); }
+  finally {
+    const next = budget.waiting.shift();
+    if (next) next();
+    else budget.active -= 1;
+  }
+}
+
+const DIRECTORY_BY_KIND = Object.freeze({
+  goals: 'goalRecords',
+  status: 'statusRecords',
+  proof: 'proofRecords',
+  capabilities: 'capabilityRecords',
+  events: 'eventRecords',
+  lessons: 'lessonRecords',
+  receipts: 'receiptRecords',
+});
+const HISTORICAL_DIRECTORIES = new Set(['events', 'receipts']);
+const DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA = 'stephanos.operator-decision-receipt.v1';
+const LOGICAL_FABRIC_FUTURE_SKEW_MS = 60_000;
+const STEPHANOS_BUILD_TRUTH_FILE = 'stephanos-build-truth-current.json';
+const STEPHANOS_BUILD_TRUTH_SCHEMA = 'stephanos.sovereign-build-truth.v1';
+
+function text(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  const out = String(value).trim();
+  return out || fallback;
+}
+
+function timestampMs(record) {
+  const parsed = Date.parse(text(record?.timestampUtc || record?.checkedAtUtc || record?.publishedAtUtc || record?.createdAt));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function safePollIntervalMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_DASHBOARD_FEED_POLL_INTERVAL_MS;
+  return Math.max(MIN_DASHBOARD_FEED_POLL_INTERVAL_MS, Math.floor(parsed));
+}
+
+function safeRecordScope(value) {
+  return value === SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY
+    ? SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY
+    : SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE;
+}
+
+function emptyRecords() {
+  return { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], lessonRecords: [], receiptRecords: [] };
+}
+
+function classifyFeed({ resolved, records, projection, errors }) {
+  if (!resolved.ok) {
+    return {
+      state: DASHBOARD_FEED_STATES.UNAVAILABLE,
+      reason: resolved.reason,
+      exactNextAction: 'Set STEPHANOS_SHARED_AGENT_WORKSPACE to the existing Shared Agent Workspace directory outside the repository, then refresh the dashboard feed.',
+    };
+  }
+  if (errors.length) {
+    return {
+      state: DASHBOARD_FEED_STATES.ERROR,
+      reason: errors[0],
+      exactNextAction: 'Fix the unreadable or invalid Shared Agent Workspace record named in feed.errors, then refresh the dashboard feed.',
+    };
+  }
+  const count = Object.values(records).reduce((total, list) => total + list.length, 0);
+  if (count === 0) {
+    return {
+      state: DASHBOARD_FEED_STATES.UNAVAILABLE,
+      reason: 'NO_WORKSPACE_RECORDS',
+      exactNextAction: 'Publish current Shared Agent Workspace status/proof/capability records; missing records remain UNKNOWN.',
+    };
+  }
+  // Feed freshness is workspace-source freshness, not the freshness of every
+  // issue-bound dashboard card. Individual stale/unknown goal evidence remains
+  // visible in projection.operatorAttention, but must not freeze unrelated live
+  // programme authority while current workspace records continue to arrive.
+  if (projection.sourceTruth === 'STALE') {
+    return {
+      state: DASHBOARD_FEED_STATES.STALE,
+      reason: 'STALE_WORKSPACE_SOURCE',
+      exactNextAction: 'Refresh the Shared Agent Workspace source before claiming live workspace freshness.',
+    };
+  }
+  return {
+    state: DASHBOARD_FEED_STATES.READY,
+    reason: 'WORKSPACE_RECORDS_CURRENT_OR_UNKNOWN_BY_GOAL',
+    exactNextAction: projection.operatorAttention.exactNextAction,
+  };
+}
+
+export async function readSharedWorkspaceRecordDirectory(root, directory, options = {}) {
+  throwIfWorkspaceReadAborted(options.signal);
+  const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: [directory] });
+  if (!resolved.ok) return { records: [], errors: [`${directory}:${resolved.reason}`] };
+  const reader = options.readFile || readFile;
+  let flights = directoryReadFlights.get(reader);
+  if (!flights) { flights = new Map(); directoryReadFlights.set(reader, flights); }
+  let flight = flights.get(resolved.path);
+  if (!flight) {
+    flight = readDirectorySnapshot(resolved.path, directory, reader);
+    flights.set(resolved.path, flight);
+    // The operation owns this registry entry until actual settlement. A caller
+    // leaving early must not remove it and admit a duplicate directory scan.
+    const ownedFlight = flight;
+    const retire = () => { if (flights.get(resolved.path) === ownedFlight) flights.delete(resolved.path); };
+    ownedFlight.then(retire, retire);
+  }
+  const snapshot = await waitForWorkspaceRead(flight, options.signal);
+  throwIfWorkspaceReadAborted(options.signal);
+  // Share only I/O in progress, never a cached authority/freshness verdict.
+  // Each caller owns its returned objects and validates against its own clock.
+  const records = [];
+  const errors = [...snapshot.errors];
+  for (const { name, record: raw } of snapshot.entries) {
+    try {
+      const record = structuredClone(raw);
+      const validation = validateSharedWorkspaceRecord(record, options);
+      if (validation.valid) records.push(record);
+      else errors.push(`${directory}/${name}:${validation.errors.join(',')}`);
+    } catch (error) {
+      errors.push(`${directory}/${name}:PARSE_FAILED:${error?.message || 'unknown'}`);
+    }
+  }
+  errors.sort();
+  records.sort((a, b) => timestampMs(b) - timestampMs(a));
+  return { records, errors };
+}
+
+async function readDirectorySnapshot(path, directory, reader) {
+  let names = [];
+  try {
+    names = await readdir(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { entries: [], errors: [] };
+    return { entries: [], errors: [`${directory}:READ_FAILED:${error?.code || error?.message || 'unknown'}`] };
+  }
+  const entries = [];
+  const errors = [];
+  const selectedNames = names.filter((item) => (
+    item.endsWith('.json')
+    // Match the canonical operator inbox namespace before opening files. The
+    // shared receipts directory also contains the much larger runtime journal.
+    && !(directory === 'receipts' && (!item.startsWith('operator-decision-') || item.endsWith('.pending.json')))
+    && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
+  ));
+  // Full-history Flywheel polls must not serialize thousands of disk reads.
+  // Keep I/O bounded and collect in directory order so equal timestamps and
+  // validation errors remain deterministic regardless of read completion order.
+  const readRecord = async (name) => {
+    try {
+      const record = JSON.parse(await reader(join(path, name), 'utf8'));
+      if (
+        directory === 'receipts'
+        && record?.operatorDecisionSchemaVersion !== DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA
+      ) return {};
+      return { entry: { name, record } };
+    } catch (error) {
+      return { error: `${directory}/${name}:PARSE_FAILED:${error?.message || 'unknown'}` };
+    }
+  };
+  const results = new Array(selectedNames.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(RECORD_READ_CONCURRENCY, selectedNames.length) }, async () => {
+    while (nextIndex < selectedNames.length) {
+      const index = nextIndex++;
+      results[index] = await withinReaderBudget(reader, () => readRecord(selectedNames[index]));
+    }
+  }));
+  for (const result of results) {
+    if (result.entry) entries.push(result.entry);
+    if (result.error) errors.push(result.error);
+  }
+  return { entries, errors };
+}
+
+
+export async function readStephanosBuildTruthStatus(root, options = {}) {
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot: options.repoRoot,
+    segments: ['status', STEPHANOS_BUILD_TRUTH_FILE],
+  });
+  if (!resolved.ok) return Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  let record;
+  try {
+    record = JSON.parse(await readFile(resolved.path, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({ truth: 'UNKNOWN', blocker: 'STEPHANOS_BUILD_TRUTH_NOT_FOUND', record: null });
+    }
+    return Object.freeze({ truth: 'UNKNOWN', blocker: 'STEPHANOS_BUILD_TRUTH_READ_FAILED', record: null });
+  }
+  const validation = validateSharedWorkspaceRecord(record, options);
+  if (!validation.valid || record?.stephanosBuildTruth?.schemaVersion !== STEPHANOS_BUILD_TRUTH_SCHEMA) {
+    return Object.freeze({ truth: 'UNKNOWN', blocker: validation.refusalReason || 'STEPHANOS_BUILD_TRUTH_INVALID', record: null });
+  }
+  const observedMs = timestampMs(record);
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const staleAfterMs = Number.isFinite(options.staleAfterMs) ? options.staleAfterMs : DEFAULT_STALE_AFTER_MS;
+  if (!observedMs) return Object.freeze({ truth: 'UNKNOWN', blocker: 'STEPHANOS_BUILD_TRUTH_TIMESTAMP_INVALID', record: null });
+  if (observedMs - nowMs > LOGICAL_FABRIC_FUTURE_SKEW_MS) {
+    return Object.freeze({ truth: 'STALE', blocker: 'STEPHANOS_BUILD_TRUTH_FUTURE_DATED', record });
+  }
+  if (Math.max(0, nowMs - observedMs) > staleAfterMs) {
+    return Object.freeze({ truth: 'STALE', blocker: 'STEPHANOS_BUILD_TRUTH_STALE', record });
+  }
+  return Object.freeze({ truth: 'CURRENT', blocker: '', record });
+}
+
+export async function readSharedWorkspaceBrainStateStatus(root, options = {}) {
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot: options.repoRoot,
+    segments: ['status', SHARED_WORKSPACE_BRAIN_STATE_FILE],
+  });
+  if (!resolved.ok) return projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs });
+  try {
+    const record = JSON.parse(await readFile(resolved.path, 'utf8'));
+    return projectSharedWorkspaceBrainStateV1({ statusRecords: [record], nowMs });
+  } catch {
+    return projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs });
+  }
+}
+
+export async function readLogicalGoalControllerFabricStatus(root, options = {}) {
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot: options.repoRoot,
+    segments: ['status', LOGICAL_GOAL_CONTROLLER_FABRIC_FILE],
+  });
+  if (!resolved.ok) {
+    return Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  }
+  let record;
+  try {
+    record = JSON.parse(await readFile(resolved.path, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({ truth: 'UNKNOWN', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_NOT_FOUND', record: null });
+    }
+    return Object.freeze({ truth: 'UNKNOWN', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READ_FAILED', record: null });
+  }
+  if (record?.schemaVersion !== LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA || record?.valid !== true) {
+    return Object.freeze({ truth: 'UNKNOWN', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID', record: null });
+  }
+  const observedMs = Date.parse(text(record.observedAtUtc));
+  if (!Number.isFinite(observedMs)) {
+    return Object.freeze({ truth: 'UNKNOWN', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_TIMESTAMP_INVALID', record: null });
+  }
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const staleAfterMs = Number.isFinite(options.staleAfterMs) ? options.staleAfterMs : DEFAULT_STALE_AFTER_MS;
+  if (observedMs - nowMs > LOGICAL_FABRIC_FUTURE_SKEW_MS) {
+    return Object.freeze({ truth: 'STALE', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_FUTURE_DATED', record: null });
+  }
+  if (Math.max(0, nowMs - observedMs) > staleAfterMs) {
+    return Object.freeze({ truth: 'STALE', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE', record: null });
+  }
+  return Object.freeze({ truth: 'CURRENT', blocker: '', record });
+}
+
+export function createSharedWorkspaceDashboardPollingContract(input = {}) {
+  return Object.freeze({
+    readOnly: true,
+    shellAllowed: false,
+    browserAutomationAllowed: false,
+    dashboardWritesAllowed: false,
+    repoMutationAllowed: false,
+    fakeLiveProofAllowed: false,
+    pollIntervalMs: safePollIntervalMs(input.pollIntervalMs),
+    minimumPollIntervalMs: MIN_DASHBOARD_FEED_POLL_INTERVAL_MS,
+    exactNextActionOnError: 'Keep the dashboard read-only; fix the Shared Agent Workspace record/path and wait for the next safe poll.',
+  });
+}
+
+function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs, proofRecords = [], goalGateTrust = {}) {
+  return Object.freeze({
+    ...projection,
+    autonomyBuildTrack: projectWorkspaceAutonomyBuildTrack({ statusRecords, nowMs, staleAfterMs }),
+    goalBuildGateObservatory: projectGoalBuildGateObservatoryV1({ statusRecords, proofRecords, ...goalGateTrust, nowMs, staleAfterMs }),
+  });
+}
+
+export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
+  const polling = createSharedWorkspaceDashboardPollingContract(input);
+  const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
+  const projection = withAutonomyTrack(
+    buildLandingGoalDashboardProjection({ nowMs, staleAfterMs }),
+    [],
+    nowMs,
+    staleAfterMs,
+  );
+  return Object.freeze({
+    schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
+    kind: 'stephanos.shared_workspace.dashboard_feed',
+    state: DASHBOARD_FEED_STATES.LOADING,
+    reason: 'INITIAL_POLL_PENDING',
+    exactNextAction: 'Wait for the first safe read-only Shared Agent Workspace poll.',
+    polling,
+    records: emptyRecords(),
+    proofIndex: projectSharedWorkspaceProofIndexV1({ sourceAvailable: false, nowMs }),
+    operationalFacts: projectSharedWorkspaceOperationalFacts({ statusRecords: [], nowMs }),
+    brainState: projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs }),
+    projection,
+    logicalGoalControllers: projection.logicalGoalControllers,
+    stephanosBuildTruthStatus: Object.freeze({
+      truth: 'UNKNOWN',
+      blocker: 'INITIAL_POLL_PENDING',
+      record: null,
+    }),
+    autonomyBuildTrack: projection.autonomyBuildTrack,
+    errors: [],
+  });
+}
+
+export async function readSharedWorkspaceDashboardFeed(input = {}) {
+  throwIfWorkspaceReadAborted(input.signal);
+  let nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
+  const polling = createSharedWorkspaceDashboardPollingContract(input);
+  const recordScope = safeRecordScope(input.recordScope);
+  const resolved = resolveSharedWorkspacePath({ root: input.root, repoRoot: input.repoRoot, segments: [] });
+  const records = emptyRecords();
+  const errors = [];
+  if (resolved.ok) {
+    const directories = Object.entries(DIRECTORY_BY_KIND).filter(([directory]) => !(
+      recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
+      && HISTORICAL_DIRECTORIES.has(directory)
+    ));
+    // Enumerations can overlap, while all generic record reads still share the
+    // same bounded allowance. Collect in canonical directory order, not finish order.
+    const results = await Promise.all(directories.map(([directory]) =>
+      readSharedWorkspaceRecordDirectory(resolved.root, directory, {
+        repoRoot: input.repoRoot, nowMs, staleAfterMs, readFile: input.readFile, signal: input.signal,
+      })));
+    for (const [index, [, key]] of directories.entries()) {
+      const result = results[index];
+      records[key] = result.records;
+      errors.push(...result.errors);
+    }
+  }
+  const logicalGoalControllerFabricStatus = resolved.ok
+    ? await readLogicalGoalControllerFabricStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
+    : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  const stephanosBuildTruthStatus = resolved.ok
+    ? await readStephanosBuildTruthStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
+    : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  throwIfWorkspaceReadAborted(input.signal);
+  // A live observation is sampled after the asynchronous record reads.
+  if (!Number.isFinite(input.nowMs)) nowMs = Date.now();
+  const latest = {
+    goal: records.goalRecords[0] || null,
+    status: records.statusRecords[0] || null,
+    proof: records.proofRecords[0] || null,
+    capability: records.capabilityRecords[0] || null,
+  };
+  const projection = withAutonomyTrack(buildLandingGoalDashboardProjection({
+    nowMs,
+    staleAfterMs,
+    timestampUtc: new Date(nowMs).toISOString(),
+    goalRecords: records.goalRecords,
+    statusRecords: stephanosBuildTruthStatus.record
+      ? [...records.statusRecords, stephanosBuildTruthStatus.record]
+      : records.statusRecords,
+    proofRecords: records.proofRecords,
+    capabilityRecords: records.capabilityRecords,
+    sharedWorkspace: { latest },
+    logicalGoalControllerFabricStatus,
+  }), records.statusRecords, nowMs, staleAfterMs, records.proofRecords, input.goalGateTrust || {});
+  const operationalFacts = projectSharedWorkspaceOperationalFacts({ statusRecords: records.statusRecords, nowMs });
+  const brainState = resolved.ok
+    ? await readSharedWorkspaceBrainStateStatus(resolved.root, { repoRoot: input.repoRoot, nowMs })
+    : projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs });
+  const classification = classifyFeed({ resolved, records, projection, errors });
+  throwIfWorkspaceReadAborted(input.signal);
+  return Object.freeze({
+    schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
+    kind: 'stephanos.shared_workspace.dashboard_feed',
+    readOnly: true,
+    recordScope,
+    state: classification.state,
+    reason: classification.reason,
+    exactNextAction: classification.exactNextAction,
+    polling,
+    workspaceRoot: resolved.ok ? resolved.root : 'UNKNOWN',
+    records,
+    proofIndex: projectSharedWorkspaceProofIndexV1({
+      sourceAvailable: resolved.ok,
+      proofRecords: records.proofRecords,
+      receiptRecords: records.receiptRecords,
+      goalRecords: records.goalRecords,
+      nowMs,
+      staleAfterMs,
+    }),
+    operationalFacts,
+    brainState,
+    projection,
+    logicalGoalControllers: projection.logicalGoalControllers,
+    stephanosBuildTruthStatus,
+    autonomyBuildTrack: projection.autonomyBuildTrack,
+    operatorAttention: projection.operatorAttention,
+    errors,
+  });
+}

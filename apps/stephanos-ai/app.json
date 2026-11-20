@@ -1,0 +1,10 @@
+{
+  "name": "Stephanos AI",
+  "icon": "✦",
+  "entry": "index.html",
+  "type": "mission-control",
+  "packaging": "classic-static",
+  "description": "Unified conversation workspace for Stephanos, project agents, and teams.",
+  "launcherActionLabel": "Enter Stephanos AI",
+  "role": "STEPHANOS_AI_WORKSPACE"
+}

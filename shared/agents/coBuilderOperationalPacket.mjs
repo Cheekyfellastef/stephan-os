@@ -102,9 +102,10 @@ function scopeOverlap(left, right) {
   const rightText = normalizePacketPath(right);
   if (isGlobalWildcardScope(leftText)) return true;
   if (isGlobalFilePattern(rightText)) return false;
+  if (isRootFilePattern(leftText) && !isRootFilePattern(rightText)) return false;
   if (isRootFilePattern(rightText)) {
     if (leftText.includes('/')) return false;
-    if (isRootFilePattern(leftText)) return true;
+    if (isRootFilePattern(leftText)) return leftText === rightText;
     return rootFilePatternMatches(leftText, rightText);
   }
   const a = globBase(leftText);

@@ -1,4 +1,5 @@
 import { OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY, OPENCLAW_WORKSPACE_SAFE_START_COMMAND_PREFIX } from './openClawWorkspaceHygiene.mjs';
+import { getOpenClawGatewayStartupCommand, OPENCLAW_GATEWAY_APPROVED_ENDPOINT } from './openClawGatewayStartup.mjs';
 
 const VALID_GATEWAY_STATUSES = new Set(['unknown', 'running', 'stopped', 'unreachable']);
 const VALID_DASHBOARD_STATUSES = new Set(['unknown', 'openable', 'unavailable']);
@@ -6,7 +7,7 @@ const VALID_PROOF_STATUSES = new Set(['unknown', 'pending', 'pass', 'fail']);
 
 export const OPENCLAW_CONTROL_BRIDGE_DEFAULTS = Object.freeze({
   gatewayTarget: 'ws://127.0.0.1:18789',
-  dashboardUrl: 'http://127.0.0.1:18789/',
+  dashboardUrl: `${OPENCLAW_GATEWAY_APPROVED_ENDPOINT}/`,
   expectedLocalModels: Object.freeze(['ollama/llama3.2:3b', 'qwen:14b']),
   expectedAgents: Object.freeze(['stephanos-scout', 'stephanos-scout-qwen14']),
   gatewayStatus: 'unknown',
@@ -17,7 +18,7 @@ export const OPENCLAW_CONTROL_BRIDGE_DEFAULTS = Object.freeze({
   operatorApprovalRequired: 'yes',
   dashboardTemporaryCockpit: 'yes',
   openClawWorkspacePath: OPENCLAW_WORKSPACE_EXTERNAL_DIRECTORY,
-  startGatewayCommand: `${OPENCLAW_WORKSPACE_SAFE_START_COMMAND_PREFIX} openclaw gateway --host 127.0.0.1 --port 18789`,
+  startGatewayCommand: getOpenClawGatewayStartupCommand(),
   stopOpenClawCommand: 'Stop the local OpenClaw Gateway from the terminal where it is running with Ctrl+C; do not install Windows auto-start or scheduled service behavior.',
   lastProofExpectedText: 'OpenClaw one-shot local route works.',
   lastProofObservedText: '',

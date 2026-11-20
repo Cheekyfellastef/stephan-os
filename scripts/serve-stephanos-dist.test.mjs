@@ -6,6 +6,7 @@ import {
   canReuseStephanosServer,
   createStephanosDistServer,
   resolveContentType,
+  shutdownServerForRestart,
   startFreshServerAfterPortClose,
 } from './serve-stephanos-dist.mjs';
 import { repoRoot } from './stephanos-build-utils.mjs';
@@ -16,6 +17,13 @@ import { OPENCLAW_READONLY_VALIDATION_ENDPOINT } from '../shared/agents/openClaw
 const { distMountPath } = createStephanosLocalUrls({
   port: Number(process.env.STEPHANOS_SERVE_PORT || 4173),
 });
+
+
+function currentBuildSnapshot() {
+  const head='a'.repeat(40), fingerprint='b'.repeat(64);
+  const metadata={gitCommit:head,sourceFingerprint:fingerprint,runtimeMarker:'antifriction-live-v3::'+head+'::'+fingerprint.slice(0,12)};
+  return {expectedHead:head,observedHead:head,metadata,embeddedMetadata:{...metadata}};
+}
 
 function createHealthyReuseProbe(overrides = {}) {
   return {
@@ -70,12 +78,14 @@ test('dist server serves shared runtime modules with JavaScript MIME type', asyn
     const contentType = response.headers.get('content-type');
     assert.equal(contentType, 'text/javascript; charset=utf-8');
     assert.notEqual(contentType, 'application/octet-stream');
+    const body = await response.text();
+    assert.equal(Number(response.headers.get('content-length')), Buffer.byteLength(body));
   }
 });
 
 
 test('dist server serves launcher runtime-status endpoint with shared toggle registry payload', async (t) => {
-  const server = createStephanosDistServer();
+  const server = createStephanosDistServer({readRuntimeSnapshot:currentBuildSnapshot});
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => server.close());
@@ -91,7 +101,7 @@ test('dist server serves launcher runtime-status endpoint with shared toggle reg
 });
 
 test('dist server routes runtime-status before static 404 handling (query-string safe)', async (t) => {
-  const server = createStephanosDistServer();
+  const server = createStephanosDistServer({readRuntimeSnapshot:currentBuildSnapshot});
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => server.close());
@@ -175,6 +185,36 @@ test('fresh restart helper starts a replacement only after the stale listener cl
   assert.deepEqual(calls, ['fresh-server']);
 });
 
+test('fresh restart helper waits for replacement listener before reporting handoff success', async () => {
+  const calls = [];
+  const result = await startFreshServerAfterPortClose({
+    targetPort: 4173,
+    targetHost: '127.0.0.1',
+    staleServerClosed: true,
+    createServerFn: () => {
+      const listeners = new Map();
+      return {
+        once(event, handler) {
+          listeners.set(event, handler);
+        },
+        off(event) {
+          listeners.delete(event);
+        },
+        emit(event, payload) {
+          listeners.get(event)?.(payload);
+        },
+      };
+    },
+    listenFn: (server) => {
+      calls.push('listen');
+      setImmediate(() => server.emit('listening'));
+    },
+  });
+
+  assert.equal(result.started, true);
+  assert.deepEqual(calls, ['listen']);
+});
+
 test('fresh restart helper blocks without double-starting when stale listener remains open', async () => {
   const calls = [];
   const result = await startFreshServerAfterPortClose({
@@ -191,14 +231,14 @@ test('fresh restart helper blocks without double-starting when stale listener re
   assert.deepEqual(calls, []);
 });
 
-test('dist server exposes restart endpoint and reflects restart request in health payload', async (t) => {
+test('dist server restart endpoint accepts handoff and closes listener without double-close', async (t) => {
   process.env.STEPHANOS_TEST_DISABLE_EXIT = '1';
   const server = createStephanosDistServer();
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => {
     delete process.env.STEPHANOS_TEST_DISABLE_EXIT;
-    server.close();
+    if (server.listening) server.close();
   });
 
   const { port } = server.address();
@@ -216,13 +256,20 @@ test('dist server exposes restart endpoint and reflects restart request in healt
   assert.equal(restartResponse.status, 202);
   const restartPayload = await restartResponse.json();
   assert.equal(restartPayload.accepted, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(server.listening, false);
+});
 
-  const healthResponse = await fetch(`http://127.0.0.1:${port}/__stephanos/health`);
-  assert.equal(healthResponse.status, 200);
-  const healthPayload = await healthResponse.json();
-  assert.equal(healthPayload.ignitionRestart.supported, true);
-  assert.equal(healthPayload.ignitionRestart.requested, true);
-  assert.equal(healthPayload.ignitionRestart.source, 'test');
+test('restart shutdown closes the listener without forcing process exit in tests', async () => {
+  const server = createStephanosDistServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+
+  const result = await shutdownServerForRestart(server, { exitProcess: false });
+
+  assert.equal(result.closed, true);
+  assert.equal(result.exited, false);
+  assert.equal(server.listening, false);
 });
 
 test('readonly validation endpoint rejects non-loopback host', async (t) => {

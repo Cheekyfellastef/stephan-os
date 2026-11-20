@@ -5,7 +5,8 @@ import { assistantAgent } from "./system/agents/assistant_agent/assistant_agent.
 import { appInstallerAgent } from "./system/agents/app_installer_agent/app_installer_agent.js";
 import { selfRepairAgent } from "./system/agents/self_repair_agent/self_repair_agent.js";
 import { validateApps } from "./system/apps/app_validator.js";
-import { renderProjectRegistry as renderLauncherProjectRegistry } from "./modules/command-deck/command-deck.js";
+import { renderProjectRegistry as renderLauncherProjectRegistry, launchProject as launchLauncherProject } from "./modules/command-deck/command-deck.js";
+import { prepareLauncherTileLayout } from "./shared/runtime/launcherTileLayout.mjs";
 import { createEventBus } from "./system/core/event_bus.js";
 import { createSelfHealingService } from "./system/self_healing/self_healing_service.js";
 import { resolveLauncherRuntimeMode } from "./shared/runtime/launcherRuntimeMode.mjs";
@@ -1101,30 +1102,33 @@ function renderProjectRegistryLocalFallback(projects, context) {
     return false;
   }
 
+  const layout = prepareLauncherTileLayout(container, projects, () => renderProjectRegistryLocalFallback(projects, context));
+  if (layout.deferred) return container.querySelectorAll(".app-tile").length > 0;
+  layout.beforeRender();
   container.innerHTML = "";
-  const safeProjects = Array.isArray(projects) ? projects : [];
-  safeProjects.forEach((project) => {
+  layout.projects.forEach((project) => {
     const tile = document.createElement("div");
     tile.className = "app-tile";
     const icon = project?.icon || "🧩";
     const name = project?.name || "Unnamed Project";
     tile.innerHTML = `<div style="font-size:36px;">${icon}</div><div style="margin-top:8px;">${name}</div>`;
 
-    if (project?.entry) {
-      tile.onclick = () => {
-        if (context?.workspace?.open) {
-          context.workspace.open(project, context);
-          return;
-        }
-
-        window.location.assign(project.entry);
-      };
-    } else {
+    if (!project?.entry) {
       tile.setAttribute("aria-disabled", "true");
     }
 
+    layout.decorateTile(tile, project, project?.entry ? () => {
+      if (project.launchStrategy === 'navigate' || context?.workspace?.open) {
+        launchLauncherProject(project, context, { type: 'user-click', origin: 'launcher-recovery-tile' });
+      } else {
+        window.location.assign(project.entry);
+      }
+    } : null);
+
     container.appendChild(tile);
   });
+
+  layout.afterRender();
 
   return container.querySelectorAll(".app-tile").length > 0;
 }
@@ -1177,22 +1181,48 @@ function renderTileFirstLauncher(projects, context) {
 }
 
 function startStephanosHealthMonitor(projects, context) {
-  const monitor = async () => {
+  const foregroundIntervalMs = 30_000;
+  let inFlight = false;
+  let stopped = false;
+
+  const monitor = async ({ force = false } = {}) => {
+    if (stopped || inFlight) {
+      return;
+    }
+    if (!force && (document.visibilityState === "hidden" || !document.hasFocus())) {
+      return;
+    }
+
+    inFlight = true;
     try {
       await validateApps(projects, context);
     } catch (error) {
       console.warn("Stephanos app health monitor failed.", error);
+    } finally {
+      inFlight = false;
     }
   };
 
-  const intervalId = window.setInterval(monitor, 2000);
-  window.addEventListener("focus", monitor);
-  window.addEventListener("visibilitychange", monitor);
+  const intervalId = window.setInterval(() => {
+    void monitor();
+  }, foregroundIntervalMs);
+  const handleFocus = () => {
+    void monitor({ force: true });
+  };
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+      void monitor({ force: true });
+    }
+  };
+
+  window.addEventListener("focus", handleFocus);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   return () => {
+    stopped = true;
     window.clearInterval(intervalId);
-    window.removeEventListener("focus", monitor);
-    window.removeEventListener("visibilitychange", monitor);
+    window.removeEventListener("focus", handleFocus);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
   };
 }
 

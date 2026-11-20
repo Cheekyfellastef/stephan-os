@@ -1,0 +1,8 @@
+{
+  "name": "Flywheel",
+  "icon": "🌀",
+  "entry": "index.html",
+  "type": "mission-control",
+  "packaging": "classic-static",
+  "role": "FLYWHEEL_LANDING_TILE"
+}

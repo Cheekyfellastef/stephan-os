@@ -1,15 +1,96 @@
 import { getStartupDiagnosticsSnapshot, recordStartupLaunchTrigger, recordStartupRenderStage } from '../../shared/runtime/startupLaunchDiagnostics.mjs';
 import { publishTileContextSnapshot } from '../../shared/runtime/tileContextRegistry.mjs';
+import { prepareLauncherTileLayout } from '../../shared/runtime/launcherTileLayout.mjs';
 import { STEPHANOS_LAW_IDS } from '../../shared/runtime/stephanosLaws.mjs';
 import { withCommandDeckDestination } from '../../shared/runtime/commandDeckDestination.mjs';
 import { buildStephanosTileTruthProjection } from './stephanosTileTruthProjection.mjs';
 import { buildCockpitProjection, renderCockpitSummaryMarkup } from '../../shared/runtime/cockpitProjection.mjs';
 import { buildMusicLandingSummaryLines } from '../../apps/music-tile/data/musicTasteSummary.js';
+import { requestStephanosBackend } from '../../shared/runtime/backendClient.mjs';
+import { SPATIAL_WORKSPACE_TELEMETRY_FEED_ROUTE } from '../../shared/vr/spatialWorkspaceTelemetryContractV1.mjs';
+import {
+  buildSpatialWorkspaceTelemetryLandingLinesV1,
+  projectSpatialWorkspaceTelemetryForConsumersV1,
+} from '../../shared/vr/spatialWorkspaceTelemetryProjectionV1.mjs';
 
 
 const CANON_MUSIC_TILE_ID = 'music-tile';
 const CANON_MUSIC_TILE_ENTRY = 'apps/music-tile/index.html';
 const MUSIC_TILE_ALIASES = new Set(['music', 'music tile', 'music-tile']);
+const SPATIAL_TELEMETRY_TILE_IDS = new Set(['spatial-bridge', 'vr-research-lab']);
+const SPATIAL_TELEMETRY_REFRESH_MS = 15_000;
+let spatialTelemetryLandingProjection = projectSpatialWorkspaceTelemetryForConsumersV1();
+let spatialTelemetryRefreshInFlight = null;
+let spatialTelemetryRefreshTimer = null;
+let spatialTelemetryLastRefreshMs = 0;
+let spatialTelemetryLifecycleGeneration = 0;
+let spatialTelemetryActive = false;
+
+function telemetryProjectId(project = {}) {
+  return String(project?.id || project?.folder || project?.name || '').trim().toLowerCase();
+}
+
+function spatialTelemetryLandingLines(project = {}) {
+  if (!SPATIAL_TELEMETRY_TILE_IDS.has(telemetryProjectId(project))) return null;
+  return buildSpatialWorkspaceTelemetryLandingLinesV1(spatialTelemetryLandingProjection);
+}
+
+async function refreshSpatialTelemetryLandingProjection(context, { force = false } = {}) {
+  if (!spatialTelemetryActive) return spatialTelemetryLandingProjection;
+  const now = Date.now();
+  if (!force && now - spatialTelemetryLastRefreshMs < SPATIAL_TELEMETRY_REFRESH_MS) {
+    return spatialTelemetryLandingProjection;
+  }
+  if (spatialTelemetryRefreshInFlight) return spatialTelemetryRefreshInFlight;
+
+  const generation = spatialTelemetryLifecycleGeneration;
+  const request = (async () => {
+    let nextProjection;
+    try {
+      const response = await requestStephanosBackend({
+        path: SPATIAL_WORKSPACE_TELEMETRY_FEED_ROUTE,
+        timeoutMs: 3500,
+      });
+      nextProjection = projectSpatialWorkspaceTelemetryForConsumersV1(response?.json || {});
+    } catch {
+      nextProjection = projectSpatialWorkspaceTelemetryForConsumersV1({
+        schemaVersion: 'stephanos.spatial-workspace-telemetry-feed.v1',
+        readOnly: true,
+        state: 'unavailable',
+      });
+    }
+
+    if (!spatialTelemetryActive || generation !== spatialTelemetryLifecycleGeneration) {
+      return spatialTelemetryLandingProjection;
+    }
+
+    spatialTelemetryLandingProjection = nextProjection;
+    spatialTelemetryLastRefreshMs = Date.now();
+    renderProjectRegistry(getRuntimeProjects(context), context);
+    return spatialTelemetryLandingProjection;
+  })();
+
+  spatialTelemetryRefreshInFlight = request;
+  try {
+    return await request;
+  } finally {
+    if (spatialTelemetryRefreshInFlight === request) spatialTelemetryRefreshInFlight = null;
+  }
+}
+
+function ensureSpatialTelemetryLandingRefresh(projects, context) {
+  if (!spatialTelemetryActive) return;
+  const hasSpatialConsumer = (Array.isArray(projects) ? projects : [])
+    .some((project) => SPATIAL_TELEMETRY_TILE_IDS.has(telemetryProjectId(project)));
+  if (!hasSpatialConsumer) return;
+
+  void refreshSpatialTelemetryLandingProjection(context);
+  if (!spatialTelemetryRefreshTimer && typeof globalThis.setInterval === 'function') {
+    spatialTelemetryRefreshTimer = globalThis.setInterval(() => {
+      void refreshSpatialTelemetryLandingProjection(context, { force: true });
+    }, SPATIAL_TELEMETRY_REFRESH_MS);
+  }
+}
 
 function isMusicTileProject(project) {
   const id = String(project?.id || project?.folder || project?.name || '').trim().toLowerCase();
@@ -175,7 +256,7 @@ function hardenProjectRegistryHitTargets(container) {
   });
 }
 
-function launchProject(project, context, trigger = {}) {
+export function launchProject(project, context, trigger = {}) {
   const projectId = String(project?.folder || project?.id || project?.name || '').trim().toLowerCase();
   const isStephanos = projectId === 'stephanos' || projectId === 'stephanos os';
   const isMusicTile = isMusicTileProject(project);
@@ -474,6 +555,7 @@ function createProjectRegistryRenderSignature(projects, options = {}) {
   return JSON.stringify({
     enableSecondaryStatusSurfaces: options?.enableSecondaryStatusSurfaces === true,
     cockpitProjection: buildCockpitProjection({ runtimeStatusModel: stephanosProject.runtimeStatusModel || {}, project: stephanosProject }),
+    spatialTelemetryLandingProjection,
     projects: renderState,
   });
 }
@@ -485,11 +567,16 @@ export function renderProjectRegistry(projects, context, options = {}) {
     return;
   }
 
-  const nextSignature = createProjectRegistryRenderSignature(projects, options);
+  const layout = prepareLauncherTileLayout(container, projects, () => renderProjectRegistry(projects, context, options));
+  if (layout.deferred) return;
+  const orderedProjects = layout.projects;
+  ensureSpatialTelemetryLandingRefresh(projects, context);
+  const nextSignature = JSON.stringify([createProjectRegistryRenderSignature(orderedProjects, options), layout.signature]);
   if (container.__commandDeckRenderSignature === nextSignature) {
     return;
   }
   container.__commandDeckRenderSignature = nextSignature;
+  layout.beforeRender();
   container.innerHTML = '';
   syncTileRegistrySnapshots(projects);
 
@@ -502,7 +589,7 @@ export function renderProjectRegistry(projects, context, options = {}) {
   const stephanosProjectForCockpit = (Array.isArray(projects) ? projects : []).map(normaliseProject).find((candidate) => isStephanosProject(candidate)) || {};
   const canonicalCockpitProjection = buildCockpitProjection({ runtimeStatusModel: stephanosProjectForCockpit.runtimeStatusModel || {}, project: stephanosProjectForCockpit });
 
-  projects.forEach((project) => {
+  orderedProjects.forEach((project) => {
     const safeProject = normaliseProject(project);
     const tile = document.createElement('div');
     const isStephanos = isStephanosProject(safeProject);
@@ -537,13 +624,18 @@ export function renderProjectRegistry(projects, context, options = {}) {
       ? `${runtimeSummary || ''}${runtimeSummary ? ' · ' : ''}${safeProject.runtimeStatusModel.preferredTarget}${forensicBoundary ? ` · forensic=${forensicBoundary}` : ''}`
       : `${runtimeSummary || ''}${forensicBoundary ? `${runtimeSummary ? ' · ' : ''}forensic=${forensicBoundary}` : ''}`;
     const musicLandingLines = safeProject.id === 'music-tile' ? buildMusicLandingSummaryLines() : null;
+    const spatialLandingLines = spatialTelemetryLandingLines(safeProject);
     const isCockpitShortcut = safeProject.id === 'cockpit' || String(safeProject.name || '').trim().toLowerCase() === 'cockpit';
     const runtimeDetail = isStephanos
       ? stephanosTruth?.summary || compatibilityRuntimeDetail
-      : (musicLandingLines ? musicLandingLines.join(' · ') : (isCockpitShortcut ? canonicalCockpitProjection.nextBestAction : compatibilityRuntimeDetail));
-    const launcherDescription = safeProject.id === 'music-tile'
-      ? buildMusicLandingSummaryLines()[0]
-      : (isCockpitShortcut ? 'Shortcut to the canonical expanded Stephanos cockpit pane.' : String(safeProject.launcherDescription || '').trim());
+      : (spatialLandingLines
+        ? spatialLandingLines.join(' · ')
+        : (musicLandingLines ? musicLandingLines.join(' · ') : (isCockpitShortcut ? canonicalCockpitProjection.nextBestAction : compatibilityRuntimeDetail)));
+    const launcherDescription = spatialLandingLines
+      ? spatialLandingLines[0]
+      : (safeProject.id === 'music-tile'
+        ? buildMusicLandingSummaryLines()[0]
+        : (isCockpitShortcut ? 'Shortcut to the canonical expanded Stephanos cockpit pane.' : String(safeProject.launcherDescription || '').trim()));
     const badgeMarkup = safeProject.launcherBadges.length > 0
       ? `<div class="app-tile-badges">${safeProject.launcherBadges.map((badge) => `<span class="app-tile-badge">${badge}</span>`).join('')}</div>`
       : '';
@@ -554,13 +646,15 @@ export function renderProjectRegistry(projects, context, options = {}) {
       ? `<div class="app-tile-issue">${safeProject.statusMessage || safeProject.validationIssues[0] || 'App status unavailable'}</div>`
       : stephanosTruth?.drift
         ? `<div class="app-tile-issue">${stephanosTruth.diagnosticLabel}</div><div class="app-tile-detail">${runtimeDetail}</div>`
-        : (musicLandingLines
-          ? `<div class="app-tile-detail">${musicLandingLines.slice(1).map((line) => `<div>${line}</div>`).join('')}</div>`
-          : isCockpitShortcut
-            ? `<div class="app-tile-detail">${renderCockpitSummaryMarkup(canonicalCockpitProjection)}</div>`
-            : runtimeDetail
-              ? `<div class="app-tile-detail">${runtimeDetail}</div>`
-              : '');
+        : (spatialLandingLines
+          ? `<div class="app-tile-detail">${spatialLandingLines.slice(1).map((line) => `<div>${line}</div>`).join('')}</div>`
+          : musicLandingLines
+            ? `<div class="app-tile-detail">${musicLandingLines.slice(1).map((line) => `<div>${line}</div>`).join('')}</div>`
+            : isCockpitShortcut
+              ? `<div class="app-tile-detail">${renderCockpitSummaryMarkup(canonicalCockpitProjection)}</div>`
+              : runtimeDetail
+                ? `<div class="app-tile-detail">${runtimeDetail}</div>`
+                : '');
 
     tile.innerHTML = `
       <div style="font-size:36px;">${safeProject.icon}</div>
@@ -579,13 +673,15 @@ export function renderProjectRegistry(projects, context, options = {}) {
         tile.classList.add('app-tile-pending-launchable');
       }
       tile.title = runtimeDetail || safeProject.statusMessage || safeProject.name;
-      tile.onclick = () => launchProject(safeProject, context, { type: 'user-click', origin: 'app-tile' });
     }
+
+    layout.decorateTile(tile, safeProject, blockLaunch ? null : () => launchProject(safeProject, context, { type: 'user-click', origin: 'app-tile' }));
 
     container.appendChild(tile);
   });
 
   hardenProjectRegistryHitTargets(container);
+  layout.afterRender();
 }
 
 export const moduleDefinition = {
@@ -603,6 +699,8 @@ let cleanupAppRepaired = null;
 let lastLoggedBuildStamp = null;
 
 export function init(context) {
+  spatialTelemetryLifecycleGeneration += 1;
+  spatialTelemetryActive = true;
   const initialProjects = getRuntimeProjects(context);
   renderProjectRegistry(initialProjects, context);
   const stephanos = initialProjects.map(normaliseProject).find((project) => String(project.name || '').toLowerCase().includes('stephanos'));
@@ -673,6 +771,14 @@ export function init(context) {
 }
 
 export function dispose() {
+  spatialTelemetryActive = false;
+  spatialTelemetryLifecycleGeneration += 1;
+  if (spatialTelemetryRefreshTimer) {
+    globalThis.clearInterval?.(spatialTelemetryRefreshTimer);
+    spatialTelemetryRefreshTimer = null;
+  }
+  spatialTelemetryRefreshInFlight = null;
+
   if (typeof cleanupSimulationStart === 'function') {
     cleanupSimulationStart();
     cleanupSimulationStart = null;

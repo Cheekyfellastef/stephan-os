@@ -1,0 +1,34 @@
+{
+  "source_id": "github-praydog-reframework",
+  "repository": "praydog/REFramework",
+  "canonical_url": "https://github.com/praydog/REFramework",
+  "default_branch": "master",
+  "snapshot_commit": "ec6c81fd39831b328027ae00e102bc9c9c3f8aa5",
+  "captured_on": "2026-07-29",
+  "licence": {
+    "classification": "MIT",
+    "copyright": "Copyright (c) 2019 praydog",
+    "ingestion_policy": "Reuse and copy are permitted with the copyright and permission notice preserved."
+  },
+  "source_role": "Shared RE Engine mod, scripting and VR framework reference",
+  "refresh_owner_issue": 1596,
+  "extraction_owner_issue": 1593,
+  "safe_acquisition": {
+    "metadata": true,
+    "public_repository_inspection": true,
+    "isolated_ephemeral_clone_for_analysis": true,
+    "selected_source_copy_with_attribution": true,
+    "binary_execution": false
+  },
+  "latest_observed": {
+    "date": "2026-10-03",
+    "commit": "d1461375aee4ec3f313170f8eaad12064eb542d9",
+    "commits_ahead_of_registered_snapshot": 19,
+    "status": "candidate-until-reviewed"
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "praydog-reframework-current",
+    "local_cache_allowed": true
+  }
+}

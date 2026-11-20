@@ -23,6 +23,8 @@ const ignitionReady = [
   { serviceId: 'shared-agent-workspace', status: 'READY' },
 ];
 
+const approvalReceipt = 'operator-approved-exact-head-0123456789abcdef0123456789abcdef01234567';
+
 test('contract ready', () => {
   const contract = buildMissionOrchestratorContract();
   assert.equal(contract.finalVerdict, 'MISSION_ORCHESTRATOR_CONTRACT_READY');
@@ -36,15 +38,28 @@ test('no intent waits', () => {
   assert.equal(snapshot.finalVerdict, 'MISSION_ORCHESTRATOR_WAITING_FOR_INTENT');
 });
 
-test('valid intent maps building platform loop to building mission', () => {
+test('valid intent maps approved building platform loop to building mission', () => {
+  const snapshot = createMissionOrchestrationSnapshot({
+    operatorIntent: 'Integrate the platform loop.',
+    serviceProbes: servicePass,
+    ignitionRoutes: ignitionReady,
+    approvalReceipt,
+    proofPassed: true,
+  });
+  assert.equal(snapshot.status, MISSION_ORCHESTRATOR_STATUS.BUILDING);
+  assert.equal(snapshot.platformLoop.queueItem.history.at(-1).toStatus, 'READY_FOR_MANUAL_DISPATCH');
+  assert.equal(snapshot.finalVerdict, 'MISSION_ORCHESTRATOR_ACTIVE');
+});
+
+test('valid intent without approval remains visibly approval-gated', () => {
   const snapshot = createMissionOrchestrationSnapshot({
     operatorIntent: 'Integrate the platform loop.',
     serviceProbes: servicePass,
     ignitionRoutes: ignitionReady,
     proofPassed: true,
   });
-  assert.equal(snapshot.status, MISSION_ORCHESTRATOR_STATUS.BUILDING);
-  assert.equal(snapshot.finalVerdict, 'MISSION_ORCHESTRATOR_ACTIVE');
+  assert.equal(snapshot.status, MISSION_ORCHESTRATOR_STATUS.WAITING_FOR_OPERATOR_APPROVAL);
+  assert.equal(snapshot.platformLoop.dispatcherDecision.decision, 'BLOCKED_BY_OPERATOR_APPROVAL');
 });
 
 test('blocked platform loop blocks mission', () => {
@@ -58,15 +73,18 @@ test('blocked platform loop blocks mission', () => {
   assert.equal(snapshot.nextAction.length > 0, true);
 });
 
-test('done platform loop marks mission done', () => {
+test('completed canonical queue marks mission done', () => {
   const snapshot = createMissionOrchestrationSnapshot({
     operatorIntent: 'Close completed mission.',
     serviceProbes: servicePass,
     ignitionRoutes: ignitionReady,
+    approvalReceipt,
     proofPassed: true,
     queueStatus: 'COMPLETE',
   });
-  assert.equal(snapshot.status === MISSION_ORCHESTRATOR_STATUS.DONE || snapshot.status === MISSION_ORCHESTRATOR_STATUS.BUILDING, true);
+  assert.equal(snapshot.platformLoop.queueItem.status, 'DONE');
+  assert.equal(snapshot.status, MISSION_ORCHESTRATOR_STATUS.DONE);
+  assert.equal(snapshot.finalVerdict, 'MISSION_ORCHESTRATOR_DONE');
 });
 
 test('validator blocks unsafe allowances', () => {
