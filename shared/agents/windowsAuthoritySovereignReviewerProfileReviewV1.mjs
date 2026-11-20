@@ -50,6 +50,11 @@ function exactLineage(lineage, sourceHead, baseSha) {
     && lineage.baseSha === baseSha
     && lineage.liveMainBeforeSha === baseSha
     && lineage.liveMainAfterSha === baseSha
+    // Parent identities must be well-formed and bound by the authenticated caller.
+    && Array.isArray(lineage.parents)
+    && lineage.parents.length >= 1 && lineage.parents.length <= 4
+    && lineage.parents.every(parent => SHA40.test(parent) && parent !== sourceHead)
+    && new Set(lineage.parents).size === lineage.parents.length
     && c?.status === 'ahead'
     && Number.isSafeInteger(c?.aheadBy) && c.aheadBy > 0
     && c?.behindBy === 0
@@ -77,17 +82,61 @@ function requireLiteral(findings, source, literal, code, path) {
 function forbid(findings, source, pattern, code, path) {
   if (pattern.test(source)) findings.push(finding(code, code, path));
 }
-function activePowerShell(source) {
-  return String(source).replace(/<#[\s\S]*?#>/g, '').split(/\r?\n/).map(line => {
-    let single=false,double=false;
-    for(let i=0;i<line.length;i+=1){
-      const ch=line[i], prev=i?line[i-1]:'';
-      if(ch==="'"&&!double){ if(single&&line[i+1]==="'"){i+=1;continue;} single=!single;continue; }
-      if(ch==='"'&&!single&&prev!=='`'){ double=!double;continue; }
-      if(ch==='#'&&!single&&!double) return line.slice(0,i);
+export function activePowerShell(source) {
+  // Strip comments only in code context: regex <#...#> can erase executable
+  // interpolation inside PowerShell expandable strings and here-strings.
+  const input = String(source);
+  let output = '';
+  let mode = 'code';
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i], next = input[i + 1];
+    if (mode === 'block-comment') {
+      if (ch === '#' && next === '>') {
+        output += '  '; i += 1; mode = 'code';
+      } else output += ch === '\r' || ch === '\n' ? ch : ' ';
+      continue;
     }
-    return line;
-  }).join('\n');
+    if (mode === 'line-comment') {
+      output += ch === '\r' || ch === '\n' ? ch : ' ';
+      if (ch === '\n') mode = 'code';
+      continue;
+    }
+    if (mode === 'single-quoted') {
+      output += ch;
+      if (ch === "'" && next === "'") { output += next; i += 1; }
+      else if (ch === "'") mode = 'code';
+      continue;
+    }
+    if (mode === 'double-quoted') {
+      output += ch;
+      if (ch.charCodeAt(0) === 96 && next !== undefined) { output += next; i += 1; }
+      else if (ch === '"') mode = 'code';
+      continue;
+    }
+    if (mode === 'single-here' || mode === 'double-here') {
+      output += ch;
+      const close = mode === 'single-here' ? "'" : '"';
+      if (ch === close && next === '@' && (i === 0 || input[i - 1] === '\n')) {
+        output += next; i += 1; mode = 'code';
+      }
+      continue;
+    }
+    if (ch === '<' && next === '#') {
+      output += '  '; i += 1; mode = 'block-comment'; continue;
+    }
+    if (ch === '#') { output += ' '; mode = 'line-comment'; continue; }
+    if (ch === '@' && (next === '"' || next === "'")
+      && (input[i + 2] === '\n' || (input[i + 2] === '\r' && input[i + 3] === '\n'))) {
+      output += ch + next; i += 1;
+      mode = next === '"' ? 'double-here' : 'single-here';
+      continue;
+    }
+    if (ch === '"') { output += ch; mode = 'double-quoted'; continue; }
+    if (ch === "'") { output += ch; mode = 'single-quoted'; continue; }
+    if (ch.charCodeAt(0) === 96 && next !== undefined) { output += ch + next; i += 1; continue; }
+    output += ch;
+  }
+  return output;
 }
 function reviewHost(source, path, findings) {
   for (const [literal, code] of [
