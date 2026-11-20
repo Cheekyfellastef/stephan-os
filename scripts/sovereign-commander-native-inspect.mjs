@@ -16,6 +16,7 @@ import { projectMaintenanceCustodyVisibilityV1 } from '../shared/agents/maintena
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import { SOVEREIGN_CONTROL_SYSTEM_INSPECTION_SCHEMA_V1,
   SOVEREIGN_CONTROL_SYSTEM_PROTOCOL_PREDICATES_V1,
+  sovereignControlSystemOwnerDiagnosticCodeV1,
   sovereignControlSystemGovernorHoldCodeV1,
   sovereignControlSystemGovernorObservationCodeV1,
   sovereignControlSystemDiagnosticCodeV1 } from '../shared/agents/sovereignControlSystemStatusV1.mjs';
@@ -460,7 +461,14 @@ export async function inspectSovereignControlSystemV1(options = {}) {
 
     const observeOwner = async () => {
       try { return { ok: true, value: validOwner(await deps.readOwner(), Date.parse(instant(deps.now))) }; }
-      catch (error) { return { ok: false, reason: diagnosticCode(error, 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN') }; }
+      catch (error) {
+        const reason = diagnosticCode(error, 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN');
+        const detail = reason === 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN' && error && typeof error === 'object'
+          ? Object.getOwnPropertyDescriptor(error, 'diagnosticCode') : undefined;
+        return { ok: false, reason,
+          ...(detail && Object.hasOwn(detail, 'value')
+            ? { diagnosticCode: sovereignControlSystemOwnerDiagnosticCodeV1(detail.value) } : {}) };
+      }
     };
     const before = await observeOwner();
     let health, healthTime, healthReason = '';
@@ -474,10 +482,12 @@ export async function inspectSovereignControlSystemV1(options = {}) {
     const after = await observeOwner();
     const same = before.ok && after.ok && ['pid', 'createdAtUtc', 'commandSha256', 'imageSha256']
       .every(key => before.value[key] === after.value[key]);
+    const ownerFailure = !before.ok ? before : !after.ok ? after : undefined;
     report.owner = { available: before.ok && after.ok, stable: same,
       reason: same ? '' : before.ok && after.ok ? 'SOVEREIGN_CONTROL_SYSTEM_OWNER_CHANGED'
         : before.reason || after.reason || 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN',
       ...(after.ok ? { observedAtUtc: after.value.observedAtUtc } : {}),
+      ...(ownerFailure?.diagnosticCode ? { diagnosticCode: ownerFailure.diagnosticCode } : {}),
       before, after };
     if (same && protocolRead.status === 'fulfilled') {
       report.protocol = protocolObservation(protocolRead.value.exchange, protocolRead.value.observedAtUtc);
@@ -530,6 +540,7 @@ export async function inspectSovereignControlSystemV1(options = {}) {
     catch { report.source.stable = false; }
     if (!report.source.stable) {
       report.source.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED';
+      delete report.owner.diagnosticCode;
       report.protocol = { available: false, matches: false, reason: report.source.reason };
       report.nativeRuntime.qualificationObserved = false;
       report.nativeRuntime.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED';
