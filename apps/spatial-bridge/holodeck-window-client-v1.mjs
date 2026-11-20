@@ -316,6 +316,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
         // Retain editor-key eligibility only after an explicitly confirmed
         // text outcome. Unknown or newly introduced helper replies must not
         // flush a previously queued Enter against a possibly changed draft.
+        if(result.status==='surface-frame-stale'){queue=[];editorClickConfirmed=false;}
         if(input.kind==='key'||(input.kind==='text'&&
           !['editor-value-readback','editor-value-unchanged'].includes(result.status))||
           ['app-control-invoked','app-control-outcome-unverified','input-rejected'].includes(result.status)){
@@ -336,6 +337,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
           'app-control-outcome-unverified':'The app control may have acted already. Inspect it before any retry; no second click was sent.',
           'editor-key-focus-unverified':'The selected editor has not established keyboard focus. Use the app’s explicit button rather than Enter.',
           'input-posted':'Windows queued the pointer/key event, but the app has not confirmed it.',
+          'surface-frame-stale':'The original app changed after this holographic picture. Input was refused; wait for its updated image.',
           'input-rejected':'That input was not accepted. The selected app did not confirm that input.'
         }[result.status]??'The selected app did not confirm that input. Click a valid target or wait for a fresh picture.')}))return;
       }
@@ -397,7 +399,9 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       queue=[];
       editorClickConfirmed=false;
     }
-    queue.push({...value,generation});publish({inputStatus:'Sending input to the selected app.'});return true;
+    // Bind every operator action to the exact native picture shown on the hologram.
+    // The native helper rejects it if the app has repainted since this frame.
+    queue.push({...value,generation,serial});publish({inputStatus:'Sending input to the selected app.'});return true;
   }
   return {discover,connect,shareScreen,stop,input,probeHelper,getState:()=>({...state}),
     getFrame:()=>capture?.phase==='live'&&capture.frame?.naturalWidth>0&&capture.frame?.naturalHeight>0?capture.frame:state.status==='live'?image:null,

@@ -18,6 +18,10 @@ test('surface input is bounded operator input, rejecting commands, control bytes
     {kind:'key',key:'Alt+F4'},{kind:'click',x:NaN,y:0},{kind:'click',x:1.1,y:0},{kind:'scroll',x:0,y:0,delta:999},
     {kind:'text',text:'x',windowId:44}])assert.equal(valid({...base,...input}),false);
   assert.equal(valid({kind:'text',text:'x',generation:1,sequence:0}),false);
+  assert.equal(valid({...base,kind:'click',x:.5,y:.5,serial:7}),true);
+  for(const serial of [-1,0,1.5,NaN,'7'])
+    assert.equal(valid({...base,kind:'click',x:.5,y:.5,serial}),false);
+  assert.equal(valid({...base,kind:'click',x:.5,y:.5,serial:7,command:'x'}),false);
 });
 
 test('display hit coordinates preserve source aspect and reject letterbox areas at any zoom',()=>{
@@ -82,6 +86,10 @@ test('local desktop host rejects other origins, forged windows, replay and expir
     assert.equal((await send('/input',input,token)).body.status,'input-posted');
     assert.equal((await send('/input',input,token)).code,400);
     assert.equal(calls.filter(c=>c.op==='input').length,1);
+    const painted={kind:'scroll',x:.5,y:.5,delta:120,sequence:2,generation:1,serial:9};
+    assert.equal((await send('/input',painted,token)).body.status,'input-posted');
+    assert.equal(calls.filter(c=>c.op==='input').at(-1).serial,9,
+      'local host passes the pictured-frame serial through without upgrading authority');
     time+=90001;assert.equal((await send('/frame',{},token)).code,403);
     await send('/session');assert.ok(stops>=2);
   }finally{await new Promise(resolve=>server.close(resolve));}
@@ -120,6 +128,8 @@ test('native editable-target source refuses readonly documents, uncertain replay
   assert.match(source,/FAILED\(accessibility->put_TransactionTimeout\(1500\)\)/);
   assert.match(source,/return Reply\(SUCCEEDED\(result\)\?L"app-control-invoked":L"app-control-outcome-unverified"\)/);
   assert.match(source,/if\(editorKeyboardFocusUnverified\)return Reply\(L"editor-key-focus-unverified"\)/);
+  assert.match(source,/command\.HasKey\(L"serial"\).*command\.GetNamedNumber\(L"serial",-1\)/,
+    'native input must compare the client painted serial before any mutation');
   assert.match(source,/editorKeyboardFocusUnverified=true/);
   assert.match(source,/if\(!attempted\)return Reply\(L"editor-update-not-started"\)/);
   assert.doesNotMatch(source,/if\(FAILED\(changed\)\)return Reply\(L"editor-update-refused"\)/);

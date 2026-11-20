@@ -249,6 +249,8 @@ test('input feedback retains rejection while live and is superseded by waiting, 
   });
   await h.client.discover();await h.client.connect(windowOne.id);await h.tick();
   h.client.input({kind:'click',x:.5,y:.5});await h.tick();assert.match(h.client.getState().inputStatus,/Windows queued.*not confirmed/);
+  assert.equal(h.calls.filter(call=>call.path==='/input').at(-1).body.serial,1,
+    'native click must use the precise serial of the last accepted holographic image');
   rejectInput=true;h.client.input({kind:'click',x:.5,y:.5});await h.tick();assert.match(h.client.getState().inputStatus,/did not confirm that input/);
   await h.tick();assert.match(h.client.getState().inputStatus,/did not confirm that input/);
   frameStatus='waiting';await h.tick();assert.match(h.client.getState().inputStatus,/Input paused/);

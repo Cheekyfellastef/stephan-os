@@ -324,6 +324,10 @@ struct Surface : std::enable_shared_from_this<Surface> {
     RefreshPopup();
     std::lock_guard lock(mutex);
     if(closed||!TargetValid()||IsIconic(target)||jpeg.empty()||command.GetNamedNumber(L"generation",-1)!=generation)throw std::runtime_error("Surface changed; refresh before input");
+    // An app can redraw a different control at the same coordinate without
+    // changing its popup or generation. Never activate a stale picture target.
+    if(command.HasKey(L"serial")&&command.GetNamedNumber(L"serial",-1)!=static_cast<double>(serial))
+      return Reply(L"surface-frame-stale");
     RECT current{};check_hresult(DwmGetWindowAttribute(target,DWMWA_EXTENDED_FRAME_BOUNDS,&current,sizeof(current)));
     if(memcmp(&bounds,&current,sizeof(current))!=0)throw std::runtime_error("Window moved; refresh before input");
     auto kind=command.GetNamedString(L"kind",L"");
