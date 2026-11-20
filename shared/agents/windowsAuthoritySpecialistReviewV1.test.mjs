@@ -789,6 +789,6 @@ test('specialist entry refuses accessor-backed or inherited root review evidence
   });
   const rejectedSymbol = analyzeWindowsAuthoritySpecialistReview(symbolInput);
   assert.equal(symbolCalls, 0, 'symbol accessor must never execute');
-  assert.equal(rejectedSymbol.clean, false);
-  assert.deepEqual(rejectedSymbol.proofRefs, []);
+  assert.equal(rejectedSymbol.eligible, true, 'unread unrelated symbol accessor must preserve normal route');
+  assert.equal(symbolCalls, 0, 'irrelevant symbol getter must not execute');
 });

@@ -375,16 +375,17 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
       finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_PROXY',
     });
   }
-  // Child specialists are allowed to inspect root review fields. An own or
-  // inherited accessor at that boundary is executable evidence, not data.
-  // Inspect the ordinary root's descriptors before dispatching ANY child.
-  // The previous Proxy guard must stay first so no Proxy traps are invoked.
+  // Validate the actual root review identity fields before child dispatch.
+  // Unrelated extension accessors are not read by the existing router and
+  // must not invalidate otherwise literal, independently pinned P0 evidence.
+  // Keep the Proxy guard first so no Proxy trap can run.
   const rootPrototype = input && typeof input === 'object' ? Object.getPrototypeOf(input) : undefined;
+  const rootIdentityFields = ['repository', 'prNumber', 'branch', 'sourceHead', 'analysis', 'sources'];
   const literalRoot = input && typeof input === 'object' && !Array.isArray(input)
     && (rootPrototype === Object.prototype || rootPrototype === null)
-    && Reflect.ownKeys(input).every((key) => {
+    && rootIdentityFields.every((key) => {
       const field = Object.getOwnPropertyDescriptor(input, key);
-      return field && Object.hasOwn(field, 'value');
+      return !field || Object.hasOwn(field, 'value');
     });
   if (!literalRoot) {
     return Object.freeze({
