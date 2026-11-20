@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { types } from 'node:util';
 
 const BASE_PATH = './windowsAuthoritySpecialistReviewV1Base.mjs';
 const LEGACY_ROUTER_PATH = './windowsAuthoritySpecialistReviewV1LegacyRouter.mjs';
@@ -153,6 +154,9 @@ function inertCompositeField(value, key) {
   // the specialist route; strict own-field checks still decide admission.
   let cursor = value;
   while (cursor !== null && (typeof cursor === 'object' || typeof cursor === 'function')) {
+    // Descriptor and prototype operations on a Proxy can execute hostile traps.
+    // Stop before touching a Proxy, including one in a plain object's prototype chain.
+    if (types.isProxy(cursor)) return undefined;
     const slot = Object.getOwnPropertyDescriptor(cursor, key);
     if (slot) return Object.hasOwn(slot, 'value') ? slot.value : undefined;
     cursor = Object.getPrototypeOf(cursor);
@@ -162,7 +166,7 @@ function inertCompositeField(value, key) {
 
 function inertTwoP0CompositeFindings(analysis, expected) {
   const findings = inertCompositeField(analysis, 'findings');
-  if (!Array.isArray(findings) || findings.length !== 2) return null;
+  if (types.isProxy(findings) || !Array.isArray(findings) || findings.length !== 2) return null;
   // Two adjacent accessors cannot create a trusted two-P0 candidate.
   const entries = [inertCompositeField(findings, '0'), inertCompositeField(findings, '1')];
   const identities = entries.map((item) => ({
@@ -235,7 +239,7 @@ function literalCompositeFinding(findings, path) {
  */
 function ownCompositeReviewData(value, keys) {
   // Accessor-backed claims are executable, not literal review evidence.
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+  return Boolean(value && typeof value === 'object' && !types.isProxy(value) && !Array.isArray(value)
     && keys.every((key) => {
       const slot = Object.getOwnPropertyDescriptor(value, key);
       return slot && Object.hasOwn(slot, 'value');
@@ -245,14 +249,14 @@ function ownCompositeReviewData(value, keys) {
 function exactTwoP0CompositeEnvelope(analysis) {
   // Refuse inherited or getter-backed P0 evidence before reading its values.
   if (!ownCompositeReviewData(analysis, ['findings', 'counts', 'verdict'])
-    || ('clean' in analysis && !ownCompositeReviewData(analysis, ['clean']))) return false;
+    || (Object.hasOwn(analysis, 'clean') && !ownCompositeReviewData(analysis, ['clean']))) return false;
   const counts = analysis.counts;
   return ownCompositeReviewData(counts, ['P0', 'P1', 'P2'])
     && Object.keys(counts).length === 3
     && counts.P0 === 2
     && counts.P1 === 0
     && counts.P2 === 0
-    && (!('clean' in analysis) || analysis.clean === false)
+    && (!Object.hasOwn(analysis, 'clean') || analysis.clean === false)
     && analysis.verdict === 'findings';
 }
 
@@ -260,7 +264,7 @@ function exactTwoP0CompositeEnvelope(analysis) {
 // This is reviewer-only source classification; it grants no game/runtime action.
 function exactCompositeFindingScalars(findings) {
   // Array index accessors are executable too; inspect descriptors first.
-  return Array.isArray(findings) && findings.length === 2 && [0, 1].every((index) => {
+  return !types.isProxy(findings) && Array.isArray(findings) && findings.length === 2 && [0, 1].every((index) => {
     const slot = Object.getOwnPropertyDescriptor(findings, String(index));
     const item = slot && Object.hasOwn(slot, 'value') ? slot.value : null;
     return ownCompositeReviewData(item, ['severity', 'code', 'path'])

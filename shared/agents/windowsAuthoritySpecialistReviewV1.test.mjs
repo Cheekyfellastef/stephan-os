@@ -573,6 +573,57 @@ test('composite review refuses contradictory typed counts and verdict before del
         assert.deepEqual(denied.proofRefs, []);
       }
     }
+    // Descriptor-only routing must not invoke Proxy traps, including proxies
+    // nested in findings/counts, a prototype link, or revoked Proxy objects.
+    // Cover both existing Starfield composite partner routes without new lanes.
+    for (const kind of ['finding-0', 'finding-1', 'counts', 'prototype',
+      'revoked-finding', 'revoked-counts']) {
+      let trapCalls = 0;
+      const findings = analysis.findings.map((entry) => ({ ...entry }));
+      let counts = { ...analysis.counts };
+      const hostile = (target) => new Proxy(target, {
+        getOwnPropertyDescriptor(object, key) {
+          trapCalls++;
+          return Reflect.getOwnPropertyDescriptor(object, key);
+        },
+        getPrototypeOf(object) {
+          trapCalls++;
+          return Reflect.getPrototypeOf(object);
+        },
+        get(object, key, receiver) {
+          trapCalls++;
+          return Reflect.get(object, key, receiver);
+        },
+        has(object, key) {
+          trapCalls++;
+          return Reflect.has(object, key);
+        },
+      });
+      if (kind === 'finding-0' || kind === 'finding-1') {
+        const index = Number(kind.at(-1));
+        findings[index] = hostile(findings[index]);
+      } else if (kind === 'counts') {
+        counts = hostile(counts);
+      } else if (kind === 'prototype') {
+        delete findings[0].path;
+        Object.setPrototypeOf(findings[0], hostile({ path: paths[0] }));
+      } else if (kind === 'revoked-finding') {
+        const revoked = Proxy.revocable(findings[0], {});
+        revoked.revoke();
+        findings[0] = revoked.proxy;
+      } else if (kind === 'revoked-counts') {
+        const revoked = Proxy.revocable(counts, {});
+        revoked.revoke();
+        counts = revoked.proxy;
+      }
+      const denied = review({ findings, counts });
+      assert.equal(trapCalls, 0, kind + ' must not execute a Proxy trap');
+      assert.equal(denied.eligible, true, kind + ' must be explicitly classified');
+      assert.equal(denied.clean, false, kind + ' must not qualify clean review');
+      assert.deepEqual(denied.proofRefs, [], kind + ' must not create positive proof');
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID', kind);
+    }
+
     // Getter-backed array indices are also executable, not wire findings.
     for (const index of [0, 1]) {
       const forgedFindings = analysis.findings.map((entry) => ({ ...entry }));
