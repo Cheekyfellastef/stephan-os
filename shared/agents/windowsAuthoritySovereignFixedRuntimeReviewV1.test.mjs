@@ -341,3 +341,38 @@ for (const [name, path, before, after, code] of [
   assert.ok(!result.proofRefs.some(ref => ref.includes(path)));
   noAuthority(result);
 });
+
+test('routes only the exact #3551 three-path continuation with pinned sources and no new authority', async () => {
+  const { analyzeWindowsAuthoritySpecialistReview,
+    WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_PATHS_V1: routedLegacyPaths,
+  } = await import('./windowsAuthoritySpecialistReviewV1.mjs');
+  const row = input();
+  const paths = WINDOWS_AUTHORITY_SOVEREIGN_FIXED_RUNTIME_3551_PATHS_V1;
+  row.prNumber = 3551;
+  row.branch = 'fix/2961-fixed-runtime-closure-relay-proof-20261031';
+  row.analysis = { findings: paths.map(path => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+    counts: { P0: 3, P1: 0, P2: 0 } };
+  row.sources = await Promise.all(paths.map(async path => {
+    const name = path.slice(path.lastIndexOf('/') + 1);
+    const content = await readFile(new URL(`../../tests/fixtures/windows-authority-sovereign-fixed-runtime/3551/${name}.txt`, import.meta.url), 'utf8');
+    return { schemaVersion: 'stephanos.windows-authority-source.v1', repository: row.repository,
+      path, ref: HEAD, exists: true, size: Buffer.byteLength(content, 'utf8'), blobSha: gitBlob(content), content };
+  }));
+  const result = analyzeWindowsAuthoritySpecialistReview(row);
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.deepEqual(result.reviewedPaths, paths);
+  assert.equal(result.proofRefs.length, 3);
+  for (const key of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+    assert.equal(result[key], false, key);
+  }
+  assert.deepEqual(routedLegacyPaths, paths.slice(0, 2));
+  for (const prNumber of [3363, 3554]) {
+    assert.equal(analyzeWindowsAuthoritySpecialistReview({ ...row, prNumber }).eligible, false);
+  }
+  assert.equal(analyzeWindowsAuthoritySpecialistReview({ ...row, branch: 'fix/unrelated' }).eligible, false);
+  const missing = analyzeWindowsAuthoritySpecialistReview({ ...row, sources: row.sources.slice(0, 2) });
+  assert.equal(missing.eligible, true);
+  assert.equal(missing.clean, false);
+  assert.ok(missing.findings.some(f => f.code === 'fixed-runtime-specialist-exact-source-not-pinned' && f.path.endsWith('SovereignMobileInstallReleaseV1.cs')));
+});
