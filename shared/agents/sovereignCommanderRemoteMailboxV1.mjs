@@ -5246,8 +5246,26 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && (shape.command.remoteAction !== 'reconcile-remote-commander-parity'
       || projection.capabilityParity?.canonicalOwnerGoal === '#2573');
   if (!proofComplete) {
+    // Closed diagnostic only: exact execution proof still fails. The GitHub
+    // byte-budget compressor retains finalVerdict but can omit executionBlocker.
+    // Both carry the same fixed non-secret reason, never native stdout/stderr.
+    const receiptFailure = projection.processId && projection.processId !== shape.command.remoteAction
+      ? 'COMMANDER_ACTION_PROCESS_ID_MISMATCH'
+      : projection.ok !== true || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+        ? 'COMMANDER_ACTION_COMPLETION_UNVERIFIED'
+        : !PROOF_HASH_PATTERN.test(projection.proofHash)
+          ? 'COMMANDER_ACTION_PROOF_HASH_MISSING'
+          : !projection.processId
+            ? 'COMMANDER_ACTION_PROCESS_ID_UNVERIFIED'
+            : !Number.isSafeInteger(projection.status)
+              ? 'COMMANDER_ACTION_EXIT_UNVERIFIED'
+              : projection.status !== 0
+                ? 'COMMANDER_ACTION_NATIVE_EXIT_NONZERO'
+                : 'COMMANDER_ACTION_TYPED_PROOF_UNVERIFIED';
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
       remoteAction: shape.command.remoteAction,
+      finalVerdict: receiptFailure,
+      executionBlocker: receiptFailure,
       proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
       processIdMatch: projection.processId === shape.command.remoteAction,
       successfulStatus: projection.status === 0,

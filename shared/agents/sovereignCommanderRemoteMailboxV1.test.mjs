@@ -2291,11 +2291,12 @@ test('maintenance receipt must contain exact completion proof', async () => {
     command: { plan: { processId: 'battle-bridge-status' } },
     structuredContent: { ok: true, status: 0, errorCode: '' },
   };
-  for (const maintenance of [
-    { ...baseline, finalVerdict: 'SOMETHING_ELSE' },
-    { ...baseline, proofHash: 'bad' },
-    { ...baseline, command: { plan: { processId: 'other-action' } } },
-    { ...baseline, structuredContent: { ok: false, status: 1, errorCode: 'FAILED' } },
+  for (const [maintenance, expectedFailure] of [
+    [{ ...baseline, finalVerdict: 'SOMETHING_ELSE' }, 'COMMANDER_ACTION_COMPLETION_UNVERIFIED'],
+    [{ ...baseline, proofHash: 'bad' }, 'COMMANDER_ACTION_PROOF_HASH_MISSING'],
+    [{ ...baseline, command: { plan: { processId: 'other-action' } } }, 'COMMANDER_ACTION_PROCESS_ID_MISMATCH'],
+    [{ ...baseline, structuredContent: { ok: false, status: 1, errorCode: 'FAILED' } }, 'COMMANDER_ACTION_NATIVE_EXIT_NONZERO'],
+    [{ ...baseline, structuredContent: { ok: true, status: null, errorCode: '' } }, 'COMMANDER_ACTION_EXIT_UNVERIFIED'],
   ]) {
     const { fetchFn } = mcpFetch({ maintenance });
     const result = await executeSovereignCommanderRemoteOnBattleBridge(
@@ -2309,6 +2310,28 @@ test('maintenance receipt must contain exact completion proof', async () => {
     );
     assert.equal(result.ok, false);
     assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+    assert.equal(result.finalVerdict, expectedFailure);
+    assert.equal(result.executionBlocker, expectedFailure);
+    assert.equal(result.publicReceiptSafe, true);
+    assert.equal(result.secretMaterialReturned, false);
+    const receipt = {
+      schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+      requestId: 'commander-proof-failure-typed-v1', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest,
+      branch: 'main', expectedHead: HEAD, processSourceHead: HEAD,
+      state: 'BLOCKED', blocker: result.blocker,
+      result: { ok: false, verdict: result.verdict, operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+        requestId: 'commander-proof-failure-typed-v1', result: {
+          ...result, stdout: 'PRIVATE_NATIVE_COMMAND_OUTPUT',
+          codexLastMessage: 'PRIVATE_NATIVE_COMMAND_OUTPUT'.repeat(300),
+        } },
+    };
+    const compact = JSON.parse(serializeBoundedReceiptJson(receipt, 6 * 1024));
+    assert.equal(compact.result.result.finalVerdict, expectedFailure,
+      'bounded public receipt must retain the failure discriminator');
+    assert.equal(compact.result.result.blocker, result.blocker);
+    assert.equal(compact.result.result.ok, false);
+    assert.doesNotMatch(JSON.stringify(compact), /PRIVATE_NATIVE_COMMAND_OUTPUT/);
   }
 });
 
