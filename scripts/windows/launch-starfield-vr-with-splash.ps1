@@ -623,7 +623,7 @@ function Invoke-MonitorWaitingGameFocus {
     if ($monitorState.Mode -cne 'waiting' -or $monitorState.Busy -or -not $monitorState.Process -or
         -not $monitorState.GameProcess -or -not $monitorState.RunId -or
         $monitorState.FocusAttemptedRunId -cne $monitorState.RunId -or
-        $processState.CloseRequested -or $monitorState.FocusAttemptCount -ge 8) {
+        $processState.CloseRequested -or $monitorState.TransportFailed -or $monitorState.FocusAttemptCount -ge 8) {
         $focusRetryTimer.Stop()
         return
     }
@@ -683,6 +683,8 @@ function Stop-MonitorTransport {
     param([string]$Reason)
     if ($monitorState.TransportFailed) { return }
     $monitorState.TransportFailed = $true
+    # A broken transport must not continue bringing the game forward from a pending retry timer.
+    $focusRetryTimer.Stop()
     $monitorState.Busy = $false
     $monitorState.AllowedActions = @()
     if ($monitorState.PrepareDispatched) {
