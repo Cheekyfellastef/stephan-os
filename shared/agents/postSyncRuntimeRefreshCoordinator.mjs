@@ -100,6 +100,7 @@ const SAFE_RELATIVE_PATH = /^[A-Za-z0-9._@+()\-][A-Za-z0-9._@+()\-/ ]{0,500}$/;
 const CANONICAL_WORKER_WATCHDOG_PROBE_PATH = 'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1';
 const REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH = 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs';
 const MISSION_WORKER_POST_SYNC_COORDINATOR_PATH = 'scripts/battle-bridge-post-sync-refresh.mjs';
+const NATIVE_CAPACITY_PUBLISHER_ENTRY_PATH = 'scripts/stephanos-native-capacity-publisher.mjs';
 const GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH = 'scripts/battle-bridge-goal-discovery-heartbeat.mjs';
 const REQUIRED_LOCAL_LAUNCHER_PATH = 'windows/Launch-Stephanos-Local.ps1';
 // Fresh invocation owns this complete guarded chain; no resident process is
@@ -222,6 +223,9 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 ]);
 
 const NATURAL_EXACT = new Set([
+  // Manual guarded fresh invocation only; source adoption never retargets an
+  // installed shortcut or claims installation/startup acceptance.
+  'scripts/windows/retarget-stephanos-local-shortcut.ps1',
   ...STARFIELD_NATIVE_BUILD_ACTIVATION.freshCapture,
   // The fixed Caravan bridge rereads and hash-checks this read-only probe in
   // a fresh bounded child. Adoption checks source only; it invokes no probe,
@@ -317,6 +321,10 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
   'scripts/stephanos-codex-dispatch-mcp.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
+  // This resident publisher owns its head fence, withdrawal and exit-75
+  // reload through the existing fixed task bootstrap. Adopt source only;
+  // never start/install it or infer a freshly signed native capacity.
+  NATIVE_CAPACITY_PUBLISHER_ENTRY_PATH,
   'scripts/battle-bridge-shared-workspace-publisher.mjs',
   'scripts/battle-bridge-outbound-health-beacon-core.mjs',
   'scripts/battle-bridge-outbound-health-beacon.mjs',
@@ -586,6 +594,12 @@ export function parseGitChangedPathStatus(stdout) {
       : /^R[0-9]*$/.test(status) && parts[0] === REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH;
     if (removesRequiredMailboxWrapper) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_MAILBOX_WRAPPER_REMOVED', paths: Object.freeze([]) });
+    }
+    const removesNativePublisher = status === 'D'
+      ? parts[0] === NATIVE_CAPACITY_PUBLISHER_ENTRY_PATH
+      : /^R[0-9]*$/.test(status) && parts[0] === NATIVE_CAPACITY_PUBLISHER_ENTRY_PATH;
+    if (removesNativePublisher) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_NATIVE_CAPACITY_PUBLISHER_REMOVED', paths: Object.freeze([]) });
     }
     const removesRequiredLocalLauncher = status === 'D'
       ? LOCAL_LAUNCHER_FRESH_ENTRY_PATHS.includes(parts[0])
@@ -1381,7 +1395,10 @@ function ignitionArray(value) {
 }
 
 export function projectPostSyncRemainingIgnitionObligationsV1(value, expectedHead) {
-  const record = projectIgnitionInertEvidenceV1(value);
+  return projectPostSyncRemainingIgnitionObligationsFromInertV1(projectIgnitionInertEvidenceV1(value), expectedHead);
+}
+
+function projectPostSyncRemainingIgnitionObligationsFromInertV1(record, expectedHead) {
   if (!record || typeof expectedHead !== 'string' || !/^[a-f0-9]{40}$/.test(expectedHead)
     || ![POST_SYNC_REFRESH_SCHEMA, 'shared-agent-workspace-record.v1'].includes(record.schemaVersion)
     || (record.schemaVersion === 'shared-agent-workspace-record.v1'
@@ -1434,6 +1451,47 @@ export function projectPostSyncRemainingIgnitionObligationsV1(value, expectedHea
   if (record.unsafePathCount) remaining.push('unsafe-path');
   return Object.freeze({ schemaVersion: IGNITION_REFRESH_OBLIGATION_SCHEMA_V1, sourceHead: expectedHead,
     remaining: Object.freeze(remaining) });
+}
+
+export const THREE_APP_DESKTOP_STARTUP_SCOPE_V1 = 'THREE_APP_DESKTOP_STARTUP';
+export const THREE_APP_DESKTOP_STARTUP_ADMISSION_SCHEMA_V1 = 'stephanos.three-app-desktop-startup-admission.v1';
+const THREE_APP_DESKTOP_OPTIONAL_OBLIGATIONS_V1 = Object.freeze(['spatial-resident', 'desktop-plugin-host']);
+
+// This is permission to enter the existing guarded ordinary startup only.
+// The original residual graph and native commissioning debt remain unchanged;
+// neither a caller optional-ID list nor a new execution/qualification flag exists.
+export function projectThreeAppDesktopStartupAdmissionV1(value, expectedHead) {
+  const record = projectIgnitionInertEvidenceV1(value);
+  const global = projectPostSyncRemainingIgnitionObligationsFromInertV1(record, expectedHead);
+  if (!global || (Object.hasOwn(record, 'sourceHead') && record.sourceHead !== expectedHead)
+    || (Object.hasOwn(record, 'publication') && record.publication?.ok !== true)) return null;
+  const globalRemaining = global.remaining;
+  const optionalRemaining = Object.freeze(globalRemaining.filter(id => THREE_APP_DESKTOP_OPTIONAL_OBLIGATIONS_V1.includes(id)));
+  const mandatoryRemaining = Object.freeze(globalRemaining.filter(id => !THREE_APP_DESKTOP_OPTIONAL_OBLIGATIONS_V1.includes(id)));
+  const complete = globalRemaining.length === 0 && inspectPostSyncRefreshCompletion(record).ok === true;
+  // A clean-looking residual set cannot erase an unrelated failure, a plan or
+  // checkpoint, or failed publication. These are the actual terminal branches
+  // after every managed target and the OpenClaw approval gate have completed.
+  const optionalTerminal = optionalRemaining.length > 0 && record.phase === 'blocked'
+    && record.finalVerdict === 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' && record.exactHeadProofOk === false
+    && record.safeRefreshesCompleted === true
+    && (record.pluginHostActivationRequired
+      ? record.classification === POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED
+        && record.blocker === 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN'
+      : record.classification === POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_SPATIAL_ADOPTION_REQUIRED
+        && record.blocker === 'SPATIAL_RESIDENT_ADOPTION_UNPROVEN');
+  if (!complete && !optionalTerminal) return null;
+  return Object.freeze({
+    schemaVersion: THREE_APP_DESKTOP_STARTUP_ADMISSION_SCHEMA_V1,
+    scope: THREE_APP_DESKTOP_STARTUP_SCOPE_V1,
+    sourceHead: expectedHead,
+    admitted: mandatoryRemaining.length === 0,
+    globalRemaining,
+    mandatoryRemaining,
+    optionalRemaining,
+    globalRefreshState: complete ? 'COMPLETE' : 'HELD',
+    nativeCommissioningState: optionalRemaining.length ? 'HELD_UNPROVEN' : 'NO_RECORDED_OPTIONAL_OBLIGATION',
+  });
 }
 
 // The wrapper supplies actual published canonical records and the bounded

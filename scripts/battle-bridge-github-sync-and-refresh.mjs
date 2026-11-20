@@ -797,10 +797,13 @@ export async function runBattleBridgeSyncAndRefresh({
         });
       }
 
+      // Normal NoChange can have no refresh child because the original work
+      // was already paid. Reuse the same canonical witness as the auxiliary
+      // hold; empty output alone never supplies ordinary-startup admission.
+      const settledRefreshEvidence = await readSettledIgnitionRefreshEvidence({ paths, sourceHead, sync,
+        pendingReader, adapter, remaining: safeRemaining });
+      if (safeRemaining() <= 0) return budgetHeld('POST_SETTLED_REFRESH_EVIDENCE', sourceHead);
       if (!controlPlaneRepair.ok) {
-        const settledRefreshEvidence = await readSettledIgnitionRefreshEvidence({ paths, sourceHead, sync,
-          pendingReader, adapter, remaining: safeRemaining });
-        if (safeRemaining() <= 0) return budgetHeld('POST_SETTLED_REFRESH_EVIDENCE', sourceHead);
         return Object.freeze({
           settledRefreshEvidence,
           ...capacityResult(),
@@ -823,9 +826,11 @@ export async function runBattleBridgeSyncAndRefresh({
       }
 
       return Object.freeze({
+        settledRefreshEvidence,
         ...capacityResult(),
         schemaVersion: BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA,
         ok: true,
+        blocker: '',
         sourceHead,
         syncClassification: sync.result.evaluation.classification,
         refreshes: Object.freeze(refreshes),

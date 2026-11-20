@@ -186,3 +186,57 @@ Chat update reports SOURCE_AND_SERVED_SERVICES scope and desktop ignition UNPROV
 The richer existing reader is read-only and returns inert canonical records. Its old pending-debt interface is preserved. A caller summary or include-records flag grants no authority: owner, exact source cohort, requested-span coverage, actual fixed-Git ancestry and mandatory residual obligations are re-derived. Tests use the actual canonical writer, on-disk records, reader and preflight for plugin-only, Commander-custody-only and paid-runtime auxiliary holds, while missing/foreign/wrong-head/failed reads and mandatory debt remain held. Optional degraded startup leaves its canonical pending span intact.
 
 The fresh Windows launcher chain has one exact activation-owner inventory: its CMD entry, PowerShell launcher and approval helper. Natural reload and essential-member removal/rename refusal derive from that same inventory. A whole-delta classifier regression covers this source increment; unknown neighboring scripts remain blocked. This closes repeated classification drift without a wildcard or an ignition waiver.
+
+## Ordinary three-app startup and installed entry, 19 November 2026
+
+Ordinary desktop startup and native component commissioning are different
+outcomes. The fixed `THREE_APP_DESKTOP_STARTUP` projection derives both views
+from the same inert, exact-head canonical refresh evidence. Only Spatial
+resident adoption and desktop plugin-host activation can remain outside this
+ordinary startup scope. Their original global requirements and debt remain
+held; this projection cannot commission either component or authorize native
+use. Callers cannot supply an optional-domain list or convert missing evidence
+into an empty settled set.
+
+Every managed target and required Governor/relay proof remains mandatory, as do
+source convergence, OpenClaw update approval, and unknown/unsafe input checks.
+A clean-looking residual subset alone is insufficient: the producer must have
+the corresponding genuine terminal native hold and completed mandatory results.
+An unexplained failure, checkpoint, failed publication, wrong source cohort or
+unpaid Commander target cannot admit this scope. Existing global adjudication
+and completion/debt validation retain their own stricter meaning.
+
+The scoped result travels through current helper logs, launcher status and
+support evidence. It says ordinary startup admitted with native commissioning
+held. It does not turn the canonical global refresh into PASS, discharge a
+retained span, release custody, admit a builder or replace a capacity signature.
+Actual service, served-runtime and browser/window observations still decide
+desktop readiness. The operator's requested OpenClaw, front-end and AI Core
+outcome needs all three actual windows even though core readiness separately
+allows an optional OpenClaw failure.
+
+The native-capacity publisher owns a separate guarded scheduled-task process.
+Its exact source mapping records source adoption by that existing owner, not
+adoption by a worker restart. Its launch-head fence, withdrawal on source drift
+and bounded task retry remain in force. A natural-reload source receipt cannot
+prove a live resident or a current signed capacity candidate; provider admission
+still requires its original signature, source and freshness checks.
+
+The installed `Stephanos Local.lnk` must invoke the canonical cockpit entry,
+not an unowned front-end-only wrapper. The bounded per-user retarget adapter
+updates only that existing link, with a bound source head and preimage hash,
+byte backup and exact target/arguments/working-directory readback. Its fixed
+`-Mode launcher-root -BootMode cockpit -Unattended` arguments select the existing
+ordinary path: optional commissioning is deferred, not proven or executed.
+Required process-owner and runtime qualification gates still bind. Preview is
+read-only and unqualified. A verified retarget is an installation observation,
+not a successful launch; the old wrapper, other links and tasks remain untouched.
+The actual installed entry is the acceptance entry.
+
+Manual Ignition recovery and unattended self-healing require separate evidence.
+Manual recovery uses the existing bounded source and process-owner gates.
+Automatic recovery remains with the existing Recovery Mesh/Guardian, Worker
+Watchdog and guarded maintenance owners. A registered task or prior healthy
+receipt cannot prove fresh pickup and recovery after a real fault. The builder
+conveyor is not an invented prerequisite for ordinary desktop startup, and no
+new recovery controller, scheduler or worker is introduced by this separation.

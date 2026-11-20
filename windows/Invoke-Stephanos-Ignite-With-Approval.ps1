@@ -41,9 +41,9 @@ function Get-IgniteRepositoryHead {
 $requestedHead = Get-IgniteRepositoryHead
 $canonicalNodeExe = 'C:\Program Files\nodejs\node.exe'
 $sovereignCommanderIgnitionAutohealScript = Join-Path $repoRoot 'scripts\sovereign-commander-ignition-autoheal.mjs'
-$normalIgniteCommand = 'npm run stephanos:ignite'
-$approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'
-$approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-openclaw-service-restart'
+$normalIgniteCommand = "npm run stephanos:ignite -- --expected-main $requestedHead"
+$approvedIgniteCommand = "npm run stephanos:ignite -- --approve-local-merge --expected-main $requestedHead"
+$approvedOpenClawRestartCommand = "npm run stephanos:ignite -- --approve-openclaw-service-restart --expected-main $requestedHead"
 $openClawStartGatewayApprovalEnvFlag = 'STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY'
 $sourceMergeCheckCommand = 'git merge --no-commit --no-ff origin/main'
 $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stephanos-ignite-{0}.log" -f ([guid]::NewGuid().ToString('N')))

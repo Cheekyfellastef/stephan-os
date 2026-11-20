@@ -13,6 +13,24 @@ const SHA = /^[a-f0-9]{40}$/;
 const PROFILES = new Set(['MAINTENANCE_GOAL_BUILDER_V1', 'SOURCE_TASK_V1',
   'SPATIAL_WORKSPACE_PREPARE_V1', 'CANONICAL_MAILBOX_NATIVE_EVIDENCE_V1']);
 const UNKNOWN = 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN';
+// Public subset of the native observer's closed diagnostic vocabulary. Keep
+// these details out of the blocker/admission vocabulary and never copy errors.
+const OWNER_DIAGNOSTIC_CODES = new Set([
+  'OWNER_CIM_LISTENER_QUERY_FAILED', 'OWNER_LISTENER_UNPROVEN', 'OWNER_LISTENER_NOT_PRIVATE',
+  'OWNER_CIM_PROCESS_QUERY_FAILED', 'OWNER_PROCESS_UNPROVEN', 'OWNER_COMMAND_LINE_UNAVAILABLE',
+  'OWNER_COMMAND_LINE_MISMATCH', 'OWNER_IMAGE_MISMATCH', 'OWNER_PROCESS_BIRTH_UNAVAILABLE',
+  'OWNER_NATIVE_QUERY_UNAVAILABLE', 'OWNER_NATIVE_ACCESS_DENIED', 'OWNER_NATIVE_OPEN_FAILED',
+  'OWNER_NATIVE_PROCESS_EXITED', 'OWNER_NATIVE_BIRTH_UNPROVEN', 'OWNER_NATIVE_BIRTH_MISMATCH',
+  'OWNER_NATIVE_IMAGE_UNPROVEN', 'OWNER_NATIVE_IMAGE_MISMATCH', 'OWNER_IMAGE_HASH_UNPROVEN',
+  'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN',
+  'OWNER_OBSERVER_TIMEOUT', 'OWNER_OBSERVER_FAILED', 'OWNER_OBSERVER_INVALID_RECEIPT',
+]);
+
+export function sovereignControlSystemOwnerDiagnosticCodeV1(value) {
+  return typeof value === 'string' && OWNER_DIAGNOSTIC_CODES.has(value)
+    ? value : 'OWNER_OBSERVER_INVALID_RECEIPT';
+}
+
 // This optional denial detail never joins the general blocker vocabulary or
 // supplies native qualification, execution custody or governor permission.
 const GOVERNOR_HOLD_CODES = new Set([
@@ -254,6 +272,14 @@ export function projectSovereignControlSystemStatusV1(value) {
         ? { administratorEnabled: c.row.administratorEnabled } : {}) };
     const owner = { ...o.result, available: o.result.available && Boolean(o.result.observedAtUtc),
       stable: o.result.available && Boolean(o.result.observedAtUtc) && o.row.stable === true };
+    // Preserve historical receipts when the optional detail was absent. The
+    // detail explains only an authentic owner refusal at stable source; it
+    // cannot qualify an owner, guardian, protocol, or native runtime.
+    if (o.row.available === false && o.row.stable === false
+      && o.row.reason === 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN'
+      && source.available && source.stable && source.reason === ''
+      && source.expectedMainMatches !== false && Object.hasOwn(o.row, 'diagnosticCode'))
+      owner.diagnosticCode = sovereignControlSystemOwnerDiagnosticCodeV1(o.row.diagnosticCode);
     const guardianValid = g.result.available && owner.available && owner.stable
       && ['enabled', 'running', 'scheduled', 'maintenanceInFlight'].every(key => typeof g.row[key] === 'boolean')
       && ['HELD', 'NOT_HELD_REPORTED', 'UNKNOWN'].includes(g.row.custodyState);

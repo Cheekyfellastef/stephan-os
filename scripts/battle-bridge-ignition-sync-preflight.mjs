@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import process from 'node:process';
-import { projectPostSyncRemainingIgnitionObligationsV1, projectIgnitionSettledRefreshEvidenceV1, projectIgnitionPreflightResultV1 }
+import { projectPostSyncRemainingIgnitionObligationsV1, projectIgnitionSettledRefreshEvidenceV1, projectIgnitionPreflightResultV1,
+  projectThreeAppDesktopStartupAdmissionV1, THREE_APP_DESKTOP_STARTUP_SCOPE_V1 }
   from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -152,7 +153,14 @@ function canDegradeUnattachedPluginHost(result = {}, projection = {}) {
 export function adjudicateBattleBridgeIgnitionSyncPreflightResultV1(rawResult) {
   const result = projectIgnitionPreflightResultV1(rawResult)
     || Object.freeze({ ok: false, blocker: 'IGNITION_SYNC_AND_REFRESH_PROOF_INVALID' });
-  const projection = projectSyncAndRefreshResult(result);
+  const sourceProjection = projectSyncAndRefreshResult(result);
+  const latestRefresh = Array.isArray(result.refreshes) ? result.refreshes.at(-1)?.result : null;
+  const projection = Object.freeze({ ...sourceProjection,
+    refreshBlocker: safeBlocker(latestRefresh?.blocker, safeBlocker(result.blocker, '')),
+    // Reporting consumes the same inert source-bound frame as adjudication.
+    // Missing/invalid evidence remains unproved, never an empty settled set.
+    refreshObligations: projectPostSyncRemainingIgnitionObligationsV1(latestRefresh, sourceProjection.sourceHead),
+  });
 
   if (result?.ok !== true) {
     if (canDegradeAuxiliaryControlPlane(result, projection)) {
@@ -207,7 +215,9 @@ export function adjudicateBattleBridgeIgnitionSyncPreflightResultV1(rawResult) {
         ? 'IGNITION_SETTLED_REFRESH_WITNESS_UNPROVEN'
         : [COMMANDER_CUSTODY_HOLD, PLUGIN_HOST_ACTIVATION_HOLD].includes(result?.blocker)
           ? 'IGNITION_MANDATORY_REFRESH_OBLIGATIONS_UNPROVEN' : '',
-      blocker: safeBlocker(result?.blocker, 'IGNITION_SYNC_AND_REFRESH_BLOCKED'),
+      blocker: [COMMANDER_CUSTODY_HOLD, PLUGIN_HOST_ACTIVATION_HOLD].includes(result?.blocker)
+        ? 'IGNITION_MANDATORY_REFRESH_OBLIGATIONS_UNPROVEN'
+        : safeBlocker(result?.blocker, 'IGNITION_SYNC_AND_REFRESH_BLOCKED'),
       finalVerdict: 'IGNITION_SYNC_PREFLIGHT_BLOCKED',
     });
   }
@@ -235,12 +245,62 @@ export function adjudicateBattleBridgeIgnitionSyncPreflightResultV1(rawResult) {
   });
 }
 
+// Ordinary desktop startup consumes a fixed canonical scope. Global refresh
+// settlement and native commissioning remain the unmodified producer's truth.
+// This branch deliberately never invokes the legacy optional-waiver rules.
+export function adjudicateThreeAppDesktopIgnitionPreflightV1(rawResult) {
+  const result = projectIgnitionPreflightResultV1(rawResult);
+  const projection = projectSyncAndRefreshResult(result);
+  const latestRefresh = result?.refreshes?.at(-1)?.result;
+  const terminal = projectThreeAppDesktopStartupAdmissionV1(latestRefresh, projection.sourceHead);
+  const witness = projectIgnitionSettledRefreshEvidenceV1(result?.settledRefreshEvidence, projection.sourceHead);
+  const settled = witness && projectThreeAppDesktopStartupAdmissionV1(witness.refreshCompletionRecord, projection.sourceHead);
+  const normalComplete = result?.ok === true && result.finalVerdict === 'SYNC_AND_REFRESH_PASS' && result.blocker === ''
+    && (latestRefresh ? terminal?.globalRefreshState === 'COMPLETE' : settled?.globalRefreshState === 'COMPLETE');
+  const optionalHeld = result?.ok === false && result.finalVerdict === 'SYNC_AND_REFRESH_BLOCKED'
+    && terminal?.globalRefreshState === 'HELD' && result.blocker === latestRefresh?.blocker;
+  const auxiliaryHeld = result?.ok === false && result.finalVerdict === 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED'
+    && settled?.globalRefreshState === 'COMPLETE'
+    && result.controlPlaneRepair?.ok === false
+    && result.controlPlaneRepair.classification === 'CONTROL_PLANE_REPAIR_BLOCKED'
+    && result.controlPlaneRepair.repairAttempted === true
+    && result.controlPlaneRepair.sourceHead === projection.sourceHead;
+  const coherent = projection.sourceHead && projection.syncClassification === 'SYNC_NO_CHANGE'
+    && (normalComplete || optionalHeld || auxiliaryHeld);
+  const startupAdmission = coherent ? (optionalHeld ? terminal : latestRefresh && normalComplete ? terminal : settled) : null;
+  const admitted = startupAdmission?.admitted === true;
+  return Object.freeze({
+    schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
+    ok: admitted,
+    skipped: false,
+    classification: admitted ? 'IGNITION_SYNC_PREFLIGHT_PASS_THREE_APP_STARTUP' : 'IGNITION_SYNC_PREFLIGHT_BLOCKED',
+    ...projection,
+    startupScope: THREE_APP_DESKTOP_STARTUP_SCOPE_V1,
+    startupAdmission,
+    refreshBlocker: safeBlocker(latestRefresh?.blocker, safeBlocker(result?.blocker, '')),
+    refreshObligations: startupAdmission ? Object.freeze({ schemaVersion: 'stephanos.ignition-refresh-obligations.v1',
+      sourceHead: startupAdmission.sourceHead, remaining: startupAdmission.globalRemaining })
+      : projectPostSyncRemainingIgnitionObligationsV1(latestRefresh, projection.sourceHead),
+    ...(auxiliaryHeld ? { controlPlaneDegraded: true,
+      controlPlaneBlocker: safeBlocker(result?.blocker, 'CONTROL_PLANE_REPAIR_BLOCKED') } : {}),
+    blocker: admitted ? '' : startupAdmission ? 'IGNITION_MANDATORY_REFRESH_OBLIGATIONS_UNPROVEN'
+      : safeBlocker(result?.blocker, 'IGNITION_THREE_APP_STARTUP_PROOF_UNPROVEN'),
+    finalVerdict: admitted ? 'IGNITION_SYNC_PREFLIGHT_PASS' : 'IGNITION_SYNC_PREFLIGHT_BLOCKED',
+  });
+}
+
 export async function runBattleBridgeIgnitionSyncPreflight({
   platform = process.platform,
   repoRoot = CURRENT_REPO_ROOT,
   canonicalRepoRoot = resolveCanonicalSyncAndRefreshPaths().repoRoot,
   syncAndRefreshFn = runBattleBridgeSyncAndRefresh,
+  startupScope = '',
 } = {}) {
+  if (startupScope !== '' && startupScope !== THREE_APP_DESKTOP_STARTUP_SCOPE_V1) {
+    return Object.freeze({ schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA, ok: false, skipped: false,
+      classification: 'IGNITION_SYNC_PREFLIGHT_BLOCKED', sourceHead: '', blocker: 'IGNITION_STARTUP_SCOPE_INVALID',
+      finalVerdict: 'IGNITION_SYNC_PREFLIGHT_BLOCKED' });
+  }
   if (platform !== 'win32') {
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
@@ -265,12 +325,17 @@ export async function runBattleBridgeIgnitionSyncPreflight({
     });
   }
 
-  return adjudicateBattleBridgeIgnitionSyncPreflightResultV1(await syncAndRefreshFn({ platform }));
+  const result = await syncAndRefreshFn({ platform });
+  return startupScope === THREE_APP_DESKTOP_STARTUP_SCOPE_V1
+    ? adjudicateThreeAppDesktopIgnitionPreflightV1(result)
+    : adjudicateBattleBridgeIgnitionSyncPreflightResultV1(result);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const result = await runBattleBridgeIgnitionSyncPreflight();
+    // This existing npm prehook is the ordinary desktop entry. No caller list
+    // or command-line selector can expand its fixed shared startup scope.
+    const result = await runBattleBridgeIgnitionSyncPreflight({ startupScope: THREE_APP_DESKTOP_STARTUP_SCOPE_V1 });
     process.stdout.write(`${BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_RESULT_MARKER}${JSON.stringify(result)}\n`);
     process.exitCode = result.ok ? 0 : 2;
   } catch (error) {
