@@ -144,7 +144,7 @@ namespace Stephanos.Sovereign {
         var manifest=ReviewerJsonV1().Deserialize<ReviewerProfileManifestV1>(new UTF8Encoding(false,true).GetString(embedded));
         if(manifest==null||manifest.SchemaVersion!="stephanos.reviewer-profile-manifest.v1"
           ||!ReviewerHexV1(manifest.SourceHead,40)||!ReviewerHexV1(manifest.SourceTree,40)
-          ||manifest.Files==null||manifest.Files.Length!=25)throw new IOException("REVIEWER_MANIFEST_IDENTITY_UNPROVEN");
+          ||manifest.Files==null||manifest.Files.Length!=26)throw new IOException("REVIEWER_MANIFEST_IDENTITY_UNPROVEN");
         pins.Manifest=manifest;pins.VersionRoot=Path.Combine(ReviewerRootV1,manifest.SourceHead);
         if(!String.Equals(Path.GetFullPath(Assembly.GetExecutingAssembly().Location),ReviewerHostV1,StringComparison.OrdinalIgnoreCase))
           throw new IOException("REVIEWER_PROTECTED_HOST_LOCATION_REQUIRED");

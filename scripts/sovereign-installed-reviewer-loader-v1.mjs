@@ -10,7 +10,7 @@ const manifest=JSON.parse(readFileSync(new URL('../../manifest.json', import.met
 if(manifest.SchemaVersion!=='stephanos.reviewer-profile-manifest.v1'
   || !/^[a-f0-9]{40}$/.test(manifest.SourceHead??'')
   || !/^[a-f0-9]{40}$/.test(manifest.SourceTree??'')
-  || !Array.isArray(manifest.Files) || manifest.Files.length!==25)
+  || !Array.isArray(manifest.Files) || manifest.Files.length!==26)
   throw Error('INSTALLED_REVIEWER_MANIFEST_INVALID');
 const modules=new Map();
 for(const row of manifest.Files) {
@@ -24,7 +24,7 @@ for(const row of manifest.Files) {
   if(!Buffer.from(source).equals(bytes)) throw Error('INSTALLED_REVIEWER_SOURCE_ENCODING');
   modules.set(url,source);
 }
-if(modules.size!==21)throw Error('INSTALLED_REVIEWER_MODULE_CLOSURE_INVALID');
+if(modules.size!==22)throw Error('INSTALLED_REVIEWER_MODULE_CLOSURE_INVALID');
 export function resolve(specifier,context) {
   if(isBuiltin(specifier))return{url:specifier.startsWith('node:')?specifier:'node:'+specifier,shortCircuit:true};
   let url;

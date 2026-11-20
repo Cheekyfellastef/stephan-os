@@ -36,6 +36,7 @@ on:
       - 'shared/agents/sovereignReviewerOllamaBindingV1.mjs'
       - 'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs'
       - 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'
+      - 'shared/agents/battleBridgeGitProbeContextV1.mjs'
       - 'shared/agents/battleBridgeWindowsHosts.mjs'
       - 'shared/agents/sovereignHighRiskReviewCandidateV1.mjs'
       - 'shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs'

@@ -314,7 +314,7 @@ try{
  $hostPath=[IO.Path]::Combine($root,'host.exe');$version=[IO.Path]::Combine($root,'__HEAD__')
  $first=Inspect $hostPath
  Require ($null -ne $first -and $first.codeCustodyObserved -eq $true) 'REAL_PROTECTED_READER_NOT_OPERATIONAL'
- Require ($first.sourceHead -ceq '__HEAD__' -and $first.sourceFileCount -eq 25) 'PHYSICAL_CLOSURE_IDENTITY_CHANGED'
+ Require ($first.sourceHead -ceq '__HEAD__' -and $first.sourceFileCount -eq 26) 'PHYSICAL_CLOSURE_IDENTITY_CHANGED'
  Require ($first.principalMatchesProfile -eq $true) 'ACTUAL_PRINCIPAL_NOT_OBSERVED'
  Require ($first.principalAdministrator -eq $true) 'HOSTED_ELEVATED_TOKEN_NOT_OBSERVED'
  Require ($first.independentPrincipalObserved -eq $false -and $first.qualified -eq $false -and $first.physicalCommissioningProven -eq $false) 'FIXTURE_BECAME_AUTHORITY'

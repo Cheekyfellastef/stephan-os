@@ -44,8 +44,8 @@ function repo(t) {
 function put(dir,path,bytes) {mkdirSync(dirname(join(dir,path)),{recursive:true});writeFileSync(join(dir,path),bytes);}
 function commit(dir) {command(dir,['add','.']);command(dir,['commit','-m','isolated fixture']);return command(dir,['rev-parse','HEAD']);}
 test('reviewer installation graph contains every reachable relative producer dependency exactly once',()=>{
-  assert.equal(files.length,25);assert.equal(new Set(files).size,25);
-  const modules=files.filter(p=>p.endsWith('.mjs'));assert.equal(modules.length,21);
+  assert.equal(files.length,26);assert.equal(new Set(files).size,26);
+  const modules=files.filter(p=>p.endsWith('.mjs'));assert.equal(modules.length,22);
   for(const path of modules) {
     const source=readFileSync(join(root,path),'utf8');
     for(const match of source.matchAll(/(?:from\s*|import\s*\(\s*|import\s*)['"]([^'"]+)['"]/g)) {
@@ -237,7 +237,7 @@ test('source package authenticates immutable Git bytes and ignores a dirty execu
   const head=commit(dir);command(dir,['update-ref','refs/remotes/origin/main',head]);
   put(dir,'scripts/windows/SovereignReviewerHostV1.cs','MALICIOUS WORKTREE BYTES');
   const result=buildReviewerInstallationSourceV1({expectedMain:head,root:dir});
-  assert.equal(result.sourceHead,head);assert.equal(result.sourceFileCount,25);
+  assert.equal(result.sourceHead,head);assert.equal(result.sourceFileCount,26);
   assert.equal(result.installationPerformed,false);assert.equal(result.qualified,false);
   assert.ok(!result.script.includes('MALICIOUS WORKTREE BYTES'));assert.equal(hash(result.script),result.artifactSha256);
   assert.throws(()=>buildReviewerInstallationSourceV1({expectedMain:'e'.repeat(40),root:dir}),/MAIN_MISMATCH/);

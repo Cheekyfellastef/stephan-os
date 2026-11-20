@@ -18,6 +18,7 @@ export const SOVEREIGN_REVIEWER_PROFILE_FILES_V1 = Object.freeze([
   'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs',
   'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
+  'shared/agents/battleBridgeGitProbeContextV1.mjs',
   'shared/agents/battleBridgeWindowsHosts.mjs',
   'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
   'shared/agents/sovereignReviewCoverageV1.mjs',

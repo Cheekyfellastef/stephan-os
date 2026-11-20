@@ -17,7 +17,7 @@ are the same. Existing request identity validation, authenticated transport,
 maintenance ownership and private pre-spawn failure handling remain in place.
 There is no second controller, request queue, lease or arbitrary command API.
 
-The host embeds the installed source commit/tree and an exact 25-file manifest.
+The host embeds the installed source commit/tree and an exact 26-file manifest.
 It reads its actual location, protected owner and write ACLs, physical parent
 directories, file type/link count, machine identity, current Windows token,
 installation record, source bytes and separately pinned Node/Git executables.
