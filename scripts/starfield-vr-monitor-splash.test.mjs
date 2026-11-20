@@ -229,7 +229,7 @@ test('waiting-window retry is time-bounded, never relaunches game or replays sav
   // The PowerShell cancellation predicate may gain additional safety stops.
   // Prove each required guard lives in the fail-closed pre-attempt branch rather
   // than requiring two nonadjacent predicates to appear next to each other.
-  const preAttemptGuards = handoff.match(/if \(([\s\S]*?)\) \{\s*\$focusRetryTimer\.Stop\(\);\s*return\s*\}/)?.[1];
+  const preAttemptGuards = handoff.match(/if \(([\s\S]*?)\) \{\s*\$focusRetryTimer\.Stop\(\)\s*return\s*\}/)?.[1];
   assert.ok(preAttemptGuards, 'Focus retries must stop when the preflight rejects ownership');
   for (const guard of [
     '$processState.CloseRequested',
