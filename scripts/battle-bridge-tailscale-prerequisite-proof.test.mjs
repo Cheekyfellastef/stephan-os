@@ -3,16 +3,105 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const workflowUrl = new URL('../.github/workflows/battle-bridge-tailscale-bootstrap-pipe.yml', import.meta.url);
+const proofWorkflowUrl = new URL('../.github/workflows/battle-bridge-tailscale-bootstrap-proof.yml', import.meta.url);
 const runnerUrl = new URL('./battle-bridge-tailscale-prerequisite-proof.mjs', import.meta.url);
 
 async function workflowSource() {
   return readFile(workflowUrl, 'utf8');
 }
 
-test('prerequisite proof stays inside the existing workflow and is owner-bound to canonical issue 2808', async () => {
+const requiredProofPaths = [
+  '.github/workflows/battle-bridge-tailscale-bootstrap-pipe.yml',
+  '.github/workflows/battle-bridge-tailscale-bootstrap-proof.yml',
+  'scripts/battle-bridge-exact-head-preservation-sync.mjs',
+  'scripts/battle-bridge-exact-head-preservation-sync.test.mjs',
+  'scripts/battle-bridge-tailscale-bootstrap-pipe.mjs',
+  'scripts/battle-bridge-tailscale-bootstrap-pipe.test.mjs',
+  'scripts/battle-bridge-tailscale-prerequisite-proof.mjs',
+  'scripts/battle-bridge-tailscale-prerequisite-proof.test.mjs',
+  'shared/agents/battleBridgeTailscaleBootstrapPipeV1.mjs',
+  'shared/agents/battleBridgeTailscaleBootstrapPipeV1.test.mjs',
+  'shared/agents/battleBridgeTailscalePrerequisiteProofV1.mjs',
+  'shared/agents/battleBridgeTailscalePrerequisiteProofV1.test.mjs',
+  'docs/architecture/battle-bridge-tailscale-bootstrap-pipe-v1.md',
+  'docs/architecture/battle-bridge-tailscale-prerequisite-proof-v1.md',
+];
+
+function topLevelBlock(source, key) {
+  const prefix = `\n${key}:\n`;
+  const start = (`\n${source}`).indexOf(prefix);
+  assert.ok(start >= 0, `${key} must remain an explicit workflow block`);
+  const remainder = (`\n${source}`).slice(start + prefix.length);
+  const end = remainder.search(/^\S/m);
+  return end < 0 ? remainder : remainder.slice(0, end);
+}
+
+function blockKeys(source, key) {
+  return [...topLevelBlock(source, key).matchAll(/^  ([a-z][a-z0-9_-]*):\s*$/gm)]
+    .map((match) => match[1]);
+}
+
+function assertWorkflowSeparation(command, proof) {
+  assert.deepEqual(blockKeys(command, 'on'), ['issue_comment']);
+  assert.deepEqual(blockKeys(command, 'jobs'), ['bootstrap-canonical-github-sync', 'prerequisite-proof']);
+  assert.deepEqual(blockKeys(proof, 'on'), ['pull_request']);
+  assert.deepEqual(blockKeys(proof, 'jobs'), ['contract-proof']);
+  assert.equal(topLevelBlock(proof, 'permissions').trim(), 'contents: read');
+  const commandGroup = [...topLevelBlock(command, 'concurrency').matchAll(/^  group: (.+)$/gm)].map((match) => match[1]);
+  const proofGroup = [...topLevelBlock(proof, 'concurrency').matchAll(/^  group: (.+)$/gm)].map((match) => match[1]);
+  assert.deepEqual(proofGroup, ['battle-bridge-tailscale-bootstrap-proof-pr-${{ github.event.pull_request.number || github.run_id }}']);
+  assert.notDeepEqual(proofGroup, commandGroup, 'PR proof must not share the command event queue');
+  assert.match(topLevelBlock(proof, 'concurrency'), /^  cancel-in-progress: false$/m);
+  assert.doesNotMatch(proof, /^[ \t]+permissions:/m);
+  assert.doesNotMatch(proof, /\b(?:secrets|vars)\.|id-token:|github\.token|GITHUB_TOKEN|GH_TOKEN|tailscale\/github-action@|\bssh\b|encoded-command/);
+  const paths = [...topLevelBlock(proof, 'on').matchAll(/^      - '([^']+)'$/gm)]
+    .map((match) => match[1]);
+  assert.deepEqual(paths, requiredProofPaths);
+  assert.match(proof, /^    if: github\.event_name == 'pull_request'$/m);
+  assert.equal((proof.match(/uses: actions\/checkout@v4/g) || []).length, 1);
+  assert.deepEqual([...proof.matchAll(/^          ref: (.+)$/gm)].map((match) => match[1]), [
+    '${{ github.event.pull_request.head.sha }}',
+  ]);
+  assert.match(proof, /^          fetch-depth: 0$/m);
+  assert.match(proof, /^          node-version: '22'$/m);
+}
+
+test('PR proof has a separate event queue from command-only jobs and covers both workflows and preservation adapter changes', async () => {
+  const [command, proof] = await Promise.all([workflowSource(), readFile(proofWorkflowUrl, 'utf8')]);
+  assertWorkflowSeparation(command, proof);
+});
+
+test('workflow separation rejects mixed triggers, misplaced command jobs, unbound checkout and privileged proof', async (t) => {
+  const [command, proof] = await Promise.all([workflowSource(), readFile(proofWorkflowUrl, 'utf8')]);
+  const cases = [
+    ['PR trigger on command workflow', command.replace('on:\n', 'on:\n  pull_request:\n'), proof],
+    ['command trigger on PR proof', command, proof.replace('on:\n', 'on:\n  issue_comment:\n')],
+    ['command job on PR proof', command, proof.replace('jobs:\n', 'jobs:\n  bootstrap-canonical-github-sync:\n    runs-on: ubuntu-latest\n')],
+    ['shared command concurrency group', command, proof.replace('battle-bridge-tailscale-bootstrap-proof-pr-${{ github.event.pull_request.number || github.run_id }}', 'battle-bridge-tailscale-bootstrap-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}')],
+    ['canceling an in-progress proof', command, proof.replace('cancel-in-progress: false', 'cancel-in-progress: true')],
+    ['checkout main instead of exact head', command, proof.replace('${{ github.event.pull_request.head.sha }}', 'main')],
+    ['checkout base instead of exact head', command, proof.replace('pull_request.head.sha', 'pull_request.base.sha')],
+    ['writable proof token', command, proof.replace('contents: read', 'contents: write')],
+    ['job permission override', command, proof.replace('  contract-proof:\n', '  contract-proof:\n    permissions:\n      contents: write\n')],
+    ['OIDC on PR proof', command, proof.replace('  contents: read\n', '  contents: read\n  id-token: write\n')],
+    ['secret on PR proof', command, proof.replace('    runs-on: ubuntu-latest\n', '    runs-on: ubuntu-latest\n    env:\n      KEY: ${{ secrets.SSH_KEY }}\n')],
+  ];
+  for (const [name, changedCommand, changedProof] of cases) {
+    await t.test(name, () => assert.throws(() => assertWorkflowSeparation(changedCommand, changedProof)));
+  }
+  for (const path of requiredProofPaths) {
+    await t.test(`missing trigger path: ${path}`, () => {
+      const changedProof = proof.replace(`      - '${path}'\n`, '');
+      assert.throws(() => assertWorkflowSeparation(command, changedProof));
+    });
+  }
+});
+
+test('prerequisite proof stays inside the existing workflow and is owner-bound to canonical source authority', async () => {
   const source = await workflowSource();
   assert.match(source, /prerequisite-proof:/);
-  assert.match(source, /github\.event\.issue\.number == 2808/);
+  assert.match(source, /github\.event\.issue\.number > 0/);
+  assert.match(source, /canonical-mailbox-workflow-event-gate/);
   assert.doesNotMatch(source, /github\.event\.issue\.number == 1507/);
   assert.match(source, /github\.actor == 'Cheekyfellastef'/);
   assert.match(source, /```stephanos-battle-bridge-tailscale-bootstrap-prerequisites/);
@@ -66,11 +155,20 @@ test('both remote hops use strict SSH and fixed Tailscale recovery identity', as
 });
 
 test('contract proof exercises existing bootstrap code plus new prerequisite proof code', async () => {
-  const source = await workflowSource();
+  const source = await readFile(proofWorkflowUrl, 'utf8');
   assert.match(source, /node --test shared\/agents\/battleBridgeTailscaleBootstrapPipeV1\.test\.mjs/);
   assert.match(source, /node --test scripts\/battle-bridge-tailscale-bootstrap-pipe\.test\.mjs/);
   assert.match(source, /node --test shared\/agents\/battleBridgeTailscalePrerequisiteProofV1\.test\.mjs/);
   assert.match(source, /node --test scripts\/battle-bridge-tailscale-prerequisite-proof\.test\.mjs/);
+  for (const path of [
+    'scripts/battle-bridge-tailscale-bootstrap-pipe.mjs',
+    'shared/agents/battleBridgeTailscaleBootstrapPipeV1.mjs',
+    'scripts/battle-bridge-tailscale-prerequisite-proof.mjs',
+    'shared/agents/battleBridgeTailscalePrerequisiteProofV1.mjs',
+  ]) {
+    assert.ok(source.includes(`node --check ${path}`), `missing syntax proof for ${path}`);
+  }
+  assert.match(source, /git diff --check origin\/main\.\.\.HEAD/);
 });
 
 test('prerequisite runner exposes bounded proof modes only and no child-process execution surface', async () => {

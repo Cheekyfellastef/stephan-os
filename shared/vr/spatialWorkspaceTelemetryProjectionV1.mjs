@@ -8,6 +8,32 @@ export const SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1 =
 
 const SHA40 = /^[0-9a-f]{40}$/i;
 const SAFE_STATES = new Set(['ready', 'stale', 'waiting', 'unavailable']);
+const SAFE_RUN_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
+const SAFE_PHASES = new Set(['start', 'sample', 'end', 'error']);
+
+// Both feed and consumer forms must carry real run identity before showing cached evidence.
+function hasProvenance(evidence) {
+  const stamp = evidence?.observedAtUtc;
+  const time = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
+  const sourceHead = evidence?.sourceHead;
+  const rendererHead = evidence?.rendererSourceHead;
+  // When both identities are supplied, a renderer built from a different
+  // source head must not be represented as current immersive telemetry.
+  // Older packets with no renderer identity remain readable as before.
+  // Only genuinely omitted renderer identity is legacy-compatible.
+  // A supplied blank/invalid SHA cannot become READY through normalization.
+  const rendererMatches = !Object.hasOwn(evidence ?? {}, 'rendererSourceHead')
+    || (typeof sourceHead === 'string' && typeof rendererHead === 'string'
+      && SHA40.test(rendererHead) && rendererHead.toLowerCase() === sourceHead.toLowerCase());
+  return typeof evidence?.runId === 'string'
+    && SAFE_RUN_ID.test(evidence.runId)
+    && SAFE_PHASES.has(evidence?.phase)
+    && Number.isFinite(time)
+    && new Date(time).toISOString() === stamp
+    && typeof sourceHead === 'string'
+    && SHA40.test(sourceHead)
+    && rendererMatches;
+}
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -40,13 +66,14 @@ function sourceRecord(input = {}) {
     && input?.readOnly === true;
   const canonicalEvidence = canonicalFeed
     && input?.latest?.evidence?.schemaVersion === SPATIAL_WORKSPACE_TELEMETRY_SCHEMA_V1
+    && hasProvenance(input.latest.evidence)
     ? input.latest.evidence
     : null;
   if (canonicalEvidence) {
     return {
       kind: 'canonical-feed',
       evidence: canonicalEvidence,
-      feedState: state(input.state, 'ready'),
+      feedState: state(input.state, 'waiting'),
       learningCandidate: input?.latest?.learningCandidate === true,
       sourceSchemaVersion: input.schemaVersion,
     };
@@ -54,11 +81,11 @@ function sourceRecord(input = {}) {
 
   const boundedProjection = input?.schemaVersion === SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1
     && input?.readOnly === true;
-  if (boundedProjection && input?.available === true) {
+  if (boundedProjection && input?.available === true && hasProvenance(input)) {
     return {
       kind: 'consumer-projection',
       evidence: input,
-      feedState: state(input.state, 'ready'),
+      feedState: state(input.state, 'waiting'),
       learningCandidate: input?.learningCandidate === true,
       sourceSchemaVersion: text(input.sourceSchemaVersion),
     };
@@ -76,8 +103,10 @@ function sourceRecord(input = {}) {
 export function projectSpatialWorkspaceTelemetryForConsumersV1(input = {}) {
   const source = sourceRecord(input);
   const evidence = source.evidence;
+  // Cached evidence must not promote a waiting/unavailable feed to READY.
+  // Keep the last observed provenance while preserving live transport state.
   const projectedState = evidence
-    ? (source.feedState === 'stale' ? 'stale' : 'ready')
+    ? source.feedState
     : (source.feedState === 'unavailable' ? 'unavailable' : 'waiting');
   const fps = number(evidence?.frame?.estimatedFps);
 
@@ -92,7 +121,8 @@ export function projectSpatialWorkspaceTelemetryForConsumersV1(input = {}) {
     phase: text(evidence?.phase, 'unknown').slice(0, 24),
     observedAtUtc: text(evidence?.observedAtUtc).slice(0, 40),
     sourceHead: head(evidence?.sourceHead),
-    rendererSourceHead: head(evidence?.rendererSourceHead),
+    ...(evidence && Object.hasOwn(evidence, 'rendererSourceHead')
+      ? { rendererSourceHead: head(evidence.rendererSourceHead) } : {}),
     device: text(evidence?.device, 'Spatial Workspace').slice(0, 80),
     room: text(evidence?.room, 'holodeck-starting-chamber').slice(0, 80),
     frame: Object.freeze({

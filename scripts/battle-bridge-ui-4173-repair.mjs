@@ -204,7 +204,7 @@ export function evaluateUi4173Repair({ readinessReport, dryRun = true, commandId
   const blockers = [];
   if (!serviceReady(readinessReport, 'backend')) blockers.push({ id: 'backend-8787-not-connected', detail: 'Backend 8787 must already be connected before UI-only repair.' });
   if (!serviceReady(readinessReport, 'openclaw-gateway')) blockers.push({ id: 'openclaw-gateway-18789-not-connected', detail: 'OpenClaw gateway 18789 must already be connected before UI-only repair.' });
-  if (!hasFreshWorkspace(readinessReport)) blockers.push({ id: 'shared-workspace-not-fresh', detail: 'Shared workspace records must be fresh and not UNKNOWN before UI-only repair.', records: readinessReport?.staleWorkspaceRecords || [] });
+  if (!hasFreshWorkspace(readinessReport)) blockers.push({ id: 'shared-workspace-not-fresh', detail: 'Shared workspace publication must be valid and current before UI-only repair; runtime readiness is separate.', records: readinessReport?.staleWorkspaceRecords || [] });
   if (uiReachable && !staleServedRuntime) blockers.push({ id: 'stephanos-ui-already-ready', detail: 'Stephanos UI 4173 is already reachable and exact-head proof is not stale; no repair start is needed.' });
   if (finalVerdict !== 'partial-ui-missing' && !staleServedRuntime) blockers.push({ id: 'readiness-not-partial-ui-missing', detail: `Expected partial-ui-missing readiness verdict or a stale served runtime, got ${readinessReport?.finalVerdict || 'unknown'}.` });
   for (const blocker of readinessReport?.safetyBlockers || []) blockers.push({ id: `safety-${blocker.id || 'blocker'}`, detail: blocker.detail || 'Readiness safety blocker present.', blocker });

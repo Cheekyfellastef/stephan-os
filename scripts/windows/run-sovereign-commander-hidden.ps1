@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4',
+    [string]$RequireCapabilityVersion = '2026-10-18-island-action-contract-v6',
     [switch]$SkipCoreDaemonLifecycle,
     [switch]$SkipDesktopCommanderCrossHeal
 )
@@ -17,6 +17,50 @@ if (-not [string]::Equals($repoRoot, $expectedRepoRoot, [System.StringComparison
     throw "Sovereign Commander runner must use canonical checkout: $expectedRepoRoot"
 }
 
+# S4U/LeastPrivilege metadata did not exclude an enabled administrator token on
+# the installed machine. Observe this process before any lifecycle mutation.
+# Read-only adapter. Task configuration is never actual token proof, and this
+# preflight grants no runtime/helper, custody, source, lease or restart authority.
+function Resolve-SovereignCommanderOperatorContextV1 {
+    param([object]$UserSid, [object]$AdministratorRole)
+    if ($UserSid -isnot [string] -or $UserSid -cnotmatch '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$' -or
+        $AdministratorRole -isnot [bool]) {
+        return [pscustomobject]@{ normalOperatorObserved = $false; blocker = 'SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN' }
+    }
+    if ($AdministratorRole) {
+        return [pscustomobject]@{ normalOperatorObserved = $false; blocker = 'SOVEREIGN_COMMANDER_NORMAL_OPERATOR_REQUIRED' }
+    }
+    [pscustomobject]@{ normalOperatorObserved = $true; blocker = '' }
+}
+
+function Get-SovereignCommanderOperatorContextV1 {
+    $identity = $null
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        Resolve-SovereignCommanderOperatorContextV1 -UserSid $identity.User.Value -AdministratorRole ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
+    } catch {
+        [pscustomobject]@{ normalOperatorObserved = $false; blocker = 'SOVEREIGN_COMMANDER_OPERATOR_CONTEXT_UNPROVEN' }
+    } finally {
+        if ($null -ne $identity) { $identity.Dispose() }
+    }
+}
+$operatorContext = Get-SovereignCommanderOperatorContextV1
+if ($null -eq $operatorContext -or $operatorContext.normalOperatorObserved -isnot [bool] -or $operatorContext.normalOperatorObserved -ne $true) {
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.sovereign-commander-watchdog.v1'
+        healthy = $false
+        blocker = $operatorContext.blocker
+        normalOperatorObserved = $false
+        runtimeActivationGranted = $false
+        sourceMutationAllowed = $false
+        arbitraryShellAllowed = $false
+        pcRestartAllowed = $false
+        finalVerdict = 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED'
+    } | ConvertTo-Json -Compress
+    exit 2
+}
+
 $serverScript = Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs'
 $fleetSupervisorScript = Join-Path $repoRoot 'scripts\sovereign-commander-fleet-goal-supervisor.mjs'
 $fleetSupervisorMarker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT='
@@ -25,8 +69,16 @@ $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $vrGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
+# Load the single private governor owner/recovery implementation before any
+# acquisition. Definition-only import starts no process and resets no owner.
+. $vrGovernorScript
+$stateRoot = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\vr'
+$statePath = Join-Path $stateRoot 'vr-resource-governor-current.json'
+$script:governorNativeProbeOwnedHold = $false
+$script:governorNativeAttemptDigest = ''
 $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
+$coreDaemonLockPath = Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE 'AppData\Local' }) 'Stephanos\stephanos-core-daemon.lock.json'
 $relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
 $relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
 $desktopCommanderTaskName = 'Stephanos Commander Watchdog'
@@ -37,15 +89,12 @@ $coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)
 $relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)
 $coreHeartbeatFreshSeconds = 60
 $coreBusyGraceSeconds = 300
+. (Join-Path $scriptDir 'stephanos-core-process-observation.ps1')
+$script:coreProcessObservation = $null
 
 function Get-StephanosCoreDaemonProcesses {
-    return @(
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Name -eq 'node.exe' -and
-                [string]$_.CommandLine -match $coreDaemonScriptPattern
-            }
-    )
+    $script:coreProcessObservation = Get-StephanosCoreProcessObservation -CoreScript $coreDaemonScript
+    return @($script:coreProcessObservation.processes)
 }
 
 function Get-StephanosCoreDaemonHealth {
@@ -79,6 +128,50 @@ function Get-StephanosCoreDaemonHealth {
             $sourceHead -match '^[0-9a-fA-F]{40}$' -and
             [string]::Equals($sourceHead, $liveHead, [System.StringComparison]::OrdinalIgnoreCase)
         )
+        $writerPid = 0
+        if ($status.PSObject.Properties['processId']) {
+            [void][int]::TryParse([string]$status.processId, [ref]$writerPid)
+        }
+        $lockOwnerPid = 0
+        $lock = $null
+        if (Test-Path -LiteralPath $coreDaemonLockPath -PathType Leaf) {
+            try {
+                $lock = Get-Content -LiteralPath $coreDaemonLockPath -Raw | ConvertFrom-Json
+                [void][int]::TryParse([string]$lock.pid, [ref]$lockOwnerPid)
+            } catch {}
+        }
+        $coreProcesses = @(Get-StephanosCoreDaemonProcesses)
+        $writerCustodyProven = $false
+        if ($script:coreProcessObservation.complete -and
+            $coreProcesses.Count -eq 1 -and $writerPid -gt 0 -and
+            $lockOwnerPid -eq $writerPid -and $null -ne $lock -and
+            [string]$lock.schemaVersion -ceq 'stephanos.core-daemon-lock.v1' -and
+            [string]$lock.sourceHead -cmatch '^[0-9a-f]{40}$' -and
+            [string]::Equals([string]$lock.sourceHead, [string]$status.sourceHead, [System.StringComparison]::OrdinalIgnoreCase)) {
+            try {
+                $writerProcess = @($coreProcesses | Where-Object { [int]$_.ProcessId -eq $writerPid })
+                if ($writerProcess.Count -eq 1 -and $null -ne $writerProcess[0].CreationDate) {
+                    $lockStart = [DateTimeOffset]::Parse([string]$lock.startedAtUtc)
+                    $writerCreated = [DateTimeOffset]::new([datetime]$writerProcess[0].CreationDate)
+                    $heartbeatAt = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
+                    $startupLagSeconds = ($lockStart.ToUniversalTime() - $writerCreated.ToUniversalTime()).TotalSeconds
+                    $writerCustodyProven = [bool](
+                        $lockStart.Offset -eq [TimeSpan]::Zero -and
+                        $startupLagSeconds -ge -3 -and $startupLagSeconds -le 90 -and
+                        $lockStart -le $heartbeatAt
+                    )
+                }
+            } catch { $writerCustodyProven = $false }
+        }
+        $rescueCount = 0
+        $rescueStage = if ($status.PSObject.Properties['outerBridgeLastStage']) {
+            [string]$status.outerBridgeLastStage
+        } else { '' }
+        $rescueGenerationProven = [bool](
+            $status.PSObject.Properties['outerBridgeRunCount'] -and
+            [int]::TryParse([string]$status.outerBridgeRunCount, [ref]$rescueCount) -and
+            $rescueCount -ge 0 -and $rescueStage -cmatch '^[A-Z][A-Z0-9_]{0,79}$'
+        )
         $flywheelCycleRunningProperty = $status.PSObject.Properties['flywheelCycleRunning']
         $flywheelCycleStartedProperty = $status.PSObject.Properties['flywheelLastCycleStartedAtUtc']
         $flywheelCycleRunning = [bool]($null -ne $flywheelCycleRunningProperty -and $flywheelCycleRunningProperty.Value -eq $true)
@@ -91,6 +184,7 @@ function Get-StephanosCoreDaemonHealth {
         }
         $busyGraceActive = [bool](
             $status.daemonHealthy -eq $true -and
+            $writerCustodyProven -and $rescueGenerationProven -and
             $readiness -ne 'RELOAD_REQUIRED' -and
             $sourceHeadMatchesLive -and
             $flywheelCycleRunning -and
@@ -101,6 +195,7 @@ function Get-StephanosCoreDaemonHealth {
         return [pscustomobject]@{
             healthy = [bool](
                 $status.daemonHealthy -eq $true -and
+                $writerCustodyProven -and $rescueGenerationProven -and
                 $readiness -ne 'RELOAD_REQUIRED' -and
                 $sourceHeadMatchesLive -and
                 ($heartbeatFresh -or $busyGraceActive)
@@ -198,6 +293,32 @@ function Get-SovereignRelayDaemonHealth {
     }
 }
 
+function Wait-SovereignRelayDaemonReady {
+    param(
+        [int]$Attempts = 40,
+        [int]$DelayMilliseconds = 500
+    )
+    $lastProcesses = @()
+    $lastHealth = $null
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        $lastProcesses = @(Get-SovereignRelayDaemonProcesses)
+        $lastHealth = Get-SovereignRelayDaemonHealth
+        if ($lastProcesses.Count -eq 1 -and [bool]$lastHealth.healthy) {
+            return [pscustomobject]@{
+                ready = $true
+                processes = $lastProcesses
+                health = $lastHealth
+            }
+        }
+        Start-Sleep -Milliseconds $DelayMilliseconds
+    }
+    return [pscustomobject]@{
+        ready = $false
+        processes = $lastProcesses
+        health = $lastHealth
+    }
+}
+
 function Get-SovereignCommanderProcesses {
     $processes = @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
@@ -249,14 +370,131 @@ function Get-DesktopCommanderRemoteProcesses {
 }
 
 function Get-VrResourceGovernorProcesses {
-    return @(
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Name -eq 'powershell.exe' -and
-                [string]$_.CommandLine -match $vrGovernorScriptPattern -and
-                [string]$_.CommandLine -match '(?i)-Action\s+Watch'
+    $script:vrGovernorInventoryComplete = $false
+    try {
+        $rows = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop)
+        $governorMatches = @()
+        foreach ($row in $rows) {
+            # An opaque PowerShell may be the existing owner. Absence is not
+            # established by suppressing a failed census or unreadable command.
+            if (-not [string]$row.CommandLine) { return @() }
+            if ([string]$row.CommandLine -match $vrGovernorScriptPattern) {
+                if (-not (Test-VrResourceGovernorProcessIdentity -Process $row)) { return @() }
+                $governorMatches += $row
             }
-    )
+        }
+        $script:vrGovernorInventoryComplete = $true
+        return @($governorMatches)
+    } catch { return @() }
+}
+
+function Test-VrResourceGovernorProcessIdentity {
+    param($Process)
+    try {
+        if ($null -eq $Process -or [int]$Process.ProcessId -le 0 -or
+            -not [string]::Equals([string]$Process.ExecutablePath, $powershellExecutable, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        $tail = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $vrGovernorScript + '" -Action Watch'
+        # Start-Process serializes a trailing ASCII separator after Watch.
+        # Only those terminal separators are syntax; every fixed argument,
+        # executable, script, PID and birth check still binds the same owner.
+        $command = ([string]$Process.CommandLine).TrimEnd([char[]]@([char]0x20, [char]0x09))
+        if (-not [string]::Equals($command, ('"' + $powershellExecutable + '" ' + $tail), [StringComparison]::OrdinalIgnoreCase) -and
+            -not [string]::Equals($command, ($powershellExecutable + ' ' + $tail), [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        $born = ([DateTime]$Process.CreationDate).ToUniversalTime()
+        return $born -le [DateTime]::UtcNow -and $born.Year -ge 2020
+    } catch { return $false }
+}
+
+function Get-VrResourceGovernorProgress {
+    param($Process)
+    $stateRead = $false
+    try {
+        $stateFile = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\vr\vr-resource-governor-current.json'
+        if (-not (Test-Path -LiteralPath $stateFile -ErrorAction Stop)) {
+            return [pscustomobject]@{ fresh = $false; updatedAtUtc = ''; custodyHeld = $false; readable = $true }
+        }
+        $info = Get-Item -LiteralPath $stateFile -ErrorAction Stop
+        if ($info.PSIsContainer -or $info.Length -lt 2 -or $info.Length -gt 32768 -or
+            ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'STATE_UNPROVEN' }
+        $state = [IO.File]::ReadAllText($stateFile) | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $state -or $state.GetType().FullName -cne 'System.Management.Automation.PSCustomObject') { throw 'STATE_UNPROVEN' }
+        $stateRead = $true
+        if ($state.PSObject.Properties['nativeProbeCustodyHeld'] -and
+            ($state.nativeProbeCustodyHeld -isnot [bool] -or $state.nativeProbeCustodyHeld -ne $false)) {
+            return [pscustomobject]@{ fresh = $false; updatedAtUtc = ''; custodyHeld = $true; readable = $true }
+        }
+        if (-not (Test-VrResourceGovernorProcessIdentity -Process $Process)) { throw 'OWNER_UNPROVEN' }
+        $observed = [DateTimeOffset]::Parse([string]$state.updatedAtUtc).UtcDateTime
+        $birth = [DateTimeOffset]::Parse([string]$state.publisherStartedAtUtc).UtcDateTime
+        $expectedBirth = ([DateTime]$Process.CreationDate).ToUniversalTime()
+        $age = ([DateTime]::UtcNow - $observed).TotalSeconds
+        if ($state.schemaVersion -cne 'stephanos.vr-resource-governor.v1' -or $state.governorVersion -ne 3 -or
+            $state.governorVersion -isnot [int] -or
+            ($state.publisherProcessId -isnot [int] -and $state.publisherProcessId -isnot [long]) -or
+            $state.publisherProcessId -ne [int]$Process.ProcessId -or
+            ($birth.Ticks - ($birth.Ticks % 10)) -ne ($expectedBirth.Ticks - ($expectedBirth.Ticks % 10)) -or
+            $observed -lt $birth -or $age -lt 0 -or $age -gt 15 -or
+            $state.phase -cnotin @('NORMAL','PREPARING','GAMING','COOLDOWN') -or $state.active -isnot [bool]) { throw 'STATE_UNPROVEN' }
+        return [pscustomobject]@{ fresh = $true; updatedAtUtc = $observed.ToString('o'); custodyHeld = $false; readable = $true }
+    } catch { return [pscustomobject]@{ fresh = $false; updatedAtUtc = ''; custodyHeld = (-not $stateRead); readable = $false } }
+}
+
+function Wait-VrResourceGovernorProgress {
+    param($Process, [string]$After = '')
+    $baseline = [DateTime]::MinValue
+    if ($After) { try { $baseline = [DateTimeOffset]::Parse($After).UtcDateTime } catch { return $false } }
+    for ($attempt = 0; $attempt -lt 16; $attempt++) {
+        $rows = @(Get-VrResourceGovernorProcesses)
+        if (-not $script:vrGovernorInventoryComplete -or $rows.Count -ne 1 -or
+            [int]$rows[0].ProcessId -ne [int]$Process.ProcessId -or
+            ([DateTime]$rows[0].CreationDate) -ne ([DateTime]$Process.CreationDate)) { return $false }
+        $progress = Get-VrResourceGovernorProgress -Process $rows[0]
+        if ($progress.fresh -and [DateTimeOffset]::Parse($progress.updatedAtUtc).UtcDateTime -gt $baseline) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+function Stop-VerifiedVrResourceGovernor {
+    param($Process)
+    Assert-GovernorMutationOwner
+    $rows = @(Get-VrResourceGovernorProcesses)
+    if (-not $script:vrGovernorInventoryComplete -or $rows.Count -ne 1 -or
+        [int]$rows[0].ProcessId -ne [int]$Process.ProcessId -or
+        ([DateTime]$rows[0].CreationDate) -ne ([DateTime]$Process.CreationDate)) { throw 'GOVERNOR_OWNER_CHANGED' }
+    $retained = Get-Process -Id ([int]$Process.ProcessId) -ErrorAction Stop
+    try {
+        [void]$retained.Handle
+        $born = $retained.StartTime.ToUniversalTime()
+        $expected = ([DateTime]$Process.CreationDate).ToUniversalTime()
+        if (-not [string]::Equals($retained.Path, $powershellExecutable, [StringComparison]::OrdinalIgnoreCase) -or
+            ($born.Ticks - ($born.Ticks % 10)) -ne ($expected.Ticks - ($expected.Ticks % 10))) { throw 'GOVERNOR_OWNER_CHANGED' }
+        $children = @(Get-CimInstance Win32_Process -Filter ('ParentProcessId=' + [int]$Process.ProcessId) -ErrorAction Stop)
+        if (@($children | Where-Object { $_.Name -ine 'conhost.exe' }).Count -ne 0) { throw 'GOVERNOR_CHILD_CUSTODY_UNPROVEN' }
+        Set-VrResourceGovernorCustodyHold -Held $true
+        # Kill the retained process object only after exact image/birth and a
+        # fresh complete singleton census. No caller PID or broad process kill.
+        $retained.Kill()
+        if (-not $retained.WaitForExit(2000)) { throw 'GOVERNOR_EXIT_UNPROVEN' }
+        Set-VrResourceGovernorCustodyHold -Held $true
+        # A probe can start between the first census and parent termination.
+        # Once this retained parent has exited it cannot start another child.
+        $remaining = @(Get-CimInstance Win32_Process -Filter ('ParentProcessId=' + [int]$Process.ProcessId) -ErrorAction Stop)
+        if (@($remaining | Where-Object { $_.Name -ine 'conhost.exe' }).Count -ne 0) {
+            Set-VrResourceGovernorCustodyHold -Held $true
+            throw 'GOVERNOR_CHILD_CUSTODY_UNPROVEN'
+        }
+        $script:governorNativeProbeExitProven = $true
+        Set-VrResourceGovernorCustodyHold -Held $false
+    } catch {
+        try { Set-VrResourceGovernorCustodyHold -Held $true } catch {}
+        throw
+    } finally { $retained.Dispose() }
+}
+
+function Set-VrResourceGovernorCustodyHold {
+    param([bool]$Held)
+    Set-GovernorNativeCustodyHold -Held $Held -Operation GovernorRecycle
 }
 
 function Test-VrResourceGovernorProcessCurrent {
@@ -268,11 +506,207 @@ function Test-VrResourceGovernorProcessCurrent {
     try {
         $scriptWriteUtc = (Get-Item -LiteralPath $vrGovernorScript -ErrorAction Stop).LastWriteTimeUtc
         $created = [DateTime]$Process.CreationDate
-        return $created.ToUniversalTime() -ge $scriptWriteUtc.AddSeconds(-2)
+        return $created.ToUniversalTime() -ge $scriptWriteUtc
     }
     catch {
         return $false
     }
+}
+
+# Closed observation only, after the existing lifecycle/progress owner. Re-census
+# the same PID/birth and recheck current source before publishing adoption.
+function Get-VrResourceGovernorSourceHead {
+    try {
+        if (-not (Test-Path -LiteralPath $gitExe -PathType Leaf)) { return '' }
+        $head = [string]((& $gitExe -C $repoRoot rev-parse HEAD 2>$null))
+        if ($LASTEXITCODE -ne 0 -or $head.Trim() -cnotmatch '^[a-f0-9]{40}$') { return '' }
+        return $head.Trim()
+    } catch { return '' }
+}
+function Get-VrResourceGovernorAdoptionObservation {
+    param($Process, $SourceBefore, [bool]$ProgressVerified)
+    if (-not $ProgressVerified -or $null -eq $SourceBefore -or
+        $operatorContext.normalOperatorObserved -isnot [bool] -or -not $operatorContext.normalOperatorObserved) { return $null }
+    $rows = @(Get-VrResourceGovernorProcesses)
+    if (-not $script:vrGovernorInventoryComplete -or $rows.Count -ne 1 -or $null -eq $Process -or
+        [int]$rows[0].ProcessId -ne [int]$Process.ProcessId -or
+        ([DateTime]$rows[0].CreationDate) -ne ([DateTime]$Process.CreationDate) -or
+        -not (Test-VrResourceGovernorProcessIdentity -Process $rows[0]) -or
+        -not (Test-VrResourceGovernorProcessCurrent -Process $rows[0])) { return $null }
+    $progress = Get-VrResourceGovernorProgress -Process $rows[0]
+    if (-not $progress.fresh -or $progress.custodyHeld) { return $null }
+    if (-not (Wait-VrResourceGovernorProgress -Process $rows[0] -After $progress.updatedAtUtc)) { return $null }
+    $finalRows = @(Get-VrResourceGovernorProcesses)
+    if (-not $script:vrGovernorInventoryComplete -or $finalRows.Count -ne 1 -or
+        [int]$finalRows[0].ProcessId -ne [int]$Process.ProcessId -or
+        ([DateTime]$finalRows[0].CreationDate) -ne ([DateTime]$Process.CreationDate) -or
+        -not (Test-VrResourceGovernorProcessIdentity -Process $finalRows[0]) -or
+        -not (Test-VrResourceGovernorProcessCurrent -Process $finalRows[0])) { return $null }
+    $sourceAfter = Get-VrResourceGovernorSourceObservation
+    if ($null -eq $sourceAfter -or $sourceAfter.sourceHead -cne $SourceBefore.sourceHead -or
+        $sourceAfter.sourceSha256 -cne $SourceBefore.sourceSha256 -or
+        $sourceAfter.writeTicks -ne $SourceBefore.writeTicks -or
+        $sourceAfter.creationTicks -ne $SourceBefore.creationTicks -or
+        $sourceAfter.length -ne $SourceBefore.length -or
+        ([DateTime]$finalRows[0].CreationDate).ToUniversalTime().Ticks -lt $sourceAfter.writeTicks) { return $null }
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.post-sync-governor-proof.v1'
+        normalOperatorObserved = $true
+        healthy = $true
+        inventoryComplete = $true
+        processCount = 1
+        identityVerified = $true
+        progressVerified = $true
+        currentSourceVerified = $true
+        sourceHead = $sourceAfter.sourceHead
+        sourceHeadMatchesLive = $true
+        sourceSha256 = $sourceAfter.sourceSha256
+        blocker = ''
+    }
+}
+
+# Fixed source only. Raw bytes must equal the canonical Git blob, allowing only
+# the CRLF checkout representation; no configured filter or caller path runs.
+function Get-VrResourceGovernorSourceObservation {
+    try {
+        $head = Get-VrResourceGovernorSourceHead
+        if ($head -cnotmatch '^[a-f0-9]{40}$') { return $null }
+        $blob = [string]((& $gitExe -C $repoRoot rev-parse ($head + ':scripts/windows/run-vr-resource-governor.ps1') 2>$null))
+        if ($LASTEXITCODE -ne 0 -or $blob.Trim() -cnotmatch '^[a-f0-9]{40}$') { return $null }
+        $before = Get-Item -LiteralPath $vrGovernorScript -Force -ErrorAction Stop
+        if ($before.PSIsContainer -or $before.Length -lt 2 -or $before.Length -gt 262144 -or
+            ($before.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $null }
+        $raw = [IO.File]::ReadAllBytes($vrGovernorScript)
+        if ($raw.Length -ne $before.Length) { return $null }
+        $utf8 = [Text.UTF8Encoding]::new($false, $true)
+        $canonical = $utf8.GetBytes($utf8.GetString($raw).Replace(([string][char]13 + [char]10), ([string][char]10)))
+        $matches = $false
+        foreach ($bytes in @($raw, $canonical)) {
+            $sha1 = [Security.Cryptography.SHA1]::Create()
+            try {
+                $prefix = [Text.Encoding]::ASCII.GetBytes('blob ' + $bytes.Length + [char]0)
+                [void]$sha1.TransformBlock($prefix, 0, $prefix.Length, $prefix, 0)
+                [void]$sha1.TransformFinalBlock($bytes, 0, $bytes.Length)
+                $id = ([BitConverter]::ToString($sha1.Hash)).Replace('-', '').ToLowerInvariant()
+                if ($id -ceq $blob.Trim()) { $matches = $true }
+            } finally { $sha1.Dispose() }
+        }
+        if (-not $matches) { return $null }
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try { $digest = ([BitConverter]::ToString($sha256.ComputeHash($raw))).Replace('-', '').ToLowerInvariant() }
+        finally { $sha256.Dispose() }
+        $after = Get-Item -LiteralPath $vrGovernorScript -Force -ErrorAction Stop
+        if ($after.PSIsContainer -or ($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $after.Length -ne $before.Length -or $after.LastWriteTimeUtc.Ticks -ne $before.LastWriteTimeUtc.Ticks -or
+            $after.CreationTimeUtc.Ticks -ne $before.CreationTimeUtc.Ticks -or
+            (Get-VrResourceGovernorSourceHead) -cne $head) { return $null }
+        return [pscustomobject]@{ sourceHead=$head; sourceSha256=$digest; writeTicks=$after.LastWriteTimeUtc.Ticks;
+            creationTicks=$after.CreationTimeUtc.Ticks; length=$after.Length }
+    } catch { return $null }
+}
+
+function Invoke-VrResourceGovernorLifecycle {
+    param($ExpectedProcess, [bool]$ExpectedAbsent, [bool]$ProgressProven, [string]$ExpectedProgress = '')
+    $owner = Enter-GovernorMutationOwner
+    $result = [pscustomobject]@{ blocker = ''; restartRequested = $false; startRequested = $false; stopped = 0; startedPid = 0; baseline = '' }
+    if (-not $owner.acquired) { $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BUSY'; return $result }
+    $script:governorMutationOwner = $owner
+    try {
+        if ($owner.abandoned) {
+            Set-VrResourceGovernorCustodyHold -Held $true
+            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'
+            return $result
+        }
+        # Re-census after acquiring the common owner; an earlier observation
+        # cannot authorize killing a replacement or starting beside a new owner.
+        $rows = @(Get-VrResourceGovernorProcesses)
+        if (-not $script:vrGovernorInventoryComplete -or $rows.Count -gt 1) {
+            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'; return $result
+        }
+        if (($ExpectedProcess -and ($rows.Count -ne 1 -or
+            [int]$rows[0].ProcessId -ne [int]$ExpectedProcess.ProcessId -or
+            ([DateTime]$rows[0].CreationDate) -ne ([DateTime]$ExpectedProcess.CreationDate))) -or
+            ($ExpectedAbsent -and $rows.Count -ne 0) -or (-not $ExpectedProcess -and -not $ExpectedAbsent)) {
+            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'; return $result
+        }
+        $prior = Get-VrResourceGovernorProgress -Process $(if ($rows.Count -eq 1) { $rows[0] } else { $null })
+        $result.baseline = $prior.updatedAtUtc
+        if ($prior.custodyHeld) {
+            # Only this existing lifecycle owner may retire a held snapshot,
+            # after complete current exclusion of the closed native probe domain.
+            if (-not (Invoke-GovernorHeldProbeRecoveryV1)) {
+                $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'; return $result
+            }
+            $prior = Get-VrResourceGovernorProgress -Process $(if ($rows.Count -eq 1) { $rows[0] } else { $null })
+            if ($prior.custodyHeld) { $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN'; return $result }
+        }
+        $baseline = if ($ExpectedProgress) { [DateTimeOffset]::Parse($ExpectedProgress).UtcDateTime } else { [DateTime]::MinValue }
+        $ProgressProven = $prior.fresh -and ($ProgressProven -or
+            [DateTimeOffset]::Parse($prior.updatedAtUtc).UtcDateTime -gt $baseline)
+        $sourceStale = $rows.Count -eq 1 -and -not (Test-VrResourceGovernorProcessCurrent -Process $rows[0])
+        if ($rows.Count -eq 1 -and -not $sourceStale -and -not $ProgressProven -and
+            ([DateTime]::UtcNow - ([DateTime]$rows[0].CreationDate).ToUniversalTime()).TotalSeconds -lt 15) {
+            $result.blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STARTING'; return $result
+        }
+        if ($rows.Count -eq 1 -and ($sourceStale -or -not $ProgressProven)) {
+            $result.restartRequested = $true
+            Stop-VerifiedVrResourceGovernor -Process $rows[0]
+            $result.stopped = 1
+            $rows = @()
+        }
+        if ($rows.Count -eq 0) {
+            $result.startRequested = $true
+            $quotedScript = '"' + $vrGovernorScript.Replace('"', '\"') + '"'
+            $started = Start-Process -FilePath $powershellExecutable -ArgumentList @(
+                '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                '-File', $quotedScript, '-Action', 'Watch'
+            ) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+            try { $result.startedPid = [int]$started.Id } finally { $started.Dispose() }
+        }
+        return $result
+    } catch {
+        $result.blocker = if ($owner.abandoned) { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_CHILD_CUSTODY_UNPROVEN' }
+            elseif ($result.restartRequested) { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED' }
+            else { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED' }
+        return $result
+    } finally {
+        Exit-GovernorMutationOwner -Owner $owner
+        $script:governorMutationOwner = $null
+    }
+}
+
+function Invoke-VrResourceGovernorObservedLifecycle {
+    # Periodic tasks can repeatedly coincide with short-lived opaque processes
+    # or an active Watch tick. Re-observe only these pre-mutation refusals; never
+    # turn elapsed time or a retry into ownership, custody or absence evidence.
+    $retryClock = [Diagnostics.Stopwatch]::StartNew()
+    $result = [pscustomobject]@{ blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'; restartRequested = $false; startRequested = $false; stopped = 0; startedPid = 0; baseline = '' }
+    for ($attempt = 0; $attempt -lt 24; $attempt++) {
+        if ($retryClock.Elapsed.TotalMilliseconds -ge 12000) { return $result }
+        $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
+        $vrGovernorExpectedAbsent = $script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 0
+        $vrGovernorPriorProgress = Get-VrResourceGovernorProgress -Process $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null })
+        # Observation may wait for an active reconciliation to publish, but never
+        # retains the mutex while asking Watch to advance. Busy is not abandonment.
+        $vrGovernorProgressProven = $false
+        if ($script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 1 -and
+            (Test-VrResourceGovernorProcessCurrent -Process $vrGovernorBefore[0])) {
+            $vrGovernorProgressProven = Wait-VrResourceGovernorProgress -Process $vrGovernorBefore[0] -After $vrGovernorPriorProgress.updatedAtUtc
+        }
+        if ($retryClock.Elapsed.TotalMilliseconds -ge 12000) { return $result }
+        $result = Invoke-VrResourceGovernorLifecycle -ExpectedProcess $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null }) `
+            -ExpectedAbsent $vrGovernorExpectedAbsent -ProgressProven $vrGovernorProgressProven -ExpectedProgress $vrGovernorPriorProgress.updatedAtUtc
+
+        # Both retryable codes originate before recovery, stop or start. The
+        # explicit mutation flags are an additional boundary, not exit proof.
+        if ($result.restartRequested -ne $false -or $result.startRequested -ne $false -or
+            $result.stopped -ne 0 -or $result.startedPid -ne 0 -or
+            $result.blocker -cnotin @('SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BUSY',
+                'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN')) { return $result }
+        if ($attempt -eq 23 -or $retryClock.Elapsed.TotalMilliseconds -ge 11500) { return $result }
+        Start-Sleep -Milliseconds 500
+    }
+    return $result
 }
 
 function Get-SovereignCommanderHealth {
@@ -286,11 +720,17 @@ function Get-SovereignCommanderHealth {
         $continuousRepairEnabled = $false
         $continuousRepairRunning = $false
         $continuousRepairScheduled = $false
+        $timeoutCustodyHeld = $false
+        $maintenanceInFlight = $false
         if ($null -ne $continuousRepairProperty -and $null -ne $continuousRepairProperty.Value) {
             $continuousRepair = $continuousRepairProperty.Value
             $enabledProperty = $continuousRepair.PSObject.Properties['enabled']
             $runningProperty = $continuousRepair.PSObject.Properties['running']
             $scheduledProperty = $continuousRepair.PSObject.Properties['scheduled']
+            $custodyProperty = $continuousRepair.PSObject.Properties['timeoutCustodyHeld']
+            $maintenanceProperty = $continuousRepair.PSObject.Properties['maintenanceInFlight']
+            $timeoutCustodyHeld = [bool]($null -ne $custodyProperty -and $custodyProperty.Value -eq $true)
+            $maintenanceInFlight = [bool]($null -ne $maintenanceProperty -and $maintenanceProperty.Value -eq $true)
             $continuousRepairEnabled = [bool]($null -ne $enabledProperty -and $enabledProperty.Value -eq $true)
             $continuousRepairRunning = [bool]($null -ne $runningProperty -and $runningProperty.Value -eq $true)
             $continuousRepairScheduled = [bool]($null -ne $scheduledProperty -and $scheduledProperty.Value -eq $true)
@@ -310,6 +750,8 @@ function Get-SovereignCommanderHealth {
             continuousRepairRunning = [bool]$continuousRepairRunning
             continuousRepairScheduled = [bool]$continuousRepairScheduled
             capabilityVersion = $capabilityVersion
+            timeoutCustodyHeld = $timeoutCustodyHeld
+            maintenanceInFlight = $maintenanceInFlight
         }
     } catch {
         return [pscustomobject]@{
@@ -321,6 +763,8 @@ function Get-SovereignCommanderHealth {
             continuousRepairRunning = $false
             continuousRepairScheduled = $false
             capabilityVersion = ''
+            timeoutCustodyHeld = $false
+            maintenanceInFlight = $false
         }
     }
 }
@@ -371,6 +815,8 @@ $healthBefore = if ($authenticatedInBandParentProof -and $before.Count -ge 1) {
         continuousRepairRunning = $true
         continuousRepairScheduled = $false
         capabilityVersion = $RequireCapabilityVersion
+        timeoutCustodyHeld = $false
+        maintenanceInFlight = $false
     }
 } else {
     Get-SovereignCommanderHealth
@@ -394,12 +840,14 @@ $vrGovernorStoppedPidCount = 0
 $vrGovernorStartedPid = 0
 $vrGovernorProcessCount = 0
 $vrGovernorOk = $false
+$vrGovernorAdoption = $null
 $vrGovernorBlocker = ''
 $coreDaemonStartRequested = $false
 $coreDaemonRestartRequested = $false
 $coreDaemonStartedPid = 0
 $coreDaemonStoppedPidCount = 0
-$coreDaemonProcessCount = 0
+$coreDaemonProcessCount = $null
+$coreDaemonProcessInventoryComplete = $false
 $coreDaemonOk = $false
 $coreDaemonBlocker = ''
 $coreDaemonHeartbeatAgeSeconds = $null
@@ -424,7 +872,19 @@ $desktopCommanderCrossHealOk = $false
 $desktopCommanderCrossHealBlocker = ''
 $desktopCommanderRemoteProcessCount = 0
 
-if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
+if ($healthBefore.timeoutCustodyHeld -eq $true) {
+    # A held process is the current custody owner, even when its capability
+    # version is stale. Recycling it would erase the guardian's timeout fence.
+    # Keep the original owner and report HOLD; do not pretend it is healthy.
+    $blocker = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN'
+} elseif ($healthBefore.maintenanceInFlight -eq $true) {
+    $blocker = 'SOVEREIGN_MAINTENANCE_OWNER_BUSY'
+} elseif (($before.Count -gt 0 -or $healthBefore.basicHealthy) -and -not $healthyBefore -and -not $authenticatedInBandParentProof) {
+    # A health snapshot is not an atomic maintenance drain/reservation. Legacy
+    # daemons also omit custody fields. Never kill an existing owner to refresh
+    # its contract until a separate admitted handoff proves terminal custody.
+    $blocker = 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN'
+} elseif (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_TOKEN_MISSING'
@@ -467,6 +927,8 @@ $healthAfter = if ($authenticatedInBandParentProof -and $after.Count -ge 1) {
         capabilitySatisfied = $true
         continuousRepairSatisfied = $true
         capabilityVersion = $RequireCapabilityVersion
+        timeoutCustodyHeld = $false
+        maintenanceInFlight = $false
     }
 } else {
     Wait-SovereignCommanderHealth
@@ -511,50 +973,17 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
 } elseif (-not (Test-Path -LiteralPath $powershellExecutable -PathType Leaf)) {
     $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
 } else {
-    $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
-    $vrGovernorSourceStale = [bool](
-        $vrGovernorBefore.Count -gt 0 -and
-        $null -ne ($vrGovernorBefore | Where-Object { -not (Test-VrResourceGovernorProcessCurrent -Process $_) } | Select-Object -First 1)
-    )
-
-    # PowerShell loads the governor script into memory. A process can therefore
-    # remain alive for days while running stale protection logic after a merge.
-    # Recycle it whenever the canonical governor source is newer than the watcher.
-    if ($vrGovernorSourceStale) {
-        $vrGovernorRestartRequested = $true
-        try {
-            foreach ($process in $vrGovernorBefore) {
-                Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
-                $vrGovernorStoppedPidCount += 1
-            }
-            Start-Sleep -Milliseconds 250
-            $vrGovernorBefore = @()
-        }
-        catch {
-            $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED'
-        }
-    }
-
-    if (-not $vrGovernorBlocker -and $vrGovernorBefore.Count -eq 0) {
-        $vrGovernorStartRequested = $true
-        try {
-            $quotedVrGovernorScript = '"' + $vrGovernorScript.Replace('"', '\"') + '"'
-            $vrGovernorStarted = Start-Process -FilePath $powershellExecutable -ArgumentList @(
-                '-NoProfile',
-                '-NonInteractive',
-                '-ExecutionPolicy', 'Bypass',
-                '-File', $quotedVrGovernorScript,
-                '-Action', 'Watch'
-            ) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
-            $vrGovernorStartedPid = [int]$vrGovernorStarted.Id
-            Start-Sleep -Milliseconds 500
-        } catch {
-            $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED'
-        }
-    }
+    $vrGovernorSourceBefore = Get-VrResourceGovernorSourceObservation
+    $vrGovernorLifecycle = Invoke-VrResourceGovernorObservedLifecycle
+    $vrGovernorBlocker = $vrGovernorLifecycle.blocker
+    $vrGovernorRestartRequested = $vrGovernorLifecycle.restartRequested
+    $vrGovernorStartRequested = $vrGovernorLifecycle.startRequested
+    $vrGovernorStoppedPidCount = $vrGovernorLifecycle.stopped
+    $vrGovernorStartedPid = $vrGovernorLifecycle.startedPid
     $vrGovernorAfter = @(Get-VrResourceGovernorProcesses)
     $vrGovernorProcessCount = $vrGovernorAfter.Count
-    $vrGovernorOk = $vrGovernorProcessCount -ge 1
+    $vrGovernorOk = [bool]($script:vrGovernorInventoryComplete -and $vrGovernorProcessCount -eq 1 -and
+        -not $vrGovernorBlocker -and (Wait-VrResourceGovernorProgress -Process $vrGovernorAfter[0] -After $vrGovernorLifecycle.baseline))
     if (-not $vrGovernorOk -and -not $vrGovernorBlocker) {
         $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_NOT_RUNNING'
     }
@@ -566,35 +995,42 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
 # never recycle the caller while it is establishing its first fresh heartbeat.
 if ($SkipCoreDaemonLifecycle) {
     $coreObserved = @(Get-StephanosCoreDaemonProcesses)
+    $coreObservedComplete = [bool]$script:coreProcessObservation.complete
     $coreObservedHealth = Get-StephanosCoreDaemonHealth
-    $coreDaemonProcessCount = $coreObserved.Count
+    $coreDaemonProcessInventoryComplete = [bool]($coreObservedComplete -and $script:coreProcessObservation.complete)
+    $coreDaemonProcessCount = if ($coreDaemonProcessInventoryComplete) { $coreObserved.Count } else { $null }
     $coreDaemonHeartbeatAgeSeconds = $coreObservedHealth.heartbeatAgeSeconds
     $coreDaemonHeartbeatFresh = [bool]$coreObservedHealth.heartbeatFresh
     $coreDaemonBusyGraceActive = [bool]$coreObservedHealth.busyGraceActive
     $coreDaemonFlywheelCycleAgeSeconds = $coreObservedHealth.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreObservedHealth.readiness
     $coreDaemonSourceHead = [string]$coreObservedHealth.sourceHead
-    $coreDaemonOk = [bool]($coreObserved.Count -ge 1 -and $coreObservedHealth.healthy)
+    if (-not $coreDaemonProcessInventoryComplete) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_PROCESS_INVENTORY_UNPROVEN'
+    } elseif ($coreObserved.Count -gt 1) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
+    }
+    $coreDaemonOk = [bool]($coreObserved.Count -eq 1 -and $coreObservedHealth.healthy -and -not $coreDaemonBlocker)
 } elseif (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'
 } else {
     $coreBefore = @(Get-StephanosCoreDaemonProcesses)
+    $coreBeforeComplete = [bool]$script:coreProcessObservation.complete
     $coreHealthBefore = Get-StephanosCoreDaemonHealth
-    if ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
-        if ($coreBefore.Count -gt 0) {
-            $coreDaemonRestartRequested = $true
-            try {
-                foreach ($process in $coreBefore) {
-                    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
-                    $coreDaemonStoppedPidCount += 1
-                }
-                Start-Sleep -Milliseconds 300
-            } catch {
-                $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_STALE_RECYCLE_FAILED'
-            }
-        }
+    # Multiple matching processes require independent lock/heartbeat custody
+    # proof. Never force-terminate all matches and create another writer.
+    if (-not $coreBeforeComplete -or -not $script:coreProcessObservation.complete) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_PROCESS_INVENTORY_UNPROVEN'
+    } elseif ($coreBefore.Count -gt 1) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
+    } elseif ($coreBefore.Count -eq 1 -and -not [bool]$coreHealthBefore.healthy) {
+        # The sole matching process can be the original lock owner. A stale
+        # heartbeat is not a terminal custody receipt or kill authorisation.
+        # Keep it fenced for an independently proven owner repair.
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED'
+    } elseif ($coreBefore.Count -eq 0) {
         if (-not $coreDaemonBlocker) {
             $coreDaemonStartRequested = $true
             $coreBootstrapMarkerName = 'STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN'
@@ -617,19 +1053,21 @@ if ($SkipCoreDaemonLifecycle) {
         }
     }
     $coreAfter = @(Get-StephanosCoreDaemonProcesses)
+    $coreAfterComplete = [bool]$script:coreProcessObservation.complete
     $coreHealthAfter = if ($coreDaemonStartRequested -or $coreDaemonRestartRequested) {
         Wait-StephanosCoreDaemonHealth
     } else {
         Get-StephanosCoreDaemonHealth
     }
-    $coreDaemonProcessCount = $coreAfter.Count
+    $coreDaemonProcessInventoryComplete = [bool]($coreAfterComplete -and $script:coreProcessObservation.complete)
+    $coreDaemonProcessCount = if ($coreDaemonProcessInventoryComplete) { $coreAfter.Count } else { $null }
     $coreDaemonHeartbeatAgeSeconds = $coreHealthAfter.heartbeatAgeSeconds
     $coreDaemonHeartbeatFresh = [bool]$coreHealthAfter.heartbeatFresh
     $coreDaemonBusyGraceActive = [bool]$coreHealthAfter.busyGraceActive
     $coreDaemonFlywheelCycleAgeSeconds = $coreHealthAfter.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreHealthAfter.readiness
     $coreDaemonSourceHead = [string]$coreHealthAfter.sourceHead
-    $coreDaemonOk = [bool]($coreAfter.Count -ge 1 -and $coreHealthAfter.healthy)
+    $coreDaemonOk = [bool]($coreAfter.Count -eq 1 -and $coreHealthAfter.healthy -and -not $coreDaemonBlocker)
     if (-not $coreDaemonOk -and -not $coreDaemonBlocker) {
         $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'
     }
@@ -644,6 +1082,23 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
 } else {
     $relayBefore = @(Get-SovereignRelayDaemonProcesses)
     $relayHealthBefore = Get-SovereignRelayDaemonHealth
+    # More than one matching relay can never satisfy the exact singleton proof.
+    # Quiesce only these fixed-identity relay processes, then re-observe before
+    # entering the existing absent/unhealthy recycle path reviewed below.
+    if ($relayBefore.Count -gt 1) {
+        $relayDaemonRestartRequested = $true
+        try {
+            foreach ($process in $relayBefore) {
+                Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                $relayDaemonStoppedPidCount += 1
+            }
+            Start-Sleep -Milliseconds 300
+            $relayBefore = @(Get-SovereignRelayDaemonProcesses)
+            $relayHealthBefore = Get-SovereignRelayDaemonHealth
+        } catch {
+            $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_STALE_RECYCLE_FAILED'
+        }
+    }
     if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy) {
         if ($relayBefore.Count -gt 0) {
             $relayDaemonRestartRequested = $true
@@ -663,20 +1118,24 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
                 $quotedRelayDaemonScript = '"' + $relayDaemonScript.Replace('"', '\"') + '"'
                 $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
                 $relayDaemonStartedPid = [int]$relayStarted.Id
-                Start-Sleep -Seconds 6
             } catch {
                 $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_START_FAILED'
             }
         }
     }
-    $relayAfter = @(Get-SovereignRelayDaemonProcesses)
-    $relayHealthAfter = Get-SovereignRelayDaemonHealth
+    $relayReady = if ($relayDaemonBlocker) {
+        [pscustomobject]@{ ready = $false; processes = @(Get-SovereignRelayDaemonProcesses); health = Get-SovereignRelayDaemonHealth }
+    } else {
+        Wait-SovereignRelayDaemonReady
+    }
+    $relayAfter = @($relayReady.processes)
+    $relayHealthAfter = $relayReady.health
     $relayDaemonProcessCount = $relayAfter.Count
     $relayDaemonHeartbeatAgeSeconds = $relayHealthAfter.heartbeatAgeSeconds
     $relayDaemonSourceHead = [string]$relayHealthAfter.sourceHead
     $relayDaemonSourceHeadMatchesLive = [bool]$relayHealthAfter.sourceHeadMatchesLive
     $relayDaemonVerdict = [string]$relayHealthAfter.finalVerdict
-    $relayDaemonHealthy = [bool]($relayAfter.Count -ge 1 -and $relayHealthAfter.healthy)
+    $relayDaemonHealthy = [bool]($relayReady.ready -and $relayAfter.Count -eq 1 -and $relayHealthAfter.healthy)
     if (-not $relayDaemonHealthy -and -not $relayDaemonBlocker) {
         $relayDaemonBlocker = if ($relayHealthAfter.blocker) { [string]$relayHealthAfter.blocker } else { 'SOVEREIGN_RELAY_DAEMON_NOT_HEALTHY' }
     }
@@ -723,6 +1182,10 @@ if ($ok) {
     }
 }
 
+if ($vrGovernorOk) {
+    $vrGovernorAdoption = Get-VrResourceGovernorAdoptionObservation -Process $vrGovernorAfter[0] -SourceBefore $vrGovernorSourceBefore -ProgressVerified $vrGovernorOk
+}
+
 $overallOk = [bool]($ok -and $vrGovernorOk -and $coreDaemonOk -and $fleetGoalSupervisorOk)
 $overallBlocker = if (-not $ok) {
     $blocker
@@ -760,6 +1223,7 @@ $overallBlocker = if (-not $ok) {
     port = $port
     daemonHealthy = [bool]$ok
     vrResourceGovernorHealthy = [bool]$vrGovernorOk
+    vrResourceGovernorAdoption = $vrGovernorAdoption
     vrResourceGovernorStartRequested = [bool]$vrGovernorStartRequested
     vrResourceGovernorRestartRequested = [bool]$vrGovernorRestartRequested
     vrResourceGovernorStoppedPidCount = [int]$vrGovernorStoppedPidCount
@@ -772,7 +1236,8 @@ $overallBlocker = if (-not $ok) {
     coreDaemonRestartRequested = [bool]$coreDaemonRestartRequested
     coreDaemonStartedPid = [int]$coreDaemonStartedPid
     coreDaemonStoppedPidCount = [int]$coreDaemonStoppedPidCount
-    coreDaemonProcessCount = [int]$coreDaemonProcessCount
+    coreDaemonProcessCount = $coreDaemonProcessCount
+    coreDaemonProcessInventoryComplete = [bool]$coreDaemonProcessInventoryComplete
     coreDaemonHeartbeatAgeSeconds = $coreDaemonHeartbeatAgeSeconds
     coreDaemonHeartbeatFresh = [bool]$coreDaemonHeartbeatFresh
     coreDaemonBusyGraceActive = [bool]$coreDaemonBusyGraceActive

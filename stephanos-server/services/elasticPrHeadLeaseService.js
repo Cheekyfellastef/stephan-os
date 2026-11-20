@@ -1,4 +1,5 @@
-import { access, readFile, readdir, stat } from 'node:fs/promises';
+import { access, lstat, readFile, readdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
 import {
@@ -22,12 +23,16 @@ import {
   publishNextMissionWorkerAction,
   resolveMissionWorkerQueueRoot,
 } from './missionOrchestratorWorkerService.js';
+import { readMissionRecord, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
+import { verifyOriginalSourceAttemptFence } from './originalSourceAttemptFenceService.js';
+import { projectElasticRetainedSourceHoldsV1 } from './elasticGoalMissionAdmissionService.js';
 
 export const ELASTIC_PR_HEAD_LEASE_DISPATCH_SCHEMA = 'stephanos.elastic-pr-head-lease-dispatch.v1';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ELASTIC_MISSION_ID = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/i;
 const PARKED_OR_TERMINAL_PHASES = new Set([
+  'BLOCKED',
   'AWAITING_OPERATOR_APPROVAL',
   'MERGE_PULL_REQUEST',
   'COMPLETE',
@@ -36,6 +41,28 @@ const PARKED_OR_TERMINAL_PHASES = new Set([
 const SOURCE_PHASES = new Set(['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']);
 const ACTIVE_EXECUTION_RECEIPT_STATES = new Set(['queued', 'accepted', 'started', 'progress', 'stalled']);
 const TERMINAL_EXECUTION_RECEIPT_STATES = new Set(['completed', 'failed', 'cancelled']);
+
+// Provider result IDs and queue action IDs are different namespaces. Resolve
+// their relationship from the canonical consumed result event, never by
+// stripping a provider prefix. Caller holds the mission-state precondition
+// lock, preventing a concurrent result or retry from replacing this identity.
+export async function readOriginalSourceExecutionIdV1(mission, paths, env) {
+  const resultId = text(mission?.dispatch?.resultId);
+  if (!resultId) return '';
+  const record = await readMissionRecord(mission.missionId, { root: paths.orchestratorRoot, env });
+  if ((await stat(record.eventPath)).size > 2097152) return '';
+  const lines = (await readFile(record.eventPath, 'utf8')).split('\n').filter(Boolean);
+  if (lines.length > 2048) return '';
+  const processed = new Set(mission?.storeMetadata?.processedEventIds || []);
+  const matches = lines.map((line) => JSON.parse(line)).filter((event) =>
+    event?.eventType === 'AGENT_RESULT_RECEIVED'
+    && text(event.missionId) === text(mission.missionId)
+    && text(event.resultId) === resultId
+    && processed.has(text(event.eventId)));
+  if (matches.length !== 1) return '';
+  const eventId = text(matches[0].eventId);
+  return eventId.startsWith('result-') ? eventId.slice('result-'.length) : '';
+}
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -212,11 +239,17 @@ const ORIGINAL_SOURCE_QUEUE_ADAPTERS = Object.freeze([
   'openclaw-local-deployment', 'verification',
 ]);
 
-async function originalMissionHasQueuedWork({ missionId, leaseId, env }) {
+export async function originalMissionHasQueuedWork({ missionId, leaseId, env }) {
   const root = resolveMissionWorkerQueueRoot(env);
   if (!root) throw new Error('ORIGINAL_MISSION_QUEUE_ROOT_UNAVAILABLE');
   await access(root);
-  for (const adapter of ORIGINAL_SOURCE_QUEUE_ADAPTERS) {
+  const entries = await readdir(root, { withFileTypes: true });
+  if (entries.length > 64 || entries.some((entry) => entry.isSymbolicLink())) {
+    throw new Error('ORIGINAL_MISSION_QUEUE_ROOT_UNSAFE');
+  }
+  const adapters = new Set([...ORIGINAL_SOURCE_QUEUE_ADAPTERS,
+    ...entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)]);
+  for (const adapter of adapters) {
     for (const state of ['pending', 'processing']) {
       const directory = resolve(root, adapter, state);
       let items;
@@ -271,7 +304,9 @@ function originalTerminalBindingMismatchCodes(item, filename, adapter, lease, mi
 // terminal folders are filtered; pending/processing inventory remains global.
 function isOlderBoundOriginalTerminal(item, filename, adapter, lease, missionId) {
   const current = text(lease?.leaseId).match(/^(critical-[1-9]\d*-elastic-goal)-r([1-9]\d*)-lease$/);
-  const prior = text(item?.executionBinding?.leaseKey).match(/^(critical-[1-9]\d*-elastic-goal)-r([1-9]\d*)-lease$/);
+  // Mission intake legitimately starts at r0. Keep canonical decimal syntax:
+  // r0 is historical, while r00/negative/future revisions remain unproven.
+  const prior = text(item?.executionBinding?.leaseKey).match(/^(critical-[1-9]\d*-elastic-goal)-r(0|[1-9]\d*)-lease$/);
   const binding = item?.executionBinding;
   return Boolean(current && prior
     && current[1] === missionId && prior[1] === missionId
@@ -481,6 +516,176 @@ function baseResult(additions = {}) {
   });
 }
 
+
+// Completed read-only custody is distinct from a source writer and from an
+// expired, unexplained execution. Preserve the queued chain; never manufacture
+// historical accepted/completed execution receipts from a later observation.
+async function readCompletedInspectionPair(actionId, env) {
+  const root = resolveMissionWorkerQueueRoot(env);
+  if (!root || !/^[a-z0-9._-]+$/.test(actionId)) throw new Error('REVIEW_QUEUE_ROOT_UNPROVEN');
+  const directory = resolve(root, 'openclaw-github-readonly', 'completed');
+  for (const path of [root, resolve(root, 'openclaw-github-readonly'), directory]) {
+    const info = await lstat(path);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('REVIEW_QUEUE_PATH_UNSAFE');
+  }
+  const read = async suffix => {
+    const path = resolve(directory, actionId + suffix);
+    const before = await lstat(path);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > 1048576)
+      throw new Error('REVIEW_QUEUE_RECORD_UNSAFE');
+    const bytes = await readFile(path);
+    const after = await lstat(path);
+    if (before.ino !== after.ino || before.dev !== after.dev || before.size !== bytes.length
+        || before.mtimeMs !== after.mtimeMs) throw new Error('REVIEW_QUEUE_RECORD_CHANGED');
+    return JSON.parse(bytes);
+  };
+  return { item: await read('.json'), result: await read('.result.json') };
+}
+
+export async function reconcileCompletedElasticInspectionLeaseV1({
+  nowUtc, env, paths, sourceRevision, mission, leaseRead,
+  readLease = readSourceMutationLease, releaseLease = releaseSourceMutationLease,
+  readHistory = readExecutionReceiptHistory, noWork = originalMissionHasQueuedWork,
+  readPair = readCompletedInspectionPair, readMission = readMissionRecord,
+  withMission = runWithMissionStatePrecondition,
+  readSourceExecutionId = readOriginalSourceExecutionIdV1,
+} = {}) {
+  const hold = blocker => freeze({ ok: false, released: false,
+    classification: 'ELASTIC_COMPLETED_INSPECTION_LEASE_HELD', blocker,
+    sourceMutationAllowed: false, leaseSeizureAllowed: false, mergeAuthority: false });
+  const lease = leaseRead?.record;
+  const identity = exactElasticPrHeadIdentity(mission);
+  const match = /^(critical-[1-9]\d*-elastic-goal)-r([1-9]\d*)-lease$/.exec(text(lease?.leaseId));
+  const revision = Number(match?.[2]);
+  if (!leaseRead?.present || leaseRead.validation?.valid !== true || !match
+      || !identity || !sameLeaseIdentity(lease, identity) || match[1] !== identity.missionId
+      || mission.revision !== revision + 1
+      || !['CHECK_PULL_REQUEST', 'REPAIR_REQUIRED', 'AWAITING_OPERATOR_APPROVAL'].includes(phaseOf(mission))
+      || mission.cancelled === true || mission.storeMetadata?.originalSourceAttemptFence
+      || mission.storeMetadata?.supervisedRecoveryMaintenance
+      || (mission.continuity?.parkingStatus && mission.continuity.parkingStatus !== 'ACTIVE')
+      || !['complete', 'idle'].includes(text(mission.dispatch?.status).toLowerCase())
+      || !SHA_40.test(text(sourceRevision)) || !Number.isFinite(Date.parse(nowUtc)))
+    return hold('COMPLETED_INSPECTION_EXACT_SUCCESSOR_REQUIRED');
+  const prior = { ...mission, revision, currentPhase: 'CHECK_PULL_REQUEST' };
+  const action = buildMissionWorkerAction(prior);
+  if (action?.executable !== true || action.actionKind !== 'github-inspection'
+      || action.adapter !== 'openclaw-github-readonly' || action.operation !== 'check-pr'
+      || action.activeWriter !== 'none') return hold('COMPLETED_INSPECTION_READONLY_ACTION_REQUIRED');
+  const eventId = 'worker-' + action.actionId;
+  if (mission.storeMetadata?.lastEventId !== eventId
+      || !mission.storeMetadata?.processedEventIds?.includes(eventId))
+    return hold('COMPLETED_INSPECTION_CONSUMED_EVENT_REQUIRED');
+  const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const originalLeaseDigest = digest(lease);
+  try {
+    const guarded = await withMission(identity.missionId, {
+      expectedRevision: mission.revision, expectedCurrentPhase: mission.currentPhase,
+    }, async current => {
+      if (digest(current) !== digest(mission)) return hold('COMPLETED_INSPECTION_MISSION_CHANGED');
+      const record = await readMission(identity.missionId, { root: paths.orchestratorRoot, env });
+      if ((await stat(record.eventPath)).size > 2097152) return hold('COMPLETED_INSPECTION_JOURNAL_UNBOUNDED');
+      const lines = (await readFile(record.eventPath, 'utf8')).trim().split('\n');
+      if (lines.length > 2048) return hold('COMPLETED_INSPECTION_JOURNAL_UNBOUNDED');
+      const events = lines.map(line => JSON.parse(line));
+      const matches = events.filter(event => event.eventId === eventId);
+      if (matches.length !== 1 || events.at(-1)?.eventId !== eventId)
+        return hold('COMPLETED_INSPECTION_JOURNAL_BINDING_UNPROVEN');
+      const event = matches[0];
+      const { item, result } = await readPair(action.actionId, env);
+      const grant = item?.actionGrant, binding = item?.executionBinding;
+      const exact = value => value?.missionId === identity.missionId
+        && value.repository?.toLowerCase() === identity.repository.toLowerCase()
+        && value.issueNumber === identity.issueNumber && value.prNumber === identity.prNumber
+        && value.branch === identity.branch && value.headSha === identity.headSha;
+      if (item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
+          || item.adapter !== action.adapter || item.actionId !== action.actionId || item.missionId !== identity.missionId
+          || item.payload?.actionKind !== 'github-inspection' || item.payload?.operation !== 'check-pr'
+          || item.payload?.activeWriter !== 'none' || item.payload?.actionId !== action.actionId
+          || item.payload?.missionId !== identity.missionId || item.payload?.repository !== identity.repository
+          || item.payload?.prNumber !== identity.prNumber || item.payload?.expectedHeadSha !== identity.headSha
+          || grant?.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
+          || grant.controllerId !== 'durable-flywheel-controller' || !exact(grant)
+          || grant.grantId !== 'grant-' + action.actionId || grant.laneId !== identity.missionId || grant.missionRevision !== revision
+          || grant.currentPhase !== 'CHECK_PULL_REQUEST' || grant.actionId !== action.actionId
+          || grant.actionKind !== 'github-inspection' || grant.adapter !== action.adapter
+          || grant.operation !== 'check-pr' || grant.boundedActionCount !== 1
+          || grant.mergeAuthority !== false || grant.leaseSeizureAllowed !== false
+          || !SHA_40.test(text(grant.sourceRevision))
+          || binding?.schemaVersion !== 'stephanos.mission-worker-queue-execution-binding.v1'
+          || !exact(binding) || binding.executionId !== action.actionId || binding.leaseKey !== lease.leaseId
+          || binding.missionRevision !== revision || binding.grantId !== grant.grantId
+          || binding.sourceRevision !== grant.sourceRevision)
+        return hold('COMPLETED_INSPECTION_QUEUE_BINDING_UNPROVEN');
+      if (result?.schemaVersion !== 'stephanos.mission-worker-consumption-result.v1'
+          || result.actionId !== action.actionId || result.missionId !== identity.missionId
+          || result.operation !== 'check-pr' || result.eventId !== eventId
+          || result.stateRevision !== mission.revision || result.currentPhase !== mission.currentPhase
+          || result.finalVerdict !== 'MISSION_WORKER_ITEM_COMPLETE' || result.execution?.success !== true
+          || event.eventType !== 'PULL_REQUEST_CHECKS_UPDATED' || event.missionId !== identity.missionId
+          || event.prNumber !== identity.prNumber || event.headSha !== identity.headSha
+          || event.receipt?.verified !== true || event.receipt?.source !== action.adapter
+          || event.receipt?.evidenceType !== 'github-inspection'
+          || !/^[a-f0-9]{64}$/.test(text(event.receipt?.commandOutputHash))
+          || event.receipt.commandOutputHash !== result.execution.commandOutputHash
+          || event.receipt.createdAt !== result.execution.completedAt
+          || !Number.isFinite(Date.parse(result.execution.completedAt))
+          || Date.parse(result.execution.completedAt) > Date.parse(nowUtc)
+          || result.inspection?.headSha !== identity.headSha || result.inspection?.prNumber !== identity.prNumber
+          || digest(result.inspection?.checks) !== digest(event.checks)
+          || event.prState !== result.inspection?.prState || event.mergeable !== result.inspection?.mergeable)
+        return hold('COMPLETED_INSPECTION_RESULT_EVENT_UNPROVEN');
+      const history = await readHistory(paths.workspaceRoot, {
+        leaseKey: lease.leaseId, expectedHead: lease.headSha,
+      }, { repoRoot: paths.repoRoot });
+      // A stale queue publisher may have recorded queued -> failed while the
+      // exact read-only result was subsequently consumed by the old contextless
+      // consumer. Preserve that failure, require its narrow publication shape,
+      // and use the independently retained result/event to reconcile custody.
+      const failedPublicationOnly = history?.receipts?.length === 2
+        && history.receipts[0].state === 'queued' && history.receipts[0].sequence === 1
+        && history.latestReceipt?.state === 'failed' && history.latestReceipt.sequence === 2
+        && history.latestReceipt.predecessorReceiptId === history.receipts[0].receiptId
+        && history.latestReceipt.phase === 'pr-head-queue-publication-failed'
+        && history.latestReceipt.blocker === 'action-grant-mismatch'
+        && Date.parse(result.execution.completedAt) >= Date.parse(history.latestReceipt.timestampUtc);
+      if (history?.ok !== true || !history.receipts?.length || !history.latestReceipt
+          || (!['queued', 'completed'].includes(history.latestReceipt.state) && !failedPublicationOnly)
+          || history.receipts.some(receipt => receipt.executionId !== action.actionId
+            || receipt.leaseKey !== lease.leaseId || receipt.sourceHead !== lease.headSha
+            || receipt.repository?.toLowerCase() !== identity.repository.toLowerCase()
+            || receipt.issueNumber !== identity.issueNumber || receipt.prNumber !== identity.prNumber
+            || receipt.branch !== identity.branch))
+        return hold('COMPLETED_INSPECTION_EXCLUSIVE_READONLY_CHAIN_UNPROVEN');
+      const sourceId = await readSourceExecutionId(current, paths, env);
+      const sourceMatch = text(sourceId).match(new RegExp('^' + identity.missionId + '-r([1-9]\\d*)-[a-f0-9]{12}$'));
+      if (!sourceMatch || Number(sourceMatch[1]) >= revision) return hold('COMPLETED_INSPECTION_PRIOR_SOURCE_UNPROVEN');
+      const sourceHistory = await readHistory(paths.workspaceRoot, { executionId: sourceId }, { repoRoot: paths.repoRoot });
+      const terminal = sourceHistory?.latestReceipt;
+      if (sourceHistory?.ok !== true || !sourceHistory.receipts?.length || terminal?.state !== 'completed'
+          || terminal.executionId !== sourceId || terminal.leaseKey !== identity.missionId + '-r' + sourceMatch[1] + '-lease'
+          || terminal.repository?.toLowerCase() !== identity.repository.toLowerCase()
+          || terminal.issueNumber !== identity.issueNumber || terminal.branch !== identity.branch)
+        return hold('COMPLETED_INSPECTION_PRIOR_SOURCE_TERMINAL_UNPROVEN');
+      if (await noWork({ missionId: identity.missionId, leaseId: lease.leaseId, env }) !== false)
+        return hold('COMPLETED_INSPECTION_ORIGINAL_WORK_IN_FLIGHT');
+      const again = await readLease({ root: paths.workspaceRoot, repoRoot: paths.repoRoot, nowUtc });
+      if (again.validation?.valid !== true || digest(again.record) !== originalLeaseDigest)
+        return hold('COMPLETED_INSPECTION_LEASE_CHANGED');
+      const release = await releaseLease({ ...lease, nowUtc, originalLeaseDigest }, {
+        root: paths.workspaceRoot, repoRoot: paths.repoRoot, env,
+      });
+      if (release?.ok !== true || release.released !== true) return hold('COMPLETED_INSPECTION_EXACT_CAS_RELEASE_UNPROVEN');
+      return freeze({ ok: true, released: true, classification: 'ELASTIC_CONSUMED_READONLY_INSPECTION_LEASE_RELEASED',
+        originalMissionId: identity.missionId, originalLeaseId: lease.leaseId,
+        consumedEventId: eventId, completedResultDigest: digest(result), originalLeaseDigest,
+        historicalReceiptChainPreserved: true, terminalExecutionReceiptReconstructed: false,
+        sourceMutationAllowed: false, leaseSeizureAllowed: false, mergeAuthority: false, goalComplete: false });
+    }, { root: paths.orchestratorRoot, env });
+    return guarded?.preconditionFailed === false ? guarded.result : hold('COMPLETED_INSPECTION_MISSION_PRECONDITION_CHANGED');
+  } catch { return hold('COMPLETED_INSPECTION_PROOF_UNOBSERVABLE'); }
+}
+
 // Recover only the *expired* exact lease owned by the old read-only PR review.
 // Programme Authority may be held by this stale record before normal elastic
 // admission and this dispatcher can run. Reuse the existing canonical source
@@ -511,14 +716,30 @@ export async function reconcileExpiredElasticReviewLeaseV1({
   const leaseRead = await readLease({
     root: paths.workspaceRoot, repoRoot: paths.repoRoot, nowUtc,
   });
-  if (!leaseRead?.present || leaseRead?.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT') {
+  const completedMission = missionRecords.filter(m => m.missionId === leaseRead?.record?.laneId);
+  if (leaseRead?.present && leaseRead.validation?.valid === true && completedMission.length === 1
+      && completedMission[0].revision === Number(text(leaseRead.record.leaseId).match(/-r([1-9]\d*)-lease$/)?.[1]) + 1
+      && ['CHECK_PULL_REQUEST', 'REPAIR_REQUIRED', 'AWAITING_OPERATOR_APPROVAL'].includes(phaseOf(completedMission[0]))
+      && !completedMission[0].storeMetadata?.originalSourceAttemptFence
+      && completedMission[0].storeMetadata?.lastEventId === 'worker-' + buildMissionWorkerAction({
+        ...completedMission[0], revision: completedMission[0].revision - 1, currentPhase: 'CHECK_PULL_REQUEST',
+      })?.actionId) {
+    return reconcileCompletedElasticInspectionLeaseV1({ nowUtc, env, paths, sourceRevision,
+      mission: completedMission[0], leaseRead, readLease, releaseLease, readHistory: readReceiptHistoryFn,
+      noWork: originalMissionInFlightFn });
+  }
+  const supervisedReleaseResume = leaseRead?.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
+    && missionRecords.some(m => m.missionId === leaseRead.record?.laneId
+      && m.storeMetadata?.originalSourceAttemptFence?.schemaVersion === 'stephanos.supervised-r7-retirement-fence.v1');
+  if (!leaseRead?.present || (leaseRead?.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT' && !supervisedReleaseResume)) {
     return held('EXACT_STALE_SOURCE_LEASE_NOT_PRESENT');
   }
-  if (leaseRead.ok !== true
+  if ((!supervisedReleaseResume && (leaseRead.ok !== true
       || leaseRead.validation?.valid !== true
       || leaseRead.validation?.active !== false
       || leaseRead.validation?.stale !== true
-      || leaseRead.validation?.finalVerdict !== 'SOURCE_MUTATION_LEASE_STALE') {
+      || leaseRead.validation?.finalVerdict !== 'SOURCE_MUTATION_LEASE_STALE'))
+      || leaseRead.validation?.valid !== true) {
     return held('CANONICAL_LEASE_EXPIRED_STATE_NOT_PROVEN');
   }
   const lease = leaseRead.record;
@@ -540,47 +761,31 @@ export async function reconcileExpiredElasticReviewLeaseV1({
   // The original lease's rN revision remains bound to the rN+1 cancellation
   // event; no unrelated mission, head, branch, PR or receipt may authorize it.
   if (originalCancelled) {
-    if (!resolveMissionWorkerQueueRoot(env)) return held('CANONICAL_WORKER_QUEUE_UNAVAILABLE');
-    let history;
-    let actionInFlight;
-    try {
-      history = await readReceiptHistoryFn(paths.workspaceRoot, {
-        leaseKey: lease.leaseId, expectedHead: lease.headSha,
-      }, { repoRoot: paths.repoRoot });
-      if (history?.ok !== true
-          || !Array.isArray(history.receipts)
-          || history.receipts.length === 0
-          || !history.latestReceipt
-          || !TERMINAL_EXECUTION_RECEIPT_STATES.has(
-            text(history.latestReceipt.state).toLowerCase())) {
-        return held('CANCELLED_SOURCE_EXECUTION_TERMINAL_RECEIPT_UNPROVEN');
-      }
-      actionInFlight = await (typeof originalMissionInFlightFn === 'function'
-        ? originalMissionInFlightFn : originalMissionHasQueuedWork)({
-        missionId: identity.missionId, leaseId: lease.leaseId, env,
-      });
-    } catch {
-      return held('CANCELLED_SOURCE_WORKER_QUEUE_UNOBSERVABLE');
+    if (mission.storeMetadata?.originalSourceAttemptFence) {
+      try {
+        const guarded = await runWithMissionStatePrecondition(identity.missionId, {
+          expectedRevision: mission.revision, expectedCurrentPhase: 'CANCELLED',
+        }, async (current) => {
+          if (await verifyOriginalSourceAttemptFence(current, lease, paths, env) !== true) {
+            return { ok: false, released: false, reason: 'ORIGINAL_SOURCE_FENCE_PROOF_UNVERIFIED' };
+          }
+          return releaseLease({ ...lease, nowUtc,
+            originalLeaseDigest: current.storeMetadata.originalSourceAttemptFence.originalLeaseDigest,
+          }, { root: paths.workspaceRoot, repoRoot: paths.repoRoot, env });
+        }, { root: paths.orchestratorRoot, env });
+        if (guarded.preconditionFailed || guarded.result?.ok !== true
+            || guarded.result?.released !== true) return held('ORIGINAL_QUARANTINED_EXACT_RELEASE_UNPROVEN');
+        return freeze({ ok: true, released: true,
+          classification: 'ELASTIC_QUARANTINED_ORIGINAL_EXACT_LEASE_RELEASED',
+          originalMissionId: identity.missionId, originalLeaseId: lease.leaseId,
+          sourceMutationAllowed: false, leaseSeizureAllowed: false, mergeAuthority: false,
+          goalComplete: false, materialPickupProven: false,
+        });
+      } catch { return held('ORIGINAL_QUARANTINED_FENCE_OR_RELEASE_UNOBSERVABLE'); }
     }
-    if (actionInFlight !== false) return held('CANCELLED_SOURCE_WORK_STILL_IN_FLIGHT');
-    const release = await releaseLease({
-      leaseId: lease.leaseId, laneId: lease.laneId, repository: lease.repository,
-      issueNumber: lease.issueNumber, prNumber: lease.prNumber,
-      branch: lease.branch, headSha: lease.headSha, ownerId: lease.ownerId, nowUtc,
-    }, { root: paths.workspaceRoot, repoRoot: paths.repoRoot, env });
-    if (release?.ok !== true || release.released !== true) {
-      return held('CANCELLED_SOURCE_LEASE_RELEASE_NOT_PROVEN');
-    }
-    return freeze({
-      ok: true, released: true,
-      classification: 'ELASTIC_CANCELLED_ORIGINAL_EXACT_LEASE_RELEASED',
-      originalMissionId: identity.missionId, originalLeaseId: lease.leaseId,
-      sourceHead: sourceRevision.toLowerCase(),
-      nextAction: 'REREAD_CANONICAL_PROGRAMME_AND_ADMIT_EXISTING_GOAL',
-      replacementAcceptanceProven: false, goalComplete: false,
-      leaseSeizureAllowed: false, sourceMutationAllowed: false,
-      mergeAuthority: false, dispatchAuthority: false, materialPickupProven: false,
-    });
+    // Queue emptiness and terminal receipts do not exclude detached source writers.
+    // No legacy fallback release is permitted without the authenticated fence.
+    return held('CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED');
   }
   // A completed original source execution may have already reached
   // REPAIR_REQUIRED because the *existing* PR's required checks failed.
@@ -767,6 +972,12 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     .filter((entry) => entry.identity)
     .sort((left, right) => left.identity.missionId.localeCompare(right.identity.missionId));
   const handledMissionIds = exactMissions.map(({ identity }) => identity.missionId);
+  // PR-head fallback reads the complete inventory, not just runnableMissions.
+  // Recompute the same source hold before selection/renewal; keep inventory
+  // intact so an existing lease and running writer never disappear.
+  const sourceHolds = projectElasticRetainedSourceHoldsV1(missions)
+    .filter(hold => handledMissionIds.includes(hold.missionId));
+  const sourceHeldIds = new Set(sourceHolds.map(hold => hold.missionId));
   if (!exactMissions.length) return baseResult({ handledMissionIds });
   if (!SHA_40.test(sourceRevision)) {
     return baseResult({
@@ -797,6 +1008,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   });
   let releasedLease = null;
   let currentLease = leaseRead?.present ? leaseRead.record : null;
+  let pendingLeaseClaim = null;
   let leasedEntry = currentLease
     ? exactMissions.find(({ identity }) => sameLeaseIdentity(currentLease, identity)) ?? null
     : null;
@@ -806,17 +1018,97 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     && leasedEntry
     && PARKED_OR_TERMINAL_PHASES.has(phaseOf(leasedEntry.mission))
   ) {
-    releasedLease = await releaseLease({
-      leaseId: currentLease.leaseId,
-      laneId: currentLease.laneId,
-      repository: currentLease.repository,
-      issueNumber: currentLease.issueNumber,
-      prNumber: currentLease.prNumber,
-      branch: currentLease.branch,
-      headSha: currentLease.headSha,
-      ownerId: currentLease.ownerId,
-      nowUtc,
-    }, serviceOptions);
+    // Parking/STOP changes scheduling intent, not original-writer liveness.
+    // All parked phases must retain the original lease until authentic exact
+    // terminal history and every original queue are proven safe. Serialize
+    // with mission dispatch/re-entry so a stale parked snapshot cannot release
+    // a lease after another cycle has resumed that mission.
+    const guarded = normalized.runWithMissionStatePrecondition ?? runWithMissionStatePrecondition;
+    try {
+      const outcome = await guarded(leasedEntry.identity.missionId, {
+        expectedRevision: leasedEntry.mission.revision,
+        expectedCurrentPhase: phaseOf(leasedEntry.mission),
+      }, async (current) => {
+        const hold = (reason) => ({ ok: false, released: false, reason });
+        if (text(current?.dispatch?.status).toLowerCase() === 'running') {
+          return hold('PARKED_ORIGINAL_DISPATCH_STILL_RUNNING');
+        }
+        const history = await readReceiptHistory(paths.workspaceRoot, {
+          leaseKey: currentLease.leaseId, expectedHead: currentLease.headSha,
+        }, receiptOptions);
+        if (history?.ok !== true || !Array.isArray(history.receipts) || !history.receipts.length) {
+          return hold('PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN');
+        }
+        // Receipt publication for one action must never conceal a different
+        // unfinished execution using the same lease. The authenticated reader
+        // verifies each chain; require the last member of EVERY chain terminal.
+        const chains = new Map();
+        for (const receipt of history.receipts) {
+          if (!text(receipt.executionId)
+              || text(receipt.leaseKey) !== currentLease.leaseId
+              || text(receipt.sourceHead).toLowerCase() !== currentLease.headSha.toLowerCase()
+              || text(receipt.repository).toLowerCase() !== currentLease.repository.toLowerCase()
+              || text(receipt.branch) !== currentLease.branch
+              || Number(receipt.issueNumber) !== currentLease.issueNumber
+              || Number(receipt.prNumber) !== currentLease.prNumber) {
+            return hold('PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH');
+          }
+          chains.set(receipt.executionId, receipt);
+        }
+        if ([...chains.values()].some((receipt) =>
+          !TERMINAL_EXECUTION_RECEIPT_STATES.has(text(receipt.state).toLowerCase()))) {
+          return hold('PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN');
+        }
+        // Resolve the canonical consumed source action independently of the
+        // provider result namespace and later PR checks. Older source revisions
+        // can predate this lease; preserve their original receipt binding.
+        const resolveSourceExecutionId = normalized.readOriginalSourceExecutionId
+          ?? readOriginalSourceExecutionIdV1;
+        const sourceExecutionId = text(await resolveSourceExecutionId(current, paths, env));
+        const actionPrefix = `${currentLease.laneId}-r`;
+        const sourceSuffix = sourceExecutionId.startsWith(actionPrefix)
+          ? sourceExecutionId.slice(actionPrefix.length) : '';
+        const sourceMatch = sourceSuffix.match(/^(0|[1-9]\d*)-[a-f0-9]{12}$/);
+        if (!sourceMatch) return hold('PARKED_ORIGINAL_SOURCE_EXECUTION_UNPROVEN');
+        const sourceHistory = await readReceiptHistory(paths.workspaceRoot, {
+          executionId: sourceExecutionId,
+        }, receiptOptions);
+        const sourceReceipt = sourceHistory?.latestReceipt;
+        if (sourceHistory?.ok !== true || !sourceHistory.receipts?.length || !sourceReceipt
+            || !TERMINAL_EXECUTION_RECEIPT_STATES.has(text(sourceReceipt.state).toLowerCase())
+            || text(sourceReceipt.executionId) !== sourceExecutionId
+            || text(sourceReceipt.leaseKey) !== `${actionPrefix}${sourceMatch[1]}-lease`
+            || text(sourceReceipt.repository).toLowerCase() !== currentLease.repository.toLowerCase()
+            || text(sourceReceipt.branch) !== currentLease.branch
+            || Number(sourceReceipt.issueNumber) !== currentLease.issueNumber) {
+          return hold('PARKED_ORIGINAL_SOURCE_EXECUTION_UNPROVEN');
+        }
+        const originalInFlight = normalized.originalMissionInFlightFn ?? originalMissionHasQueuedWork;
+        if (await originalInFlight({ missionId: currentLease.laneId, leaseId: currentLease.leaseId, env }) !== false) {
+          return hold('PARKED_ORIGINAL_WORK_STILL_IN_FLIGHT');
+        }
+        // BLOCKED/CANCELLED can leave detached source-writing descendants alive.
+        // Only the authenticated original-attempt fence can authorise release.
+        if (phaseOf(current) === 'BLOCKED' || phaseOf(current) === 'CANCELLED') {
+          if (!current?.storeMetadata?.originalSourceAttemptFence) {
+            return hold('PARKED_ORIGINAL_AUTHENTICATED_FENCE_REQUIRED');
+          }
+          if (await verifyOriginalSourceAttemptFence(current, currentLease, paths, env) !== true) {
+            return hold('PARKED_ORIGINAL_AUTHENTICATED_FENCE_UNVERIFIED');
+          }
+        }
+        return releaseLease({
+          leaseId: currentLease.leaseId, laneId: currentLease.laneId,
+          repository: currentLease.repository, issueNumber: currentLease.issueNumber,
+          prNumber: currentLease.prNumber, branch: currentLease.branch,
+          headSha: currentLease.headSha, ownerId: currentLease.ownerId, nowUtc,
+        }, serviceOptions);
+      }, { root: paths.orchestratorRoot, env });
+      releasedLease = outcome?.preconditionFailed === false ? outcome.result
+        : { ok: false, released: false, reason: 'PARKED_ORIGINAL_MISSION_STATE_CHANGED' };
+    } catch {
+      releasedLease = { ok: false, released: false, reason: 'PARKED_ORIGINAL_WRITER_PROOF_UNOBSERVABLE' };
+    }
     if (releasedLease?.ok !== true) {
       return baseResult({
         ok: false,
@@ -832,6 +1124,12 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     leaseRead = { ok: true, present: false, reason: 'SOURCE_MUTATION_LEASE_RELEASED' };
   }
 
+  if (currentLease && leasedEntry && sourceHeldIds.has(leasedEntry.identity.missionId)) {
+    return baseResult({
+      classification: 'ELASTIC_PR_HEAD_RETAINED_SOURCE_SCOPE_HELD',
+      handledMissionIds, held: sourceHolds, activeLease: currentLease, releasedLease,
+    });
+  }
   if (currentLease) {
     if (!leaseRead?.ok || !leasedEntry) {
       return baseResult({
@@ -911,13 +1209,16 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
       });
     }
     const selectedId = text(admission?.selectedMission?.missionId).toLowerCase();
-    leasedEntry = exactMissions.find(({ identity, mission }) => (
+    const dispatchable = exactMissions.filter(({ identity, mission }) =>
+      !sourceHeldIds.has(identity.missionId) && !PARKED_OR_TERMINAL_PHASES.has(phaseOf(mission)));
+    leasedEntry = dispatchable.find(({ identity }) => (
       identity.missionId === selectedId
-      && !PARKED_OR_TERMINAL_PHASES.has(phaseOf(mission))
-    )) ?? exactMissions.find(({ mission }) => !PARKED_OR_TERMINAL_PHASES.has(phaseOf(mission))) ?? null;
+    )) ?? dispatchable[0] ?? null;
     if (!leasedEntry) {
       return baseResult({
-        classification: releasedLease ? 'ELASTIC_PR_HEAD_PARKED_LEASE_RELEASED' : 'ELASTIC_PR_HEAD_LEASE_NOT_REQUIRED',
+        classification: sourceHolds.length ? 'ELASTIC_PR_HEAD_RETAINED_SOURCE_SCOPE_HELD'
+          : releasedLease ? 'ELASTIC_PR_HEAD_PARKED_LEASE_RELEASED' : 'ELASTIC_PR_HEAD_LEASE_NOT_REQUIRED',
+        held: sourceHolds,
         handledMissionIds,
         releasedLease,
       });
@@ -971,7 +1272,12 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
         releasedLease,
       });
     }
-    const claim = await claimLease({
+    // Validation alone is not durable evidence: a refused/failed receipt write
+    // after claim used to strand the programme behind a lease with no chain.
+    // Prepare the exact reservation, but persist/replay the canonical queued
+    // receipt below BEFORE claiming it. A queued receipt grants no writer
+    // authority; publication still requires the canonical lease claim.
+    pendingLeaseClaim = {
       leaseId: requestedLeaseId,
       laneId: leasedEntry.identity.missionId,
       repository: leasedEntry.identity.repository,
@@ -982,17 +1288,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
       ownerId: 'mission-worker',
       nowUtc,
       proofRefs: [],
-    }, serviceOptions);
-    if (claim?.ok !== true) {
-      return baseResult({
-        ok: false,
-        classification: 'ELASTIC_PR_HEAD_LEASE_CLAIM_BLOCKED',
-        handledMissionIds,
-        held: [{ missionId: leasedEntry.identity.missionId, reason: text(claim?.reason, 'LEASE_CLAIM_FAILED') }],
-        releasedLease,
-      });
-    }
-    currentLease = claim.record;
+    };
   }
 
   const currentPhase = phaseOf(leasedEntry.mission);
@@ -1034,7 +1330,8 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     });
   }
 
-  if (!paths.workspaceRoot || !text(currentLease?.leaseId)) {
+  const receiptLease = currentLease ?? pendingLeaseClaim;
+  if (!paths.workspaceRoot || !text(receiptLease?.leaseId)) {
     return baseResult({
       ok: false,
       classification: 'ELASTIC_PR_HEAD_EXECUTION_RECEIPT_CONTEXT_UNAVAILABLE',
@@ -1049,7 +1346,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   try {
     receiptHistory = await readReceiptHistory(paths.workspaceRoot, {
       executionId: grant.actionId,
-      leaseKey: currentLease.leaseId,
+      leaseKey: receiptLease.leaseId,
       expectedHead: grant.headSha,
     }, receiptOptions);
   } catch (error) {
@@ -1088,6 +1385,15 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     });
   }
   if (inFlight) {
+    if (pendingLeaseClaim) {
+      return baseResult({
+        ok: false,
+        classification: 'ELASTIC_PR_HEAD_RUNNING_WITHOUT_LEASE',
+        handledMissionIds,
+        held: [{ missionId: leasedEntry.identity.missionId, reason: 'IN_FLIGHT_PR_HEAD_ACTION_WITHOUT_CANONICAL_LEASE' }],
+        releasedLease,
+      });
+    }
     if (!executionReceipt || !ACTIVE_EXECUTION_RECEIPT_STATES.has(executionReceipt.state)) {
       return baseResult({
         ok: false,
@@ -1128,7 +1434,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   }
 
   if (!executionReceipt) {
-    const proofRefs = existingQueuedProofRefs(grant, currentLease, leasedEntry.mission);
+    const proofRefs = existingQueuedProofRefs(grant, receiptLease, leasedEntry.mission);
     if (proofRefs.length === 0) {
       return baseResult({
         ok: false,
@@ -1139,7 +1445,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
         releasedLease,
       });
     }
-    executionReceipt = createQueuedExecutionReceipt(grant, currentLease, nowUtc, proofRefs);
+    executionReceipt = createQueuedExecutionReceipt(grant, receiptLease, nowUtc, proofRefs);
     const validation = validateExecutionReceipt(executionReceipt);
     if (!validation.valid) {
       return baseResult({
@@ -1154,8 +1460,8 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     let queuedAppend;
     try {
       queuedAppend = await appendReceipt(paths.workspaceRoot, executionReceipt, receiptOptions);
-    } catch (error) {
-      queuedAppend = { ok: false, reason: `append-exception:${text(error?.message, 'unknown')}` };
+    } catch {
+      queuedAppend = { ok: false, reason: 'QUEUED_EXECUTION_RECEIPT_APPEND_EXCEPTION' };
     }
     if (queuedAppend?.ok !== true) {
       return baseResult({
@@ -1167,6 +1473,28 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
         releasedLease,
       });
     }
+  }
+
+  if (pendingLeaseClaim) {
+    let claim;
+    try {
+      claim = await claimLease(pendingLeaseClaim, serviceOptions);
+    } catch {
+      claim = { ok: false, reason: 'SOURCE_MUTATION_LEASE_CLAIM_EXCEPTION' };
+    }
+    if (claim?.ok !== true || !sameLeaseIdentity(claim.record, leasedEntry.identity)
+        || text(claim.record?.leaseId) !== pendingLeaseClaim.leaseId) {
+      return baseResult({
+        ok: false,
+        classification: 'ELASTIC_PR_HEAD_LEASE_CLAIM_BLOCKED',
+        handledMissionIds,
+        held: [{ missionId: leasedEntry.identity.missionId, reason: claim?.ok === true
+          ? 'SOURCE_MUTATION_LEASE_CLAIM_IDENTITY_MISMATCH'
+          : text(claim?.reason, 'LEASE_CLAIM_FAILED') }],
+        releasedLease,
+      });
+    }
+    currentLease = claim.record;
   }
 
   let publication;
@@ -1192,7 +1520,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   }
   if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
     const publicationBlocker = text(publication?.reason, 'PR_HEAD_ACTION_NOT_PUBLISHED');
-    const failedReceipt = createFailedPublicationReceipt(executionReceipt, nowUtc, publicationBlocker);
+    const failedReceipt = createFailedPublicationReceipt(executionReceipt, new Date().toISOString(), publicationBlocker);
     try {
       const failedAppend = await appendReceipt(paths.workspaceRoot, failedReceipt, receiptOptions);
       if (failedAppend?.ok !== true) {
@@ -1227,6 +1555,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
 
   return baseResult({
     classification: 'ELASTIC_PR_HEAD_DISPATCH_LIVE',
+    held: sourceHolds,
     handledMissionIds,
     dispatched: [{
       missionId: leasedEntry.identity.missionId,

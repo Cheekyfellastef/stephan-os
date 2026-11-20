@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import { createExecutionReceipt } from './executionReceiptV1.mjs';
 import {
@@ -42,6 +43,7 @@ import {
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
+import { createMissionOrchestratorState, applyMissionOrchestratorEvent } from './missionOrchestrator.mjs';
 import {
   CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
   DEFAULT_CRITICAL_BACKLOG,
@@ -51,6 +53,7 @@ import {
 const NOW = '2026-07-30T10:00:00.000Z';
 const HEAD = 'a'.repeat(40);
 const MERGE = 'b'.repeat(40);
+const ADVANCED_HEAD = 'c'.repeat(40);
 const LANE_ID = 'goal-1497-pr-1617';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const BRANCH = 'feat/canonical-programme-authority-contracts';
@@ -177,6 +180,264 @@ test('canonical lane binds lane ID, issue, PR, exact head, receipts, proofs and 
   assert.deepEqual(projection.executionReceiptRefs, ['execution-1617-1']);
   assert.equal(projection.mutationLeaseIdentity.leaseId, 'lease-goal-1497-pr-1617');
   assert.equal(projection.chatMemoryAuthoritative, false);
+});
+
+test('terminal lane preserves exact lease identity while accepting only a proven descendant merged head', () => {
+  const merged = github({
+    headSha: ADVANCED_HEAD,
+    prState: 'closed',
+    merged: true,
+    mergedAt: '2026-07-30T09:59:00.000Z',
+    mergeCommitSha: MERGE,
+  });
+  const terminal = lane({
+    headSha: ADVANCED_HEAD,
+    github: merged,
+    executionReceipt: null,
+    terminalHeadAdvance: {
+      leaseHeadSha: HEAD,
+      mergedHeadSha: ADVANCED_HEAD,
+      leaseHeadIsAncestor: true,
+    },
+  });
+  assert.equal(terminal.valid, true);
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.headSha, ADVANCED_HEAD);
+  assert.deepEqual(terminal.terminalHeadAdvance, {
+    leaseHeadSha: HEAD,
+    mergedHeadSha: ADVANCED_HEAD,
+    leaseHeadIsAncestor: true,
+  });
+
+  const plan = buildTerminalLaneFinalizationPlan({
+    lane: terminal,
+    mutationLease: lease(),
+    github: merged,
+    leaseId: 'lease-goal-1497-pr-1617',
+    ownerId: OWNER,
+    nowUtc: NOW,
+  });
+  assert.equal(plan.valid, true);
+  const records = createTerminalLaneEvidenceRecords(plan, { timestampUtc: NOW });
+  assert.equal(records.proof.headSha, HEAD);
+  assert.equal(records.proof.leaseHeadSha, HEAD);
+  assert.equal(records.proof.mergedHeadSha, ADVANCED_HEAD);
+  assert.equal(records.proof.leaseHeadIsAncestor, true);
+  assert.equal(records.receipt.headSha, HEAD);
+
+  const withoutProof = lane({
+    headSha: ADVANCED_HEAD,
+    github: merged,
+    executionReceipt: null,
+  });
+  assert.equal(withoutProof.valid, false);
+  assert.ok(withoutProof.blockers.includes('head-identity-conflict'));
+
+  for (const terminalHeadAdvance of [
+    { leaseHeadSha: HEAD, mergedHeadSha: ADVANCED_HEAD, leaseHeadIsAncestor: false },
+    { leaseHeadSha: 'd'.repeat(40), mergedHeadSha: ADVANCED_HEAD, leaseHeadIsAncestor: true },
+    { leaseHeadSha: HEAD, mergedHeadSha: 'd'.repeat(40), leaseHeadIsAncestor: true },
+  ]) {
+    const refused = lane({
+      headSha: ADVANCED_HEAD,
+      github: merged,
+      executionReceipt: null,
+      terminalHeadAdvance,
+    });
+    assert.equal(refused.valid, false);
+    assert.ok(refused.blockers.includes('terminal-head-advance-unproven'));
+  }
+});
+
+test('open PR and unrelated source lease cannot fabricate a material builder', () => {
+  const noReceipt = lane({ executionReceipt: null });
+  assert.equal(noReceipt.valid, true);
+  assert.equal(noReceipt.active, false);
+  assert.equal(noReceipt.pickupPending, true);
+  assert.equal(noReceipt.executionStartedOnLease, false);
+  assert.equal(noReceipt.status, 'HOLD');
+
+  const separateLease = lease({
+    leaseId: 'goal-2315-pr-3259-rollover-20261026-v7',
+    laneId: 'goal-2315-pr-3259', issueNumber: 2315, prNumber: 3259,
+  });
+  const unrelatedReview = lane({
+    laneId: 'goal-2315-pr-3259', issueNumber: 2315, prNumber: 3259,
+    github: github({ prNumber: 3259 }),
+    mutationLease: separateLease, executionReceipt: null,
+  });
+  assert.equal(unrelatedReview.valid, true);
+  assert.equal(unrelatedReview.active, false);
+  assert.equal(unrelatedReview.pickupPending, true);
+  assert.equal(unrelatedReview.mutationLeaseIdentity.leaseId, separateLease.leaseId);
+
+  for (const state of ['queued', 'accepted']) {
+    const dispatchOnly = lane({ executionReceipt: receipt({ state }) });
+    assert.equal(dispatchOnly.active, false, state + ' does not prove pickup');
+    assert.equal(dispatchOnly.pickupPending, true);
+  }
+  for (const state of ['started', 'progress']) {
+    const actualStart = lane({ executionReceipt: receipt({ state }) });
+    assert.equal(actualStart.valid, true);
+    assert.equal(actualStart.active, true);
+    assert.equal(actualStart.executionStartedOnLease, true);
+  }
+  for (const bad of [
+    receipt({ workerId: 'other-owner' }),
+    receipt({ leaseKey: 'wrong-lease' }),
+    receipt({ prNumber: 3259 }),
+    receipt({ sourceHead: MERGE }),
+    receipt({ heartbeatExpiresAtUtc: NOW }),
+  ]) {
+    assert.equal(lane({ executionReceipt: bad }).active, false);
+  }
+  assert.equal(lane({
+    mutationLease: lease({ expiresAtUtc: '2026-07-30T09:59:00.000Z' }),
+  }).active, false);
+});
+
+test('bound stalled and failed receipts remain diagnosable after material lane becomes inactive', () => {
+  for (const state of ['stalled', 'failed', 'cancelled']) {
+    const stoppedReceipt = receipt({ state, blocker: 'SIMULATED_WORKER_STOP' });
+    const stoppedLane = lane({ executionReceipt: stoppedReceipt });
+    assert.equal(stoppedLane.valid, true);
+    assert.equal(stoppedLane.active, false);
+    assert.equal(stoppedLane.pickupPending, false);
+    assert.deepEqual(stoppedLane.executionReceiptRefs, [stoppedReceipt.receiptId]);
+    const diagnostic = diagnoseProgrammeStall({
+      observedAtUtc: NOW, status: 'HOLD',
+      lane: stoppedLane, mutationLease: lease(),
+      executionReceipt: stoppedReceipt,
+      controllerHeartbeat: { fresh: true },
+      workerHeartbeat: { fresh: true },
+      battleBridgeProofs: [],
+    }, { nowUtc: NOW });
+    assert.equal(diagnostic.stalled, true);
+    assert.ok(diagnostic.blockers.includes(
+      state === 'stalled' ? 'execution-receipt-reports-stall'
+        : 'execution-receipt-terminal-failure',
+    ), state + ': expected authentic terminal/stall diagnosis');
+    assert.equal(diagnostic.sourceMutationAllowed, false);
+    assert.equal(diagnostic.dispatchAllowed, false);
+  }
+
+  // A syntactically accepted but wrong-worker failure must not become
+  // authoritative stall evidence for the original worker.
+  const foreignReceipt = receipt({ state: 'failed', workerId: 'another-owner',
+    blocker: 'UNRELATED_WORKER' });
+  const unknownLane = lane({ executionReceipt: foreignReceipt });
+  const rejected = diagnoseProgrammeStall({
+    observedAtUtc: NOW, status: 'HOLD', lane: unknownLane,
+    mutationLease: lease(), executionReceipt: foreignReceipt,
+    controllerHeartbeat: { fresh: true }, workerHeartbeat: { fresh: true },
+    battleBridgeProofs: [],
+  }, { nowUtc: NOW });
+  assert.equal(unknownLane.active, false);
+  assert.ok(!rejected.blockers.includes('execution-receipt-terminal-failure'));
+});
+
+test('silent started and progress executions retain stall diagnosis after their heartbeat expires', async () => {
+  const observedAtUtc = '2026-07-30T10:31:00.000Z';
+  for (const state of ['started', 'progress']) {
+    const execution = receipt({ state });
+    const silentLane = lane({ executionReceipt: execution, nowUtc: observedAtUtc });
+    assert.equal(silentLane.valid, true);
+    assert.equal(silentLane.active, false);
+    assert.equal(silentLane.pickupPending, false);
+    assert.equal(validateExecutionReceiptAgainstMutationLease(execution, lease(), {
+      nowUtc: observedAtUtc,
+    }).valid, false, 'diagnosis must not renew execution authority');
+    const projection = buildAuthoritativeProgrammeProjection({
+      nowUtc: observedAtUtc, workspaceFeed: { state: 'ready' },
+      lane: silentLane, mutationLease: lease(), executionReceipt: execution,
+      controllerHeartbeatProjection: { valid: true, fresh: false, cycleState: 'ACTIVE_LANE' },
+      workerHeartbeatProjection: { valid: true, fresh: false },
+      battleBridgeProofs: [], runtimeHealthRecords: [],
+      scheduler: { failClosed: false, decisionReceipt: { status: 'ACTIVE_LANE' } },
+      criticalBacklog: { decision: 'WAIT_ACTIVE_MISSION' },
+      machineryInventory: { validation: { valid: true }, capabilities: [] },
+    });
+    assert.equal(projection.status, 'HOLD');
+    for (const blocker of ['controller-heartbeat-not-fresh', 'worker-heartbeat-not-fresh',
+      'execution-receipt-heartbeat-expired', 'active-lane-progress-stale']) {
+      assert.ok(projection.stallDiagnosis.blockers.includes(blocker), state + ': ' + blocker);
+    }
+    const handler = createProgrammeStallMonitorHandler({ loadProjection: async () => projection });
+    const result = await handler({ timestampUtc: observedAtUtc });
+    assert.equal(result.state, 'FAIL');
+    assert.equal(result.diagnosis.sourceMutationAllowed, false);
+    assert.equal(result.diagnosis.dispatchAllowed, false);
+    assert.equal(result.diagnosis.mergeAuthority, false);
+  }
+});
+
+test('execution diagnosis state and expiry matrix keeps material authority and diagnostic identity separate', () => {
+  const expiryMs = Date.parse('2026-07-30T10:01:00.000Z');
+  for (const state of ['queued', 'accepted', 'started', 'progress', 'stalled', 'failed', 'cancelled', 'completed']) {
+    for (const offset of [-1, 0, 1, 30 * 60 * 1000]) {
+      const nowUtc = new Date(expiryMs + offset).toISOString();
+      const execution = receipt({ state, blocker: 'TEST_STOP' });
+      const projectedLane = lane({ executionReceipt: execution, nowUtc });
+      const diagnosis = diagnoseProgrammeStall({
+        lane: projectedLane, mutationLease: lease(), executionReceipt: execution,
+        controllerHeartbeat: { fresh: true }, workerHeartbeat: { fresh: true },
+      }, { nowUtc });
+      const running = ['started', 'progress'].includes(state);
+      assert.equal(projectedLane.active, running && offset < 0, state + ':' + offset);
+      assert.equal(diagnosis.blockers.includes('execution-receipt-heartbeat-expired'),
+        running && offset >= 0, state + ':' + offset);
+      assert.equal(diagnosis.blockers.includes('execution-receipt-reports-stall'), state === 'stalled');
+      assert.equal(diagnosis.blockers.includes('execution-receipt-terminal-failure'),
+        ['failed', 'cancelled'].includes(state));
+      assert.equal(diagnosis.sourceMutationAllowed, false);
+      assert.equal(diagnosis.schedulingAllowed, false);
+    }
+  }
+});
+
+test('expired receipt diagnosis refuses every other binding failure and cannot revive review or terminal lanes', () => {
+  const nowUtc = '2026-07-30T10:31:00.000Z';
+  const original = receipt();
+  const projectedLane = lane({ executionReceipt: original, nowUtc });
+  const base = { lane: projectedLane, mutationLease: lease(), executionReceipt: original,
+    controllerHeartbeat: { fresh: true }, workerHeartbeat: { fresh: true } };
+  const variants = [
+    { executionReceipt: receipt({ workerId: 'wrong-owner' }) },
+    { executionReceipt: receipt({ leaseKey: 'wrong-lease' }) },
+    { executionReceipt: receipt({ prNumber: 3259 }) },
+    { executionReceipt: receipt({ issueNumber: 2315 }) },
+    { executionReceipt: receipt({ branch: 'wrong-branch' }) },
+    { executionReceipt: receipt({ repository: 'other/repo' }) },
+    { executionReceipt: receipt({ sourceHead: MERGE }) },
+    { executionReceipt: receipt({ receiptId: 'not-observed-by-lane' }) },
+    { executionReceipt: receipt({ timestampUtc: '2026-07-30T09:29:00.000Z' }) },
+    { executionReceipt: receipt({ timestampUtc: '2099-01-01T00:00:00.000Z',
+      heartbeatExpiresAtUtc: '2099-01-01T00:01:00.000Z' }) },
+    { executionReceipt: null },
+    { mutationLease: null },
+    { mutationLease: lease({ expiresAtUtc: NOW }) },
+    { mutationLease: { ...lease(), status: 'RELEASED' } },
+    { lane: { ...projectedLane, executionReceiptRefs: [] } },
+    { lane: { ...projectedLane, valid: false } },
+    { lane: { ...projectedLane, terminal: true } },
+    { lane: { ...projectedLane, reviewPending: true } },
+    { lane: { ...projectedLane, elasticMissionPhaseBinding: { materialImplementation: false } } },
+    { mutationLease: lease({ ownerId: 'different-owner' }),
+      executionReceipt: receipt({ workerId: 'different-owner' }) },
+    { mutationLease: lease({ leaseId: 'different-lease' }),
+      executionReceipt: receipt({ leaseKey: 'different-lease' }) },
+  ];
+  for (const variant of variants) {
+    const diagnosis = diagnoseProgrammeStall({ ...base, ...variant }, { nowUtc });
+    assert.ok(!diagnosis.blockers.includes('execution-receipt-heartbeat-expired'), JSON.stringify(variant));
+    assert.ok(!diagnosis.blockers.includes('active-lane-progress-stale'));
+    assert.equal(diagnosis.dispatchAllowed, false);
+  }
+  const renewed = diagnoseProgrammeStall({ ...base,
+    mutationLease: lease({ renewedAtUtc: nowUtc }),
+  }, { nowUtc });
+  assert.ok(renewed.blockers.includes('execution-receipt-heartbeat-expired'),
+    'lease renewal or fresh supervisor heartbeats cannot conceal worker silence');
 });
 
 test('canonical lane requires GitHub to affirm the exact head repository and branch', () => {
@@ -1125,6 +1386,101 @@ test('malformed parked backlog authority cannot suppress scheduler-visible ready
   assert.deepEqual(goals.goals.map(({ issue }) => issue), [1284, 1286, 1287]);
 });
 
+test('observed source integration parks acceptance while unrelated construction remains scheduler-admissible', () => {
+  const entry = DEFAULT_CRITICAL_BACKLOG.find(({ itemId }) => itemId === 'programme-completion-controller');
+  const original = createMissionOrchestratorState({
+    ...entry.mission,
+    repositoryRoot: '/fixture/repo',
+    worktreePath: '/fixture/worktree',
+  }, { now: NOW });
+  original.revision = 55;
+  original.currentPhase = 'AWAITING_OPERATOR_APPROVAL';
+  original.git.commitSha = HEAD;
+  original.git.worktreeReady = true;
+  original.git.pushed = true;
+  original.git.clean = true;
+  original.dispatch.status = 'complete';
+  original.activeWriter = 'none';
+  original.approval.status = 'pending';
+  original.pullRequest.number = 2463;
+  original.pullRequest.headSha = HEAD;
+  const observation = {
+    schemaVersion: 'stephanos.external-merge-observation.v1',
+    source: 'github-api', repository: REPOSITORY,
+    missionId: original.missionId, expectedRevision: 55, prNumber: 2463,
+    headSha: HEAD, branch: original.git.branch, baseBranch: 'main',
+    merged: true, prState: 'closed', mergeCommitSha: MERGE,
+    mergedAtUtc: '2026-07-30T09:58:00.000Z',
+    mainHead: ADVANCED_HEAD, ancestorCommit: MERGE,
+    ancestryMainHead: ADVANCED_HEAD, mainRecheckHead: ADVANCED_HEAD,
+    mergeAncestorOfMain: true, observedAtUtc: NOW,
+  };
+  const accepted = applyMissionOrchestratorEvent(original, {
+    eventType: 'EXTERNAL_PULL_REQUEST_MERGE_OBSERVED',
+    eventId: 'external-merge-programme-capacity-fixture',
+    expectedRevision: 55, expectedCurrentPhase: 'AWAITING_OPERATOR_APPROVAL',
+    observation, timestamp: NOW,
+    receipt: {
+      receiptId: 'external-merge-programme-capacity-fixture',
+      requirement: 'source integration observation only',
+      source: 'completion-guardian-github-observation',
+      evidenceType: 'github-merged-observation', verified: true, exitCode: 0,
+      createdAt: NOW,
+      commandOutputHash: createHash('sha256').update(JSON.stringify(observation)).digest('hex'),
+    },
+  }, { now: NOW });
+  const retained = structuredClone(accepted);
+  assert.equal(accepted.currentPhase, 'VERIFYING');
+  assert.equal(accepted.revision, 56);
+  assert.equal(accepted.nextAction.type, 'RECONCILE_GOAL_ACCEPTANCE');
+
+  const criticalBacklog = buildCriticalBacklogProjection({ backlog: [entry], missionRecords: [accepted] });
+  assert.equal(criticalBacklog.decision, 'PARKED_ACCEPTANCE_ONLY');
+  assert.deepEqual(criticalBacklog.parkedAcceptanceMissionIds, [accepted.missionId]);
+  assert.deepEqual(criticalBacklog.completedItemIds, []);
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW, criticalBacklog,
+    goalRecords: [
+      goalRecord({ goalId: 'goal-1284', issueNumber: 1284, route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1286', issueNumber: 1286, route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1287', issueNumber: 1287, route: 'OPENCLAW_LOCAL' }),
+    ],
+  });
+  assert.equal(goals.valid, true, goals.blockers.join(','));
+  assert.deepEqual(goals.goals.map(({ issue }) => issue), [1287]);
+  const scheduler = buildMissionScheduler({ now: NOW, goals: goals.goals });
+  assert.equal(scheduler.failClosed, false);
+  assert.equal(scheduler.selectedGoal, '#1287');
+  assert.equal(scheduler.selectedLifecycle, 'READY');
+  const input = {
+    nowUtc: NOW, workspaceFeed: { state: 'ready' },
+    lane: null, mutationLease: null, executionReceipt: null,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'RECONCILING' },
+    workerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0 },
+    battleBridgeProofs: [], runtimeHealthRecords: [],
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+    scheduler, criticalBacklog,
+  };
+  const ready = buildAuthoritativeProgrammeProjection(input);
+  assert.equal(ready.status, 'READY', ready.blockers.join(','));
+  assert.deepEqual(ready.blockers, []);
+  assert.equal(ready.lane, null);
+  assert.equal(ready.mutationLease, null);
+  assert.equal(ready.executionReceipt, null);
+  assert.equal(ready.projectionReceipt.mergeAuthority, false);
+
+  const conflictingLease = lease();
+  assert.equal(validateSourceMutationLease(conflictingLease, { nowUtc: NOW }).valid, true);
+  const held = buildAuthoritativeProgrammeProjection({ ...input, mutationLease: conflictingLease });
+  assert.equal(held.status, 'HOLD');
+  assert.ok(held.blockers.includes('mutation-lease-without-lane-projection'));
+  assert.deepEqual(held.mutationLease, conflictingLease);
+  assert.deepEqual(accepted, retained);
+  assert.equal(accepted.externalMergeObservation.goalAcceptanceProven, false);
+  assert.equal(accepted.externalMergeObservation.runtimeMutationAuthority, false);
+  assert.equal(accepted.approval.status, 'pending');
+});
+
 test('critical backlog scheduler admission preserves and rejects a conflicting active goal', () => {
   const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
   const existingActiveGoal = goalRecord({
@@ -1209,7 +1565,10 @@ test('authoritative projection holds without a real mutation lease even when a r
   });
   assert.equal(projection.schemaVersion, AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA);
   assert.equal(projection.status, 'HOLD');
-  assert.ok(projection.blockers.includes('active-lane-without-source-mutation-lease'));
+  assert.equal(projection.lane.active, false);
+  assert.ok(projection.blockers.includes('execution-receipt-without-source-mutation-lease'));
+  assert.ok(projection.blockers.includes('controller-heartbeat-phantom-active-lane'));
+  assert.ok(!projection.blockers.includes('active-lane-without-source-mutation-lease'));
   assert.equal(projection.chatMemoryAuthoritative, false);
 });
 
@@ -1991,7 +2350,7 @@ function exactElasticMission(overrides = {}) {
     ...overrides,
   };
 }
-function phaseAwareElasticLane(leaseRecord, binding) {
+function phaseAwareElasticLane(leaseRecord, binding, executionReceipt = null) {
   return buildCanonicalImplementationLaneProjection({
     laneId: 'goal-2956-pr-2960',
     issueNumber: 2956, prNumber: 2960,
@@ -2003,8 +2362,24 @@ function phaseAwareElasticLane(leaseRecord, binding) {
       merged: false, mergedAt: '', mergeCommitSha: '',
     },
     mutationLease: leaseRecord,
+    executionReceipt,
     elasticMissionPhaseBinding: binding,
     nowUtc: NOW,
+  });
+}
+
+function elasticStartedReceipt(leaseRecord) {
+  return createExecutionReceipt({
+    receiptId: 'execution-elastic-2956-1',
+    repository: REPOSITORY, issueNumber: 2956, prNumber: 2960,
+    branch: 'openclaw/elastic-goal-2956', sourceHead: ELASTIC_HEAD,
+    workerId: leaseRecord.ownerId, workerType: 'github-first',
+    executionId: 'execution-elastic-2956', leaseKey: leaseRecord.leaseId,
+    state: 'started', phase: 'bounded-source-mutation', sequence: 1,
+    timestampUtc: '2026-07-30T09:59:00.000Z',
+    heartbeatExpiresAtUtc: '2026-07-30T10:01:00.000Z',
+    proofRefs: ['proofs/elastic-execution-2956.json'],
+    expectedNextAction: 'Continue bounded work.',
   });
 }
 
@@ -2031,7 +2406,10 @@ test('actual source implementation remains active, subject to current execution 
       exactElasticMission({ currentPhase: phase }),
     ]);
     assert.equal(binding.materialImplementation, true);
-    const projected = phaseAwareElasticLane(sourceLease, binding);
+    const waiting = phaseAwareElasticLane(sourceLease, binding);
+    assert.equal(waiting.active, false);
+    assert.equal(waiting.pickupPending, true);
+    const projected = phaseAwareElasticLane(sourceLease, binding, elasticStartedReceipt(sourceLease));
     assert.equal(projected.active, true);
     assert.equal(projected.status, 'ACTIVE');
   }
@@ -2072,10 +2450,6 @@ test('proven elastic material lane uses canonical scheduler when legacy critical
   const activeBinding = projectElasticMissionPhaseBindingV1(sourceLease, [
     exactElasticMission({ currentPhase: 'AGENT_IMPLEMENTATION' }),
   ]);
-  const activeLane = phaseAwareElasticLane(sourceLease, activeBinding);
-  assert.equal(activeLane.valid, true);
-  assert.equal(activeLane.active, true);
-  assert.equal(activeLane.mutationLeaseIdentity.active, true);
   const executionReceipt = createExecutionReceipt({
     receiptId: 'execution-elastic-2956-1',
     repository: REPOSITORY,
@@ -2095,6 +2469,10 @@ test('proven elastic material lane uses canonical scheduler when legacy critical
     proofRefs: ['proofs/elastic-execution-2956.json'],
     expectedNextAction: 'Continue bounded work.',
   });
+  const activeLane = phaseAwareElasticLane(sourceLease, activeBinding, executionReceipt);
+  assert.equal(activeLane.valid, true);
+  assert.equal(activeLane.active, true);
+  assert.equal(activeLane.mutationLeaseIdentity.active, true);
   const criticalBacklog = {
     schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
     validation: { valid: true },

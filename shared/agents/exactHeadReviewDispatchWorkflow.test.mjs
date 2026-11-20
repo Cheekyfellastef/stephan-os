@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import {
+  selectExactHeadDiscoveryWindowV1,
+  EXACT_HEAD_DISCOVERY_MAX_PER_PASS,
+  EXACT_HEAD_DISCOVERY_WINDOW_MS,
+} from './exactHeadReviewDiscoveryWindowV1.mjs';
 
 const workflowUrl = new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url);
 const deterministicReviewWorkflowUrl = new URL('../../.github/workflows/stephanos-exact-head-review.yml', import.meta.url);
@@ -210,4 +215,40 @@ test('canonical plan and coordinate jobs enforce installation reserve before Git
   assert.ok(coordinate.indexOf('name: Gate hosted review on its own GitHub installation API budget')
     < coordinate.indexOf('name: Recheck target exact-current-main admission'));
   assert.ok(plan.includes("github.event_name != 'pull_request'"));
+});
+
+test('15-minute review discovery observes at most 12 of 145 PR comment threads per pass without starvation', () => {
+  const estate = Array.from({ length: 145 }, (_, index) => ({
+    number: 4000 - index, draft: index % 6 === 0,
+  }));
+  const everObserved = new Set();
+  const windows = Math.ceil((estate.length - 2) / 10);
+  for (let index = 0; index < windows; index += 1) {
+    const chosen = selectExactHeadDiscoveryWindowV1(estate, {
+      nowMs: index * EXACT_HEAD_DISCOVERY_WINDOW_MS,
+    });
+    assert.ok(chosen.length <= EXACT_HEAD_DISCOVERY_MAX_PER_PASS);
+    assert.deepEqual(chosen.slice(0, 2), estate.slice(0, 2));
+    assert.equal(new Set(chosen.map((pr) => pr.number)).size, chosen.length);
+    for (const pr of chosen) everObserved.add(pr.number);
+  }
+  assert.equal(everObserved.size, estate.length,
+    'every old PR is eventually observed without probing the full estate in one run');
+  assert.equal(selectExactHeadDiscoveryWindowV1(estate.slice(0, 4)).length, 4);
+  assert.equal(selectExactHeadDiscoveryWindowV1([]).length, 0);
+});
+
+test('discovery fails closed for duplicated/unknown PR identity and bounded selection is actually wired', () => {
+  assert.throws(
+    () => selectExactHeadDiscoveryWindowV1([{ number: 7 }, { number: 7 }]),
+    /EXACT_HEAD_DISCOVERY_PR_IDENTITIES_UNVERIFIED/,
+  );
+  assert.throws(
+    () => selectExactHeadDiscoveryWindowV1([{ number: 7 }], { nowMs: NaN }),
+    /EXACT_HEAD_DISCOVERY_INPUT_UNVERIFIED/,
+  );
+  const dispatcher = fs.readFileSync(new URL('../../scripts/exact-head-review-dispatch.mjs', import.meta.url), 'utf8');
+  assert.match(dispatcher, /selectExactHeadDiscoveryWindowV1\(openPullRequests\)/);
+  assert.match(dispatcher, /mapWithConcurrency\(boundedCandidates, 8,/);
+  assert.doesNotMatch(dispatcher, /mapWithConcurrency\(openPullRequests, 8,/);
 });

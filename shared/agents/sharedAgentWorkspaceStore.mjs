@@ -369,7 +369,11 @@ export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options 
         continue;
       }
       const pinnedStatus = basename(dirname(targetPath)) === 'status'
-        && ['controller-lane-status-current.json', 'stephanos-build-truth-current.json'].includes(basename(targetPath));
+        && [
+          'controller-lane-status-current.json',
+          'stephanos-build-truth-current.json',
+          'post-sync-runtime-refresh-current.json',
+        ].includes(basename(targetPath));
       if (transient && platform === 'win32' && pinnedStatus) {
         await replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options);
         return attempts;
@@ -391,7 +395,7 @@ export async function writeAtomicJson(rootInput, segments, record, options = {})
   const tempPath = `${resolved.path}.${process.pid}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(record, null, 2)}\n`;
   try {
-    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600, ...(options.durable ? { flush: true } : {}) });
     const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
     if (!publicationAncestors.ok) {
       try { await unlink(tempPath); } catch {}

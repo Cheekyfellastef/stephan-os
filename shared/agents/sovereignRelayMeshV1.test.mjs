@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
+  SOVEREIGN_RELAY_FAST_STALL_MS,
   SOVEREIGN_RELAY_FAST_POLL_MS,
   SOVEREIGN_RELAY_HOT_POLL_MS,
   SOVEREIGN_RELAY_IDLE_POLL_MS,
@@ -30,6 +31,69 @@ const relaySource = await readFile(
   new URL('../../scripts/battle-bridge-sovereign-relay-daemon.mjs', import.meta.url),
   'utf8',
 );
+
+
+function diagnosticForRelayTest(overrides = {}) {
+  return { schemaVersion: 'stephanos.mailbox-guard-diagnostic.v1',
+    observedAtUtc: '2026-11-07T15:20:00.000Z', stage: 'STATE_VALIDATION',
+    outcome: 'GUARD_BLOCKED', reasonCode: 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID',
+    childInvocationAttempted: false, ...overrides };
+}
+
+test('relay persists the finite guard refusal while keeping raw error detail private', () => {
+  const diagnostic = diagnosticForRelayTest();
+  const cycle = classifySovereignRelayGuardCycle({ exitCode: 1, stdout: JSON.stringify({
+    ok: false, blocker: 'MAILBOX_OUTBOX_GUARD_FAILED', finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    error: 'private-path=C:\\private\\fixture secret=fixture', guardDiagnostic: diagnostic,
+  }) });
+  assert.deepEqual(cycle.guardDiagnostic, diagnostic);
+  const status = buildSovereignRelayStatus({ now: new Date(diagnostic.observedAtUtc),
+    cycle, sourceHead: 'a'.repeat(40) });
+  assert.deepEqual(status.guardDiagnostic, diagnostic);
+  assert.equal(Object.hasOwn(status, 'detail'), false);
+  assert.equal(JSON.stringify(status).includes('private-path'), false);
+  assert.equal(status.carrierHealthy, false);
+  assert.equal(status.sourceMutationAllowed, false);
+});
+
+test('in-flight heartbeat retains the original diagnostic time and never rebinds another source', () => {
+  const diagnostic = diagnosticForRelayTest();
+  const sourceHead = 'a'.repeat(40);
+  const previousStatus = buildSovereignRelayStatus({ now: new Date(diagnostic.observedAtUtc),
+    sourceHead, cycle: { ok: false, guardDiagnostic: diagnostic } });
+  const inFlight = buildSovereignRelayInFlightStatus({
+    now: new Date('2026-11-07T15:22:00.000Z'),
+    cycleStartedAtMs: Date.parse('2026-11-07T15:21:59.000Z'), sourceHead, previousStatus,
+  });
+  assert.deepEqual(inFlight.guardDiagnostic, diagnostic);
+  assert.equal(inFlight.guardDiagnostic.observedAtUtc, '2026-11-07T15:20:00.000Z');
+  assert.equal(inFlight.heartbeatAtUtc, '2026-11-07T15:22:00.000Z');
+  const differentSource = buildSovereignRelayInFlightStatus({
+    now: new Date('2026-11-07T15:22:00.000Z'), sourceHead: 'b'.repeat(40), previousStatus,
+  });
+  assert.equal(differentSource.guardDiagnostic, null);
+});
+
+test('relay rejects contradictory, legacy-only and open diagnostic claims', () => {
+  const raw = { ok: false, blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+    finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED', error: 'MAILBOX_OUTBOX_PENDING_ENTRY_INVALID' };
+  assert.equal(classifySovereignRelayGuardCycle({ exitCode: 1, stdout: JSON.stringify(raw) }).guardDiagnostic, null);
+  for (const guardDiagnostic of [
+    diagnosticForRelayTest({ raw: 'private' }),
+    diagnosticForRelayTest({ outcome: 'CHILD_SUCCEEDED', stage: 'COMPLETE',
+      childInvocationAttempted: true, reasonCode: 'NONE' }),
+  ]) {
+    assert.equal(classifySovereignRelayGuardCycle({ exitCode: 1,
+      stdout: JSON.stringify({ ...raw, guardDiagnostic }) }).guardDiagnostic, null);
+  }
+  const busy = diagnosticForRelayTest({ outcome: 'GUARD_BUSY', stage: 'LOCK',
+    reasonCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING' });
+  const cycle = classifySovereignRelayGuardCycle({ exitCode: 1, stdout: JSON.stringify({
+    ...raw, error: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING', guardDiagnostic: busy,
+  }) });
+  assert.equal(cycle.busy, true);
+  assert.equal(cycle.guardDiagnostic.outcome, 'GUARD_BUSY');
+});
 
 test('relay source head proof is exact and uses a non-shell git boundary', () => {
   const calls = [];
@@ -284,7 +348,13 @@ test('watchdog recycles a fresh but stale-head Sovereign relay after main advanc
   assert.match(watchdog, /SOVEREIGN_RELAY_SOURCE_HEAD_MISSING/);
   assert.match(watchdog, /SOVEREIGN_RELAY_SOURCE_HEAD_STALE/);
   assert.match(watchdog, /\$status\.daemonHealthy\s+-eq\s+\$true[\s\S]*\$age\s+-le\s+30[\s\S]*\$sourceHeadMatchesLive/);
+  assert.match(watchdog, /if \(\$relayBefore\.Count -gt 1\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/);
   assert.match(watchdog, /if \(\$relayBefore\.Count -eq 0 -or -not \[bool\]\$relayHealthBefore\.healthy\)/);
+  assert.match(watchdog, /function Wait-SovereignRelayDaemonReady/);
+  assert.match(watchdog, /\$lastProcesses\.Count -eq 1 -and \[bool\]\$lastHealth\.healthy/);
+  assert.match(watchdog, /\[int\]\$Attempts = 40/);
+  assert.match(watchdog, /\[int\]\$DelayMilliseconds = 500/);
+  assert.match(watchdog, /\$relayDaemonHealthy = \[bool\]\(\$relayReady\.ready -and \$relayAfter\.Count -eq 1 -and \$relayHealthAfter\.healthy\)/);
   assert.match(watchdog, /relayDaemonSourceHeadMatchesLive/);
 });
 
@@ -312,4 +382,79 @@ test('architecture makes the transport mesh additive and keeps every fallback', 
   assert.match(architecture, /OpenAI Secure MCP Tunnel.*fallback/i);
   assert.match(architecture, /Remote Desktop Commander.*fallback/i);
   assert.match(architecture, /no single transport.*critical path/i);
+});
+
+test('relay retains settled carrier failure while the next guard cycle is in flight', () => {
+  const now = new Date('2026-10-15T18:39:40.000Z');
+  const status = buildSovereignRelayInFlightStatus({
+    now,
+    cycleStartedAtMs: now.getTime() - 10_000,
+    previousStatus: {
+      carrierHealthy: false,
+      blocker: 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS',
+      guardVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      lastCarrierHealthyAtUtc: '2026-10-15T18:30:00.000Z',
+    },
+    consecutiveCarrierFailures: SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
+    sourceHead: 'e'.repeat(40),
+  });
+  assert.equal(status.status, 'ATTENTION_REQUIRED');
+  assert.equal(status.carrierHealthy, false);
+  assert.equal(status.deliveryState, 'FALLBACK_COVERED');
+  assert.equal(status.blocker, 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS');
+  assert.equal(status.guardVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
+  assert.equal(status.lastCarrierHealthyAtUtc, '2026-10-15T18:30:00.000Z');
+  assert.equal(status.scheduledMailboxFallbackExpected, true);
+  assert.equal(status.retryIdentityPreserved, true);
+  assert.equal(status.duplicateExecutionAllowed, false);
+});
+
+test('stalled fast relay reports recovery without asserting unproven shared-lock fallback', () => {
+  assert.equal(SOVEREIGN_RELAY_FAST_STALL_MS, 90_000);
+  const now = new Date('2026-10-15T18:50:00.000Z');
+  const previousStatus = { carrierHealthy: true, blocker: '' };
+  const before = buildSovereignRelayInFlightStatus({
+    now, previousStatus, sourceHead: 'f'.repeat(40),
+    cycleStartedAtMs: now.getTime() - (SOVEREIGN_RELAY_FAST_STALL_MS - 1),
+  });
+  assert.equal(before.carrierHealthy, true);
+  assert.equal(before.deliveryState, 'FAST_CHECKING');
+  assert.equal(before.fastCycleStalled, false);
+  const stalled = buildSovereignRelayInFlightStatus({
+    now, previousStatus, sourceHead: 'f'.repeat(40),
+    cycleStartedAtMs: now.getTime() - SOVEREIGN_RELAY_FAST_STALL_MS,
+  });
+  assert.equal(stalled.daemonHealthy, true);
+  assert.equal(stalled.carrierHealthy, false);
+  assert.equal(stalled.status, 'ATTENTION_REQUIRED');
+  assert.equal(stalled.fastCycleStalled, true);
+  assert.equal(stalled.deliveryState, 'RECOVERING');
+  assert.equal(stalled.fallbackCovered, false);
+  assert.equal(stalled.scheduledMailboxFallbackExpected, true);
+  assert.equal(stalled.blocker, 'SOVEREIGN_RELAY_GUARD_CYCLE_STALLED');
+  assert.equal(stalled.duplicateExecutionAllowed, false);
+  assert.equal(stalled.retryIdentityPreserved, true);
+  assert.equal(stalled.sourceMutationAllowed, false);
+});
+
+test('stalled relay preserves prior carrier blocker without claiming fallback coverage', () => {
+  const now = new Date('2026-10-15T19:00:00.000Z');
+  const status = buildSovereignRelayInFlightStatus({
+    now,
+    cycleStartedAtMs: now.getTime() - (SOVEREIGN_RELAY_FAST_STALL_MS + 10),
+    previousStatus: {
+      carrierHealthy: false,
+      blocker: 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS',
+      guardVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    },
+    consecutiveCarrierFailures: 3,
+    sourceHead: 'e'.repeat(40),
+  });
+  assert.equal(status.carrierHealthy, false);
+  assert.equal(status.status, 'ATTENTION_REQUIRED');
+  assert.equal(status.deliveryState, 'RECOVERING');
+  assert.equal(status.fallbackCovered, false);
+  assert.equal(status.blocker, 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS');
+  assert.equal(status.guardVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
+  assert.equal(status.duplicateExecutionAllowed, false);
 });

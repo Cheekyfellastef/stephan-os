@@ -493,3 +493,118 @@ test('workspace tail ignores controller reconciliation that predates the exact m
   assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'PASS');
   assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'WAITING');
 });
+
+
+test('matching running incumbent keeps CLAIM waiting for its original terminal outcome', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-11-01T15:37:41.238Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'WAIT_ACTIVE_MISSION',
+      elasticAdmission: {
+        selectedMission: {
+          missionId: 'critical-1574-elastic-goal',
+          issueNumber: 1574,
+          dispatch: { status: 'running' },
+        },
+        activeMissions: [{
+          missionId: 'critical-1574-elastic-goal',
+          issueNumber: 1574,
+          dispatch: { status: 'running' },
+        }],
+      },
+      elasticIgnition: {
+        ok: true,
+        dispatchCount: 0,
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED',
+      },
+    },
+    sourceBuild: { processed: false, reason: 'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').reason, 'INCUMBENT_DISPATCH_TERMINAL_OUTCOME_UNPROVEN');
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'NOT_REACHED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.currentReason, 'INCUMBENT_DISPATCH_TERMINAL_OUTCOME_UNPROVEN');
+  assert.match(track.exactNextAction, /incumbent ORIGINAL processing claim/i);
+  assert.match(track.exactNextAction, /duplicate dispatch/i);
+  assert.equal(track.autonomousLoopProven, false);
+});
+
+test('unrelated running mission cannot satisfy selected mission claim projection', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-11-01T15:37:42.238Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'WAIT_ACTIVE_MISSION',
+      elasticAdmission: {
+        selectedMission: { missionId: 'critical-1574-elastic-goal', issueNumber: 1574 },
+        activeMissions: [{
+          missionId: 'critical-2963-elastic-goal',
+          issueNumber: 2963,
+          dispatch: { status: 'running' },
+        }],
+      },
+      elasticIgnition: {
+        ok: true,
+        dispatchCount: 0,
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED',
+      },
+    },
+    sourceBuild: { processed: false, reason: 'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').reason, 'SOURCE_CLAIM_NOT_OBSERVED');
+  assert.equal(track.currentGate, 'CLAIM');
+});
+
+test('no incumbent mission maps no-new-dispatch to ordinary source-claim waiting', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-11-01T15:37:43.238Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: {
+        selectedMission: { missionId: 'critical-1574-elastic-goal', issueNumber: 1574 },
+        activeMissions: [],
+      },
+      elasticIgnition: {
+        ok: true,
+        dispatchCount: 0,
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_NOT_REQUIRED',
+      },
+    },
+    sourceBuild: { processed: false, reason: 'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').reason, 'SOURCE_CLAIM_NOT_OBSERVED');
+});
+
+test('real held elastic dispatch remains a typed claim blocker', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-11-01T15:37:44.238Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'WAIT_ACTIVE_MISSION',
+      elasticAdmission: {
+        selectedMission: { missionId: 'critical-1574-elastic-goal', issueNumber: 1574 },
+        activeMissions: [{
+          missionId: 'critical-1574-elastic-goal',
+          issueNumber: 1574,
+          dispatch: { status: 'running' },
+        }],
+      },
+      elasticIgnition: {
+        ok: false,
+        dispatchCount: 0,
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+        held: [{ missionId: 'critical-1574-elastic-goal', reason: 'SOURCE_REVISION_REQUIRED' }],
+      },
+    },
+    sourceBuild: { processed: false, reason: 'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'BLOCKED');
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').reason, 'SOURCE_REVISION_REQUIRED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.blocker, 'SOURCE_REVISION_REQUIRED');
+});

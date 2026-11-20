@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import {
   refreshSovereignBuilder8Capacity,
   SOVEREIGN_BUILDER8_WORKER_ID,
@@ -171,4 +174,57 @@ test('an unexpected worker/model failure replaces any prior READY state with blo
     assert.equal(h.statuses.length, 1);
     assert.equal(h.statuses[0].status, 'BLOCKED');
   }
+});
+
+test('Builder 8 supplies canonical context and a live clock to the real guarded native probe', async () => {
+  const profile = await mkdtemp(join(tmpdir(), 'builder8-native-admission-'));
+  const workspaceRoot = join(profile, 'Documents', 'Stephanos-openclaw-workspace');
+  const vr = join(workspaceRoot, 'vr');
+  let clock = NOW.getTime();
+  let modelCalls = 0;
+  const model = 'qwen3-coder:30b';
+  const reply = (value) => ({ ok: true, async text() { return JSON.stringify(value); } });
+  try {
+    await mkdir(vr, { recursive: true });
+    await writeFile(join(vr, 'vr-resource-governor-current.json'), JSON.stringify({
+      schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
+      phase: 'NORMAL', overrideMode: 'AUTO', ollamaLoadMode: 'balanced', cooldownUntilUtc: '',
+      active: false, flatGameActive: false, airLinkActive: false, realAirLinkActive: false,
+      virtualAirLinkTestActive: false, prepareLeaseActive: false,
+      localModelAllowed: true, heavyModelAllowed: true, updatedAtUtc: NOW.toISOString(),
+    }));
+    const h = harness({
+      env: { USERPROFILE: profile, STEPHANOS_LOCAL_BUILDER_MODEL: model },
+      paths: { workspaceRoot, repoRoot: resolve('.') },
+      nowMs: () => clock,
+      probeModel: undefined,
+      fetchImpl: async (url, init) => {
+        if (url.endsWith('/api/tags') || url.endsWith('/api/ps')) return reply({ models: [{ name: model }] });
+        assert.ok(url.endsWith('/api/chat'));
+        assert.equal(JSON.parse(init.body).model, model);
+        modelCalls += 1;
+        return reply({ model, message: { content: JSON.stringify({
+          source: 'export const add=(a,b)=>a+b;', test: 'assert.equal(add(2,3),5);',
+        }) } });
+      },
+    });
+    const admitted = await refreshSovereignBuilder8Capacity(h.opts);
+    assert.equal(admitted.ok, true, admitted.reason);
+    assert.equal(modelCalls, 1);
+    assert.equal(h.receipts.length, 1);
+
+    const prepare = join(vr, 'gaming-resource-prepare.json');
+    await writeFile(prepare, '{}');
+    const held = await refreshSovereignBuilder8Capacity(h.opts);
+    assert.equal(held.ok, false);
+    assert.equal(held.reason, 'native-capacity-gaming-prepare-pending');
+    await rm(prepare);
+    clock += 30_001;
+    const stale = await refreshSovereignBuilder8Capacity(h.opts);
+    assert.equal(stale.ok, false);
+    assert.equal(stale.reason, 'native-capacity-gaming-observation-stale');
+    assert.equal(modelCalls, 1);
+    assert.equal(h.receipts.length, 1);
+    assert.ok(h.statuses.every((record) => record.status === 'BLOCKED'));
+  } finally { await rm(profile, { recursive: true, force: true }); }
 });

@@ -6,6 +6,33 @@
   overflow-x: clip;
 }
 
+/* The first-class Cockpit uses one document and the shared panel primitives. */
+.app-shell-root.cockpit-surface-mode {
+  max-width: 1840px;
+  padding: clamp(10px, 2vw, 32px);
+}
+.cockpit-surface-mode .cockpit-surface-stage { padding: 0; }
+.cockpit-surface-mode .cockpit-panel-standalone { max-width: none; margin: 0; }
+.cockpit-service-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(96, 173, 255, .3);
+  border-radius: 12px;
+}
+.cockpit-service-summary > div { min-width: 0; display: grid; gap: 5px; }
+.cockpit-service-summary span { color: #9bb5c9; font-size: .85rem; }
+.cockpit-service-summary strong { overflow-wrap: anywhere; }
+.cockpit-service-summary > p { grid-column: 1 / -1; margin: 0; }
+.cockpit-surface-mode .cockpit-shell,
+.cockpit-surface-mode .cockpit-detail-view,
+.cockpit-surface-mode .cockpit-dashboard-core { min-width: 0; }
+.cockpit-surface-mode .cockpit-detail-grid,
+.cockpit-surface-mode .cockpit-mission-stack { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+.cockpit-surface-mode .cockpit-shell { overflow-wrap: anywhere; }
+.cockpit-surface-mode .cockpit-visual-orb { white-space: normal; }
+
 /* LIVE SOURCE OF TRUTH: this stylesheet drives the served Stephanos Mission Console theme.
    The production UI in apps/stephanos/dist is generated from stephanos-ui/src/styles.css. */
 *,

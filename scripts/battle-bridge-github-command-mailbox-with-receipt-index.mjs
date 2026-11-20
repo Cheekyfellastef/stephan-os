@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { refreshMailboxReceiptIndex } from '../shared/agents/mailboxReceiptIndex.mjs';
+import { projectMailboxReceiptRequestId } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import {
   MAILBOX_PROCESS_SOURCE_HEAD,
@@ -301,6 +302,17 @@ export function reconcileStaleAcceptedMailboxReceipts({
   const timestampUtc = new Date(nowMs).toISOString();
   const acceptedIds = [...new Set(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds.map(String) : [])]
     .filter((requestId) => SAFE_REQUEST_ID_PATTERN.test(requestId));
+  if (acceptedIds.some((requestId) => !projectMailboxReceiptRequestId(requestId))) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'MAILBOX_ACCEPTED_RECEIPT_IDENTITY_UNSAFE',
+      finalVerdict: 'MAILBOX_ACCEPTED_RECONCILIATION_BLOCKED',
+      reconciledCount: 0,
+      expiredCount: 0,
+      freshCount: 0,
+      replayPerformed: false,
+    });
+  }
   let reconciledCount = 0;
   let expiredCount = 0;
   let freshCount = 0;
@@ -344,8 +356,22 @@ export function reconcileStaleAcceptedMailboxReceipts({
       continue;
     }
 
+    // The outbox guard hard-stops its one mailbox child after 15 minutes.
+    // A heartbeat refreshed by the index/status sidecar is *not* evidence
+    // that the original guarded child still exists after the 16-minute
+    // recovery boundary. Bound ACCEPTED ownership by its immutable original
+    // acceptedAt timestamp, not only the most recently published heartbeat.
+    // If the original admission timestamp is unavailable or in the future,
+    // retain the conservative heartbeat-based path instead of guessing.
+    const acceptedAtMs = Date.parse(String(localReceipt?.acceptedAt || ''));
+    const originalAcceptanceExpired = Number.isFinite(acceptedAtMs)
+      && acceptedAtMs <= nowMs
+      && nowMs - acceptedAtMs > leaseMs;
     const heartbeatMs = Date.parse(String(localReceipt?.heartbeatAt || localReceipt?.acceptedAt || ''));
-    if (Number.isFinite(heartbeatMs) && nowMs - heartbeatMs <= leaseMs) {
+    const heartbeatFresh = Number.isFinite(heartbeatMs)
+      && heartbeatMs <= nowMs + 60_000
+      && nowMs - heartbeatMs <= leaseMs;
+    if (!originalAcceptanceExpired && heartbeatFresh) {
       freshCount += 1;
       continue;
     }

@@ -106,6 +106,17 @@ export const STEPHANOS_CAPABILITIES = Object.freeze([
     requiresOperatorApproval: true,
   }),
   descriptor({
+    capabilityId: 'sovereign-commander',
+    category: 'bounded-local-machine-control',
+    purpose: 'Authenticated local MCP and guarded remote Commander with fixed maintenance verbs and terminal proof, never an unrestricted PC executor.',
+    ownerIssue: 2519,
+    discoveryRoute: 'local-mcp-or-guarded-github-mailbox',
+    statusSource: 'sovereign-commander-execution-receipts',
+    operations: ['GET_CONFIG', 'READ_FILE', 'LIST_PROCESSES', 'SEARCH_PROJECT', 'MAINTENANCE_ACTION'],
+    requiresOperatorApproval: true,
+    runtimeMutationAllowed: true,
+  }),
+  descriptor({
     capabilityId: 'battle-bridge-github-command-mailbox',
     category: 'bounded-windows-transport',
     purpose: 'Owner-authored expiring allowlisted commands from GitHub to the real Windows Battle Bridge with accepted and terminal receipts.',
