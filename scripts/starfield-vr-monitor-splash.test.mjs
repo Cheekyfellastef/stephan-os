@@ -237,7 +237,7 @@ test('waiting-window retry is time-bounded, never relaunches game or replays sav
 test('same-run game identity drift fails closed before foreground or confirmation retarget', () => {
   const receiver = functionSource('Receive-MonitorEvent');
   for (const identityCheck of [
-    '$monitorState.RunId -ceq $event.runId',
+    '$monitorState.WitnessedRunId -and $event.runId',
     '$monitorState.GameProcessIdentity.pid -ne $event.process.pid',
     '$monitorState.GameProcessIdentity.createdFileTime -cne $event.process.createdFileTime',
     "throw 'monitor-state-game-identity-drift'",
@@ -254,12 +254,29 @@ test('same-run null game frames retain the original witnessed identity', () => {
   const initial = source.match(/\$monitorState = \[pscustomobject\]@\{([\s\S]*?)\n\}/)?.[1] || '';
   assert.match(initial, /GameProcessIdentity = \$null/);
   assert.match(receiver, /\$monitorState\.GameProcessIdentity -and \$event\.process/);
-  assert.match(receiver, /if \(\$monitorState\.RunId -cne \$event\.runId\) \{ \$monitorState\.GameProcessIdentity = \$null \}/);
+  assert.match(initial, /WitnessedRunId = \$null/);
+  assert.doesNotMatch(receiver, /if \(\$monitorState\.RunId -cne \$event\.runId\) \{ \$monitorState\.GameProcessIdentity = \$null \}/);
   assert.match(receiver, /if \(\$event\.process -and -not \$monitorState\.GameProcessIdentity\)/);
   assert.ok(receiver.indexOf("throw 'monitor-state-game-identity-drift'") <
     receiver.indexOf('$monitorState.GameProcessIdentity = $event.process'));
   assert.ok(receiver.indexOf('$monitorState.GameProcessIdentity = $event.process') <
     receiver.indexOf('$monitorState.GameProcess = $event.process'));
+});
+
+test('one monitor child cannot swap native run IDs after a null process or run frame', () => {
+  const receiver = functionSource('Receive-MonitorEvent');
+  const initial = source.match(/\$monitorState = \[pscustomobject\]@\{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(initial, /WitnessedRunId = \$null/);
+  assert.match(receiver, /\$monitorState\.WitnessedRunId -and \$event\.runId -and \$monitorState\.WitnessedRunId -cne \$event\.runId/);
+  assert.match(receiver, /throw 'monitor-state-run-identity-drift'/);
+  assert.match(receiver, /\$event\.runId -and -not \$monitorState\.WitnessedRunId/);
+  assert.match(receiver, /\$monitorState\.WitnessedRunId = \$event\.runId/);
+  assert.match(receiver, /if \(\$event\.process -and -not \$event\.runId\) \{ throw 'monitor-state-process-without-run' \}/);
+  assert.ok(receiver.indexOf("throw 'monitor-state-run-identity-drift'") <
+    receiver.indexOf('$monitorState.GameProcess = $event.process'));
+  assert.ok(receiver.indexOf("throw 'monitor-state-process-without-run'") <
+    receiver.indexOf('$monitorState.WitnessedRunId = $event.runId'));
+  assert.doesNotMatch(receiver, /\$monitorState\.WitnessedRunId = \$null/);
 });
 
 test('explicit monitor cancellation or close disarms foreground retries and rejects late waiting rearm', () => {
