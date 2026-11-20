@@ -804,6 +804,15 @@ function Receive-MonitorEvent {
         $value = $event.PSObject.Properties[$name].Value
         if ($null -ne $value -and ($value -isnot [string] -or $value.Length -gt 4096)) { throw ('monitor-state-text-invalid:' + $name) }
     }
+    # Keep one exact native game process identity per monitor run. An otherwise
+    # well-typed later frame cannot silently retarget foreground or confirmation.
+    # A null process is allowed for terminal cleanup after the game exits.
+    if ($monitorState.RunId -and $event.runId -and $monitorState.RunId -ceq $event.runId -and
+        $monitorState.GameProcess -and $event.process -and
+        ($monitorState.GameProcess.pid -ne $event.process.pid -or
+         $monitorState.GameProcess.createdFileTime -cne $event.process.createdFileTime)) {
+        throw 'monitor-state-game-identity-drift'
+    }
     $monitorState.Mode = $event.mode
     $monitorState.Busy = $event.busy
     if ($monitorState.Mode -cne 'waiting' -or $monitorState.Busy) { $focusRetryTimer.Stop() }
