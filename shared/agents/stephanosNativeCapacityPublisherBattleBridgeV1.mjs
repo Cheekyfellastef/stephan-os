@@ -300,9 +300,12 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
         mergeAuthority: false, leaseSeizureAllowed: false,
       });
     }
+    // An installation-era signed receipt cannot certify the recovery restart.
+    // Require a new signed observation after the fixed-task reconciliation ends.
+    const recoveryCompletedAtUtc = (options.now || (() => new Date()))().toISOString();
     signed = await proveNativePublisherSignedReadbackV1({
       expectedHead: shape.expectedHead, repositoryRoot, env,
-    notBeforeUtc: installRequestedAtUtc,
+      notBeforeUtc: recoveryCompletedAtUtc,
       verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
     verifyStale: options.verifyStaleFn || readVerifiedStephanosNativeStalePublisherHeadV1,
       sleep: options.sleepFn,

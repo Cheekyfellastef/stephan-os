@@ -605,3 +605,73 @@ test('untrusted stale receipt mismatch never becomes task stop/start authority',
     assert.equal(result.reason, spoofedReason);
   }
 });
+
+test('post-reconcile signed readback refuses a pre-restart capacity observation', async () => {
+  // This exercises the existing guarded task and signed-verifier interfaces,
+  // with in-memory receipts only. No native task or process is touched.
+  const simulate = async (capacityObservedAtUtc) => {
+    let reconciliationCompleted = false;
+    let recoveryCalls = 0;
+    let clockReads = 0;
+    const spawnSyncFn = (_binary, args) => {
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n' };
+      if (args.includes('status')) return { status: 0, stdout: '' };
+      if (args.some(value => String(value).endsWith('reconcile-stephanos-native-capacity-publisher-stale.ps1'))) {
+        reconciliationCompleted = true;
+        recoveryCalls += 1;
+        return { status: 0, stdout: JSON.stringify({
+          finalVerdict: 'NATIVE_PUBLISHER_FIXED_TASK_RESTART_REQUESTED',
+          expectedHead: HEAD,
+          taskName: 'Stephanos Native Capacity Publisher',
+          signedCapacityVerified: false,
+          leaseReleaseAllowed: false,
+          sourceMutationAllowed: false,
+          mergeAuthority: false,
+        }) + '\n' };
+      }
+      return { status: 0, stdout: installerReceipt() };
+    };
+    const result = await executeStephanosNativeCapacityPublisherInstallOnBattleBridge(command(), {
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+      spawnSyncFn,
+      now: () => new Date(reconciliationCompleted
+        ? '2026-11-20T08:02:00.000Z'
+        : clockReads++ === 0 ? '2026-11-20T08:00:00.000Z' : '2026-11-20T08:01:00.000Z'),
+      verifyCandidateFn: async () => reconciliationCompleted
+        ? { ok: true, candidate: {
+          sourceHead: HEAD,
+          repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+          taskClass: 'FOCUSED_REPAIR',
+          capacityObservedAtUtc,
+          sourceMutationAllowed: true,
+          mergeAuthority: false,
+          leaseSeizureAllowed: false,
+        } }
+        : { ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:source-head-invalid' },
+      verifyStaleFn: async () => ({
+        ok: true,
+        expectedHead: HEAD,
+        repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+        signedStaleHead: 'a'.repeat(40),
+        capacityObservedAtUtc: '2026-11-20T08:00:30.000Z',
+        verifiedSignedReceipt: true,
+      }),
+      sleepFn: async () => {},
+    });
+    return { result, recoveryCalls };
+  };
+
+  const stale = await simulate('2026-11-20T08:00:30.000Z');
+  assert.equal(stale.recoveryCalls, 1);
+  assert.equal(stale.result.ok, false);
+  assert.equal(stale.result.blocker, 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_NOT_PROVEN');
+  assert.equal(stale.result.signedReadbackReason, 'STEPHANOS_NATIVE_PUBLISHER_POST_START_SIGNED_RECEIPT_UNPROVEN');
+  assert.equal(stale.result.signedCapacityProven, false);
+
+  const fresh = await simulate('2026-11-20T08:02:30.000Z');
+  assert.equal(fresh.recoveryCalls, 1);
+  assert.equal(fresh.result.ok, true);
+  assert.equal(fresh.result.finalVerdict, 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_CAPACITY_LIVE_PROVEN');
+  assert.equal(fresh.result.signedCapacityProven, true);
+});
