@@ -22,6 +22,10 @@ export const WORKER_KIND = Object.freeze({
 const MANDATORY_FORBIDDEN_FILES = Object.freeze([
   'runtime/**', 'tmp/**', 'memory/**', 'node_modules/**', '.env*', '**/*secret*',
 ]);
+function validCanonicalGoalInventory(goals) {
+  return Array.isArray(goals) && goals.length > 0
+    && Array.from(goals).every((goal) => goal !== null && typeof goal === 'object' && !Array.isArray(goal));
+}
 function hasAmbiguousGoalIds(goals) {
   const seen = new Set();
   for (const goal of goals) {
@@ -178,7 +182,8 @@ export function classifyGoal(record = {}) {
 }
 
 export function selectNextGoal(input = {}) {
-  const goals = (Array.isArray(input.goals) ? input.goals : []).map(classifyGoal);
+  if (!validCanonicalGoalInventory(input.goals)) return null;
+  const goals = input.goals.map(classifyGoal);
   if (hasAmbiguousGoalIds(goals)) return null;
   const completedIds = new Set(goals.filter((goal) => goal.state === GOAL_STATE.DONE).map((goal) => goal.goalId));
   // Stage-owned work stays in its existing lane; select only genuinely fresh source work.
@@ -219,8 +224,9 @@ export function createSourceSlicePacket(input = {}) {
 }
 
 export function createDirectorStatusPacket(input = {}) {
-  const goals = (Array.isArray(input.goals) ? input.goals : []).map(classifyGoal);
-  const ambiguous = hasAmbiguousGoalIds(goals);
+  const inventoryValid = validCanonicalGoalInventory(input.goals);
+  const goals = inventoryValid ? input.goals.map(classifyGoal) : [];
+  const ambiguous = !inventoryValid || hasAmbiguousGoalIds(goals);
   const hasHint = input.nextGoal !== null && input.nextGoal !== undefined;
   const selectedId = typeof input.nextGoal?.goalId === 'string' ? input.nextGoal.goalId.trim() : '';
   const selectedGoal = ambiguous ? null : hasHint
@@ -248,7 +254,7 @@ export function createDirectorStatusPacket(input = {}) {
   const packet = nextGoal
     ? createSourceSlicePacket({ goal: nextGoal, allowedFiles: scoped, forbiddenFiles: forbidden })
     : null;
-  const unfinished = goals.some((goal) => goal.state !== GOAL_STATE.DONE);
+  const unfinished = goals.length === 0 || goals.some((goal) => goal.state !== GOAL_STATE.DONE);
   return {
     schemaVersion: MISSION_FLYWHEEL_DIRECTOR_SCHEMA_VERSION,
     kind: 'stephanos.mission_flywheel_director.status_packet',
@@ -265,8 +271,9 @@ export function validateDirectorStatusPacket(packet = {}) {
   const errors = [];
   if (packet.schemaVersion !== MISSION_FLYWHEEL_DIRECTOR_SCHEMA_VERSION) errors.push('invalid-schema-version');
   if (packet.kind !== 'stephanos.mission_flywheel_director.status_packet') errors.push('invalid-kind');
-  if (!Array.isArray(packet.goals)) errors.push('missing-goals');
-  const goals = Array.isArray(packet.goals) ? packet.goals.map(classifyGoal) : [];
+  const inventoryValid = validCanonicalGoalInventory(packet.goals);
+  if (!inventoryValid) errors.push('invalid-canonical-goal-estate');
+  const goals = inventoryValid ? packet.goals.map(classifyGoal) : [];
   if (hasAmbiguousGoalIds(goals)) errors.push('ambiguous-canonical-goal-identity');
   const slice = packet.nextSourceSlice;
   if (slice) {
@@ -306,7 +313,7 @@ export function validateDirectorStatusPacket(packet = {}) {
     }
   } else if (packet.nextGoal) errors.push('source-slice-missing-for-selected-goal');
   // Status and terminal verdict are derived facts, never caller-assigned evidence.
-  const unfinished = goals.some((goal) => goal.state !== GOAL_STATE.DONE);
+  const unfinished = goals.length === 0 || goals.some((goal) => goal.state !== GOAL_STATE.DONE);
   const held = unfinished || hasAmbiguousGoalIds(goals);
   const expectedDirectorState = slice ? GOAL_STATE.BUILDING
     : held ? GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION : GOAL_STATE.DONE;

@@ -582,3 +582,46 @@ test('Goal #2961: blocked completion cannot release a dependent source slice', (
   assert.equal(status.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
   assert.equal(validateDirectorStatusPacket(status).valid, true);
 });
+
+test('Goal #2961: missing, empty, sparse and malformed goal inventory cannot claim all goals DONE', () => {
+  const completed = { goalId: '#done', state: GOAL_STATE.DONE, sourceMerged: true,
+    focusedProofRecorded: true, missionStateUpdated: true };
+  const inventoryCases = [
+    undefined, null, [], 'invalid', {},
+    [null], [completed, null], [null, { goalId: '#ready', allowedFiles: ['safe.mjs'] }],
+    new Array(1), [[{ goalId: '#nested' }]],
+  ];
+  for (const goals of inventoryCases) {
+    const packet = createDirectorStatusPacket({ goals });
+    assert.equal(packet.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_HELD');
+    assert.equal(packet.directorState, GOAL_STATE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION);
+    assert.equal(packet.nextGoal, null);
+    assert.equal(packet.nextSourceSlice, null);
+    assert.equal(selectNextGoal({ goals }), null);
+    const verification = validateDirectorStatusPacket(packet);
+    assert.equal(verification.valid, false);
+    assert.ok(verification.errors.includes('invalid-canonical-goal-estate'));
+  }
+  const done = createDirectorStatusPacket({ goals: [completed] });
+  assert.equal(done.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_IDLE');
+  assert.equal(validateDirectorStatusPacket(done).valid, true);
+  const eligible = createDirectorStatusPacket({ goals: [
+    { goalId: '#ready', allowedFiles: ['safe.mjs'] }
+  ] });
+  assert.equal(eligible.finalVerdict, 'MISSION_FLYWHEEL_DIRECTOR_ACTIVE');
+  assert.equal(validateDirectorStatusPacket(eligible).valid, true);
+});
+
+test('Goal #2961: validator rejects forged empty or malformed goal membership regardless of state', () => {
+  const canonical = createDirectorStatusPacket({ goals: [
+    { goalId: '#done', state: GOAL_STATE.DONE, sourceMerged: true,
+      focusedProofRecorded: true, missionStateUpdated: true }
+  ] });
+  assert.equal(validateDirectorStatusPacket(canonical).valid, true);
+  for (const goals of [[], null, 'invalid', [null], new Array(1), [[1]]]) {
+    const forged = { ...canonical, goals };
+    const result = validateDirectorStatusPacket(forged);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.includes('invalid-canonical-goal-estate'));
+  }
+});
