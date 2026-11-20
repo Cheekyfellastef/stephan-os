@@ -1050,7 +1050,7 @@ function Get-LauncherChildBlocker([switch]$IncludeStartupAdmission) {
           if ($sourceHead) { $message = "Ignition source preflight blocked for source ${sourceHead}: $reason" }
           if ($cohortState -ceq 'STALE') {
             $reason = 'IGNITION_PREFLIGHT_SOURCE_COHORT_STALE'
-            $message = "Historical Ignition preflight refusal for source $sourceHead; current source is $currentSourceHead."
+            $message = "Historical Ignition preflight refusal for source ${sourceHead}; current source is ${currentSourceHead}."
           } elseif ($sourceHead -and $cohortState -ceq 'UNPROVEN') {
             $message += ' Current source cohort is unproven.'
           }
@@ -1059,7 +1059,7 @@ function Get-LauncherChildBlocker([switch]$IncludeStartupAdmission) {
               " Remaining refresh obligations: $([string]::Join(', ', $refreshObligations.remaining))."
             } else { ' No additional refresh obligations reported; preflight remains blocked.' }
           } elseif ($sourceHead) { $message += ' Remaining refresh obligations are unproven.' }
-          if ($refreshObligations -and $refreshBlocker -cne [string]$preflight.blocker) { $message += " First refresh blocker: $refreshBlocker." }
+          if ($refreshObligations -and $refreshBlocker -cne [string]$preflight.blocker) { $message += " First refresh blocker: ${refreshBlocker}." }
           $nextAction = if ($reason -ceq 'SYNC_ALREADY_RUNNING') {
             'Another canonical source sync is still running. Let it finish, then press Ignition again.'
           } else { 'Resolve the reported preflight blocker, then press Ignition again.' }
