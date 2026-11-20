@@ -658,6 +658,35 @@ test('track loss revokes its sole owner during native stop playback and accepted
 });
 
 
+test('invalid hologram pointer and wheel geometry cannot reach native input or retain a queued draft',async()=>{
+  const h=captureTransitionHarness({inputOutcome:body=>body.kind==='click'?'editor-accessibility-selected':'editor-value-readback'});
+  try{
+    await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+    assert.equal(h.client.getState().status,'live');
+    for(const geometry of [
+      {kind:'click',x:NaN,y:.5},
+      {kind:'click',x:Infinity,y:.5},
+      {kind:'click',x:-.01,y:.5},
+      {kind:'click',x:.5,y:1.01},
+      {kind:'scroll',x:.5,y:undefined,delta:120},
+      {kind:'scroll',x:.5,y:.5,delta:Infinity},
+      {kind:'scroll',x:.5,y:.5,delta:121},
+    ]){
+      assert.equal(h.client.input(geometry),false,'malformed 3D input must fail closed');
+      assert.match(h.client.getState().inputStatus,/Invalid pointer or scroll geometry/);
+    }
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,0,'no malformed native input dispatched');
+    assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true,'normal 3D pointer still works');
+    await h.tick();
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,1);
+    assert.equal(h.client.input({kind:'text',text:'queued draft'}),true);
+    assert.equal(h.client.input({kind:'click',x:NaN,y:.5}),false,'bad retarget revokes older editor proof');
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'bad retarget cannot leave a Send eligible');
+    await h.tick();
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,1,'queued draft cannot reach previous editor');
+  }finally{await h.close();}
+});
+
 test('virtual non-text keys require a current editor acknowledgement before any native request',async()=>{
   const h=captureTransitionHarness({inputOutcome:body=>body.kind==='click'
     ?(body.x<.8?'editor-accessibility-selected':'input-posted')
