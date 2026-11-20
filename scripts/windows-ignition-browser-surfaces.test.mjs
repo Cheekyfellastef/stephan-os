@@ -24,11 +24,157 @@ function runPowerShell(command, timeout = 10_000) {
   const script = join(directory, 'fixture.ps1');
   try {
     writeFileSync(script, '\ufeff' + command, 'utf8');
-    return spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], {
+    return spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], {
       encoding: 'utf8', windowsHide: true, shell: false, timeout,
     });
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
+
+function actualDefinition(source, name) {
+  const match = source.match(new RegExp(`^function ${name}(?:\\([^\\n]*\\))? \\{[\\s\\S]*?^}\\r?$`, 'm'));
+  assert(match, `actual source definition ${name}`);
+  return match[0];
+}
+
+test('actual Windows PowerShell unattended mode defers optional preparation before every effect', { skip: process.platform !== 'win32' }, async () => {
+  const source = await readFile(launcherPs1, 'utf8');
+  const functions = ['Invoke-SovereignCommanderRetainedCustodyPreparation','Invoke-SovereignFixedRuntimeCommissioning'].map(name=>actualDefinition(source,name)).join('\n');
+  for (const unattended of [true,false]) {
+    const result = runPowerShell(`
+$ErrorActionPreference='Stop'
+$Unattended=[switch]$${unattended}; $Mode='launcher-root'; $repoRoot='C:\\fixture'
+$script:checks=0
+function Write-LiveLog { param($Message) }
+function Test-Path { param($LiteralPath,$PathType); $script:checks++; return $false }
+function Start-Process { throw 'optional-process-must-not-start' }
+function Add-Type { throw 'optional-dialog-must-not-open' }
+${functions}
+$retained=Invoke-SovereignCommanderRetainedCustodyPreparation
+$commissioning=Invoke-SovereignFixedRuntimeCommissioning
+ConvertTo-Json -InputObject @{ major=$PSVersionTable.PSVersion.Major; retained=$retained; commissioning=$commissioning; checks=$script:checks } -Compress
+`);
+    assert.equal(result.status,0,result.stderr||result.stdout);
+    const observed=JSON.parse(result.stdout.trim());
+    assert.equal(observed.major,5);
+    assert.equal(observed.retained,false);assert.equal(observed.commissioning,false);
+    assert.equal(unattended?observed.checks===0:observed.checks>0,true);
+  }
+});
+
+test('actual unattended helper recovery decisions produce typed attended-required outcomes without dialog or Git effects', { skip: process.platform !== 'win32' }, async()=>{
+  const source=await readFile(new URL('../windows/Invoke-Stephanos-Ignite-With-Approval.ps1',import.meta.url),'utf8');
+  const functions=['Test-IgnitionAttendedActionAvailable','Show-OpenClawRestartPopup','Show-IgniteRecoveryPopup','Invoke-ApprovedSourceMergeCheck'].map(name=>actualDefinition(source,name)).join('\n');
+  const result=runPowerShell(`
+$ErrorActionPreference='Stop'; $Unattended=[switch]$true; $requestedHead='${'a'.repeat(40)}'
+function Add-Type { throw 'no-ui-effect-permitted' }
+function New-Object { throw 'no-dialog-effect-permitted' }
+function git { throw 'no-source-effect-permitted' }
+function Write-IgniteApprovalLog { param($Message) }
+${functions}
+$one=Show-OpenClawRestartPopup -Packet @{}
+$two=Show-IgniteRecoveryPopup -Packet @{}
+$three=Invoke-ApprovedSourceMergeCheck -Packet @{}
+Write-Output ('RESULT='+(@{ one=$one; two=$two; three=$three }|ConvertTo-Json -Compress))
+$Unattended=[switch]$false
+Write-Output ('INTERACTIVE='+(Test-IgnitionAttendedActionAvailable -RequiredAction 'OPENCLAW_SERVICE_RESTART'))
+`);
+  assert.equal(result.status,0,result.stderr||result.stdout);
+  const lines=result.stdout.trim().split(/\r?\n/);
+  const packets=lines.filter(line=>line.startsWith('STEPHANOS_IGNITION_ATTENDED_ACTION_REQUIRED=')).map(line=>JSON.parse(line.split('=').slice(1).join('=')));
+  assert.deepEqual(packets.map(row=>row.requiredAction),['OPENCLAW_SERVICE_RESTART','SOURCE_DIVERGENCE_RECOVERY','SOURCE_MERGE_COMPLETION']);
+  assert(packets.every(row=>row.blocker==='ATTENDED_ACTION_REQUIRED'&&row.sourceHead==='a'.repeat(40)));
+  const output=JSON.parse(lines.find(line=>line.startsWith('RESULT=')).slice(7));
+  assert.deepEqual(output,{one:'attended-action-required',two:'attended-action-required',three:2});
+  assert(lines.includes('INTERACTIVE=True'));
+});
+
+test('unattended optional deferral never pays service or required-window proof and cannot be overwritten by Extra', { skip: process.platform !== 'win32' },async()=>{
+  const source=await readFile(launcherPs1,'utf8');
+  for(const failure of ['none','window','service']){
+    const command=launcherStatusHarness(source)+terminalEvidenceCapture()+`
+$Unattended=[switch]$true
+function Read-Host { throw 'unattended-must-not-wait' }
+${failure==='window'?"$script:liveWindows['runtime']=$null":''}
+${failure==='service'?"$script:supervisorFixture.services.backend8787.ready=$false":''}
+try { Complete-IgnitionLaunch -Extra @{ currentStage='ready'; executionMode='forged'; optionalPreparations=@{ fixedRuntimeCommissioning=@{ qualificationProven=$true } } } }
+catch { Fail-Step -Step $_.Exception.Message -ErrorRecord $_ }
+`;
+    const observed=readTerminalEvidence(runPowerShell(command),failure==='none',failure);
+    assert.equal(observed.status.executionMode,'unattended');
+    assert.equal(observed.status.optionalPreparations.fixedRuntimeCommissioning.observedState,'UNKNOWN');
+    assert.equal(observed.status.optionalPreparations.fixedRuntimeCommissioning.qualificationProven,false);
+    assert.equal(observed.status.optionalPreparations.retainedCustodyPreparation.custodyReleased,false);
+  }
+});
+
+test('unattended fixed 5173 census holds foreign listeners and failed queries with zero termination', { skip: process.platform !== 'win32' },async()=>{
+  const source=(await readFile(launcherPs1,'utf8')).replace(/\r\n/g,'\n');
+  const start=source.indexOf('    if ([bool]$Unattended) {\n      Assert-UnattendedVitePortVacant');
+  const end=source.indexOf('\n    if ($stopped.Count',start);assert(start>=0&&end>start);
+  for(const state of ['vacant','foreign','unavailable','interactive']){
+    const result=runPowerShell(`
+$ErrorActionPreference='Stop'; $Unattended=[switch]$${state!=='interactive'}; $script:stops=0; $script:queries=0
+function Get-CimInstance { param($Namespace,$Query,$ErrorAction); $script:queries++
+  if($Namespace -cne 'root/StandardCimv2' -or $Query -cne 'SELECT LocalPort FROM MSFT_NetTCPConnection WHERE LocalPort = 5173 AND State = 2'){throw 'wrong-fixed-query'}
+  ${state==='unavailable'?"throw 'query-denied'":state==='foreign'?"return [pscustomobject]@{ LocalPort=5173 }":'return @()'}
+}
+function Stop-Process { throw 'foreign-process-must-not-be-terminated' }
+function Stop-ProcessOnTcpPort { param($Port); $script:stops++; return @(42) }
+${actualDefinition(source,'Assert-UnattendedVitePortVacant')}
+$held='';try {
+${source.slice(start,end)}
+} catch {$held=$_.Exception.Message}
+ConvertTo-Json -InputObject @{ held=$held; stops=$script:stops; queries=$script:queries } -Compress
+`);
+    assert.equal(result.status,0,result.stderr||result.stdout);const observed=JSON.parse(result.stdout.trim());
+    assert.equal(observed.stops,state==='interactive'?1:0);
+    assert.equal(observed.queries,state==='interactive'?0:1);
+    assert.equal(observed.held,state==='foreign'?'UNATTENDED_VITE_PORT_OCCUPIED':state==='unavailable'?'UNATTENDED_VITE_PORT_CENSUS_UNPROVEN':'');
+  }
+});
+
+test('actual launcher helper process stays hidden unattended and preserves interactive window behavior', { skip: process.platform !== 'win32' },async()=>{
+  const source=await readFile(launcherPs1,'utf8');
+  for(const unattended of [true,false]){
+    const result=runPowerShell(`
+$ErrorActionPreference='Stop'; $Unattended=[switch]$${unattended}; $repoRoot='C:\\fixture'; $ignitionProofRoot='C:\\fixture\\workspace'
+$script:ignitionHelperLogFiles=@()
+function Initialize-IgnitionProofWorkspace {}
+function Write-LiveLog { param($Message) }
+function Write-IgnitionStatus { param($Phase,$Message,$Extra) }
+function Start-Process { param($FilePath,$WorkingDirectory,$WindowStyle,$RedirectStandardOutput,$RedirectStandardError,$ArgumentList,[switch]$PassThru)
+  $script:style=[string]$WindowStyle; return [pscustomobject]@{ Id=42 } }
+${actualDefinition(source,'Start-DevWindow')}
+$value=Start-DevWindow -Title 'Existing Helper' -Command 'guarded-command' -ReturnProcess
+ConvertTo-Json -InputObject @{ style=$script:style; result=$value.Id; logs=$script:ignitionHelperLogFiles.Count } -Compress
+`);
+    assert.equal(result.status,0,result.stderr||result.stdout);const value=JSON.parse(result.stdout.trim());
+    assert.equal(value.style,unattended?'Hidden':'Minimized');assert.equal(value.result,42);assert.equal(value.logs,2);
+  }
+});
+
+test('canonical CMD wrapper preserves unattended arguments and terminalizes a failed child without pause', { skip: process.platform !== 'win32' },async()=>{
+  const directory=mkdtempSync(join(tmpdir(),'ignition-unattended-cmd-'));
+  const command=join(directory,'Launch-Stephanos-Local.cmd'),script=join(directory,'Launch-Stephanos-Local.ps1');
+  writeFileSync(command,await readFile(launcherCmd,'utf8'));
+  writeFileSync(script,"param([switch]$Unattended,[string]$Mode,[string]$BootMode)\r\nif($Unattended -and $Mode -eq 'launcher-root'){exit 7};exit 0\r\n");
+  const result=spawnSync('C:\\Windows\\System32\\cmd.exe',['/d','/c',command,'-Mode','launcher-root','-Unattended'],{encoding:'utf8',windowsHide:true,shell:false,timeout:5000});
+  assert.equal(result.status,7,result.stderr||result.stdout||result.error?.message);
+  assert.equal(result.error,undefined);
+});
+
+test('an unattended required-action helper result persists the exact typed hold without console waiting', { skip: process.platform !== 'win32' },async()=>{
+  const source=await readFile(launcherPs1,'utf8');
+  const result=runPowerShell(launcherStatusHarness(source)+terminalEvidenceCapture()+`
+$Unattended=[switch]$true
+$script:childFixture=@{ packetType='ignition-attended-action-required'; reason='ATTENDED_ACTION_REQUIRED'; nextOperatorAction='Attend the same canonical owner.' }
+function Read-Host { throw 'unattended-must-not-wait' }
+Fail-Step -Step 'helper stopped before service readiness'
+`);
+  const observed=readTerminalEvidence(result,false,'attended-action-required');
+  assert.equal(observed.status.blocker,'ATTENDED_ACTION_REQUIRED');
+  assert.equal(observed.status.enterStephanosEnabled,false);
+});
 
 function launcherStatusHarness(source) {
   const names = ['Convert-SupervisorRecordToIgnitionStatus', 'Test-IgnitionBrowserReceiptSet', 'Resolve-IgnitionStatusProjection', 'Get-IgnitionStatusProjection', 'Publish-IgnitionStatusProjection', 'Write-IgnitionStatus', 'Publish-IgnitionTerminalOutcome', 'Complete-IgnitionLaunch', 'Test-BattleBridgeSupervisorFinalContract', 'Write-IgnitionSupportSnapshot', 'Fail-Step'];

@@ -373,18 +373,18 @@ function Get-VrResourceGovernorProcesses {
     $script:vrGovernorInventoryComplete = $false
     try {
         $rows = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop)
-        $matches = @()
+        $governorMatches = @()
         foreach ($row in $rows) {
             # An opaque PowerShell may be the existing owner. Absence is not
             # established by suppressing a failed census or unreadable command.
             if (-not [string]$row.CommandLine) { return @() }
             if ([string]$row.CommandLine -match $vrGovernorScriptPattern) {
                 if (-not (Test-VrResourceGovernorProcessIdentity -Process $row)) { return @() }
-                $matches += $row
+                $governorMatches += $row
             }
         }
         $script:vrGovernorInventoryComplete = $true
-        return @($matches)
+        return @($governorMatches)
     } catch { return @() }
 }
 
@@ -394,7 +394,10 @@ function Test-VrResourceGovernorProcessIdentity {
         if ($null -eq $Process -or [int]$Process.ProcessId -le 0 -or
             -not [string]::Equals([string]$Process.ExecutablePath, $powershellExecutable, [StringComparison]::OrdinalIgnoreCase)) { return $false }
         $tail = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $vrGovernorScript + '" -Action Watch'
-        $command = [string]$Process.CommandLine
+        # Start-Process serializes a trailing ASCII separator after Watch.
+        # Only those terminal separators are syntax; every fixed argument,
+        # executable, script, PID and birth check still binds the same owner.
+        $command = ([string]$Process.CommandLine).TrimEnd([char[]]@([char]0x20, [char]0x09))
         if (-not [string]::Equals($command, ('"' + $powershellExecutable + '" ' + $tail), [StringComparison]::OrdinalIgnoreCase) -and
             -not [string]::Equals($command, ($powershellExecutable + ' ' + $tail), [StringComparison]::OrdinalIgnoreCase)) { return $false }
         $born = ([DateTime]$Process.CreationDate).ToUniversalTime()
@@ -503,11 +506,103 @@ function Test-VrResourceGovernorProcessCurrent {
     try {
         $scriptWriteUtc = (Get-Item -LiteralPath $vrGovernorScript -ErrorAction Stop).LastWriteTimeUtc
         $created = [DateTime]$Process.CreationDate
-        return $created.ToUniversalTime() -ge $scriptWriteUtc.AddSeconds(-2)
+        return $created.ToUniversalTime() -ge $scriptWriteUtc
     }
     catch {
         return $false
     }
+}
+
+# Closed observation only, after the existing lifecycle/progress owner. Re-census
+# the same PID/birth and recheck current source before publishing adoption.
+function Get-VrResourceGovernorSourceHead {
+    try {
+        if (-not (Test-Path -LiteralPath $gitExe -PathType Leaf)) { return '' }
+        $head = [string]((& $gitExe -C $repoRoot rev-parse HEAD 2>$null))
+        if ($LASTEXITCODE -ne 0 -or $head.Trim() -cnotmatch '^[a-f0-9]{40}$') { return '' }
+        return $head.Trim()
+    } catch { return '' }
+}
+function Get-VrResourceGovernorAdoptionObservation {
+    param($Process, $SourceBefore, [bool]$ProgressVerified)
+    if (-not $ProgressVerified -or $null -eq $SourceBefore -or
+        $operatorContext.normalOperatorObserved -isnot [bool] -or -not $operatorContext.normalOperatorObserved) { return $null }
+    $rows = @(Get-VrResourceGovernorProcesses)
+    if (-not $script:vrGovernorInventoryComplete -or $rows.Count -ne 1 -or $null -eq $Process -or
+        [int]$rows[0].ProcessId -ne [int]$Process.ProcessId -or
+        ([DateTime]$rows[0].CreationDate) -ne ([DateTime]$Process.CreationDate) -or
+        -not (Test-VrResourceGovernorProcessIdentity -Process $rows[0]) -or
+        -not (Test-VrResourceGovernorProcessCurrent -Process $rows[0])) { return $null }
+    $progress = Get-VrResourceGovernorProgress -Process $rows[0]
+    if (-not $progress.fresh -or $progress.custodyHeld) { return $null }
+    if (-not (Wait-VrResourceGovernorProgress -Process $rows[0] -After $progress.updatedAtUtc)) { return $null }
+    $finalRows = @(Get-VrResourceGovernorProcesses)
+    if (-not $script:vrGovernorInventoryComplete -or $finalRows.Count -ne 1 -or
+        [int]$finalRows[0].ProcessId -ne [int]$Process.ProcessId -or
+        ([DateTime]$finalRows[0].CreationDate) -ne ([DateTime]$Process.CreationDate) -or
+        -not (Test-VrResourceGovernorProcessIdentity -Process $finalRows[0]) -or
+        -not (Test-VrResourceGovernorProcessCurrent -Process $finalRows[0])) { return $null }
+    $sourceAfter = Get-VrResourceGovernorSourceObservation
+    if ($null -eq $sourceAfter -or $sourceAfter.sourceHead -cne $SourceBefore.sourceHead -or
+        $sourceAfter.sourceSha256 -cne $SourceBefore.sourceSha256 -or
+        $sourceAfter.writeTicks -ne $SourceBefore.writeTicks -or
+        $sourceAfter.creationTicks -ne $SourceBefore.creationTicks -or
+        $sourceAfter.length -ne $SourceBefore.length -or
+        ([DateTime]$finalRows[0].CreationDate).ToUniversalTime().Ticks -lt $sourceAfter.writeTicks) { return $null }
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.post-sync-governor-proof.v1'
+        normalOperatorObserved = $true
+        healthy = $true
+        inventoryComplete = $true
+        processCount = 1
+        identityVerified = $true
+        progressVerified = $true
+        currentSourceVerified = $true
+        sourceHead = $sourceAfter.sourceHead
+        sourceHeadMatchesLive = $true
+        sourceSha256 = $sourceAfter.sourceSha256
+        blocker = ''
+    }
+}
+
+# Fixed source only. Raw bytes must equal the canonical Git blob, allowing only
+# the CRLF checkout representation; no configured filter or caller path runs.
+function Get-VrResourceGovernorSourceObservation {
+    try {
+        $head = Get-VrResourceGovernorSourceHead
+        if ($head -cnotmatch '^[a-f0-9]{40}$') { return $null }
+        $blob = [string]((& $gitExe -C $repoRoot rev-parse ($head + ':scripts/windows/run-vr-resource-governor.ps1') 2>$null))
+        if ($LASTEXITCODE -ne 0 -or $blob.Trim() -cnotmatch '^[a-f0-9]{40}$') { return $null }
+        $before = Get-Item -LiteralPath $vrGovernorScript -Force -ErrorAction Stop
+        if ($before.PSIsContainer -or $before.Length -lt 2 -or $before.Length -gt 262144 -or
+            ($before.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $null }
+        $raw = [IO.File]::ReadAllBytes($vrGovernorScript)
+        if ($raw.Length -ne $before.Length) { return $null }
+        $utf8 = [Text.UTF8Encoding]::new($false, $true)
+        $canonical = $utf8.GetBytes($utf8.GetString($raw).Replace(([string][char]13 + [char]10), ([string][char]10)))
+        $matches = $false
+        foreach ($bytes in @($raw, $canonical)) {
+            $sha1 = [Security.Cryptography.SHA1]::Create()
+            try {
+                $prefix = [Text.Encoding]::ASCII.GetBytes('blob ' + $bytes.Length + [char]0)
+                [void]$sha1.TransformBlock($prefix, 0, $prefix.Length, $prefix, 0)
+                [void]$sha1.TransformFinalBlock($bytes, 0, $bytes.Length)
+                $id = ([BitConverter]::ToString($sha1.Hash)).Replace('-', '').ToLowerInvariant()
+                if ($id -ceq $blob.Trim()) { $matches = $true }
+            } finally { $sha1.Dispose() }
+        }
+        if (-not $matches) { return $null }
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try { $digest = ([BitConverter]::ToString($sha256.ComputeHash($raw))).Replace('-', '').ToLowerInvariant() }
+        finally { $sha256.Dispose() }
+        $after = Get-Item -LiteralPath $vrGovernorScript -Force -ErrorAction Stop
+        if ($after.PSIsContainer -or ($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $after.Length -ne $before.Length -or $after.LastWriteTimeUtc.Ticks -ne $before.LastWriteTimeUtc.Ticks -or
+            $after.CreationTimeUtc.Ticks -ne $before.CreationTimeUtc.Ticks -or
+            (Get-VrResourceGovernorSourceHead) -cne $head) { return $null }
+        return [pscustomobject]@{ sourceHead=$head; sourceSha256=$digest; writeTicks=$after.LastWriteTimeUtc.Ticks;
+            creationTicks=$after.CreationTimeUtc.Ticks; length=$after.Length }
+    } catch { return $null }
 }
 
 function Invoke-VrResourceGovernorLifecycle {
@@ -578,6 +673,40 @@ function Invoke-VrResourceGovernorLifecycle {
         Exit-GovernorMutationOwner -Owner $owner
         $script:governorMutationOwner = $null
     }
+}
+
+function Invoke-VrResourceGovernorObservedLifecycle {
+    # Periodic tasks can repeatedly coincide with short-lived opaque processes
+    # or an active Watch tick. Re-observe only these pre-mutation refusals; never
+    # turn elapsed time or a retry into ownership, custody or absence evidence.
+    $retryClock = [Diagnostics.Stopwatch]::StartNew()
+    $result = [pscustomobject]@{ blocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN'; restartRequested = $false; startRequested = $false; stopped = 0; startedPid = 0; baseline = '' }
+    for ($attempt = 0; $attempt -lt 24; $attempt++) {
+        if ($retryClock.Elapsed.TotalMilliseconds -ge 12000) { return $result }
+        $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
+        $vrGovernorExpectedAbsent = $script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 0
+        $vrGovernorPriorProgress = Get-VrResourceGovernorProgress -Process $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null })
+        # Observation may wait for an active reconciliation to publish, but never
+        # retains the mutex while asking Watch to advance. Busy is not abandonment.
+        $vrGovernorProgressProven = $false
+        if ($script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 1 -and
+            (Test-VrResourceGovernorProcessCurrent -Process $vrGovernorBefore[0])) {
+            $vrGovernorProgressProven = Wait-VrResourceGovernorProgress -Process $vrGovernorBefore[0] -After $vrGovernorPriorProgress.updatedAtUtc
+        }
+        if ($retryClock.Elapsed.TotalMilliseconds -ge 12000) { return $result }
+        $result = Invoke-VrResourceGovernorLifecycle -ExpectedProcess $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null }) `
+            -ExpectedAbsent $vrGovernorExpectedAbsent -ProgressProven $vrGovernorProgressProven -ExpectedProgress $vrGovernorPriorProgress.updatedAtUtc
+
+        # Both retryable codes originate before recovery, stop or start. The
+        # explicit mutation flags are an additional boundary, not exit proof.
+        if ($result.restartRequested -ne $false -or $result.startRequested -ne $false -or
+            $result.stopped -ne 0 -or $result.startedPid -ne 0 -or
+            $result.blocker -cnotin @('SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BUSY',
+                'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_OWNER_UNPROVEN')) { return $result }
+        if ($attempt -eq 23 -or $retryClock.Elapsed.TotalMilliseconds -ge 11500) { return $result }
+        Start-Sleep -Milliseconds 500
+    }
+    return $result
 }
 
 function Get-SovereignCommanderHealth {
@@ -711,6 +840,7 @@ $vrGovernorStoppedPidCount = 0
 $vrGovernorStartedPid = 0
 $vrGovernorProcessCount = 0
 $vrGovernorOk = $false
+$vrGovernorAdoption = $null
 $vrGovernorBlocker = ''
 $coreDaemonStartRequested = $false
 $coreDaemonRestartRequested = $false
@@ -843,18 +973,8 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
 } elseif (-not (Test-Path -LiteralPath $powershellExecutable -PathType Leaf)) {
     $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
 } else {
-    $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
-    $vrGovernorExpectedAbsent = $script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 0
-    $vrGovernorPriorProgress = Get-VrResourceGovernorProgress -Process $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null })
-    # Observation may wait for an active reconciliation to publish, but never
-    # retains the mutex while asking Watch to advance. Busy is not abandonment.
-    $vrGovernorProgressProven = $false
-    if ($script:vrGovernorInventoryComplete -and $vrGovernorBefore.Count -eq 1 -and
-        (Test-VrResourceGovernorProcessCurrent -Process $vrGovernorBefore[0])) {
-        $vrGovernorProgressProven = Wait-VrResourceGovernorProgress -Process $vrGovernorBefore[0] -After $vrGovernorPriorProgress.updatedAtUtc
-    }
-    $vrGovernorLifecycle = Invoke-VrResourceGovernorLifecycle -ExpectedProcess $(if ($vrGovernorBefore.Count -eq 1) { $vrGovernorBefore[0] } else { $null }) `
-        -ExpectedAbsent $vrGovernorExpectedAbsent -ProgressProven $vrGovernorProgressProven -ExpectedProgress $vrGovernorPriorProgress.updatedAtUtc
+    $vrGovernorSourceBefore = Get-VrResourceGovernorSourceObservation
+    $vrGovernorLifecycle = Invoke-VrResourceGovernorObservedLifecycle
     $vrGovernorBlocker = $vrGovernorLifecycle.blocker
     $vrGovernorRestartRequested = $vrGovernorLifecycle.restartRequested
     $vrGovernorStartRequested = $vrGovernorLifecycle.startRequested
@@ -1062,6 +1182,10 @@ if ($ok) {
     }
 }
 
+if ($vrGovernorOk) {
+    $vrGovernorAdoption = Get-VrResourceGovernorAdoptionObservation -Process $vrGovernorAfter[0] -SourceBefore $vrGovernorSourceBefore -ProgressVerified $vrGovernorOk
+}
+
 $overallOk = [bool]($ok -and $vrGovernorOk -and $coreDaemonOk -and $fleetGoalSupervisorOk)
 $overallBlocker = if (-not $ok) {
     $blocker
@@ -1099,6 +1223,7 @@ $overallBlocker = if (-not $ok) {
     port = $port
     daemonHealthy = [bool]$ok
     vrResourceGovernorHealthy = [bool]$vrGovernorOk
+    vrResourceGovernorAdoption = $vrGovernorAdoption
     vrResourceGovernorStartRequested = [bool]$vrGovernorStartRequested
     vrResourceGovernorRestartRequested = [bool]$vrGovernorRestartRequested
     vrResourceGovernorStoppedPidCount = [int]$vrGovernorStoppedPidCount

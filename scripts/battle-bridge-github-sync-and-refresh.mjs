@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { resolveBattleBridgeGitExecution, battleBridgeCanonicalRepositoryArgs }
+  from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { IGNITION_SETTLED_REFRESH_SCHEMA_V1, projectIgnitionSettledRefreshEvidenceV1, projectIgnitionInertEvidenceV1, projectIgnitionOwnerResultV1 }
+  from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { performance } from 'node:perf_hooks';
@@ -213,17 +217,44 @@ function parseMarkedJson(stdout, marker) {
 }
 
 export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {}) {
+  // One execution/config/environment boundary serves HEAD and ancestry. The
+  // validated wrapper binds the first repository; a different root cannot reuse
+  // this adapter's observations or remaining ancestry allowance.
+  const git = resolveBattleBridgeGitExecution({ platform: process.platform, environment: process.env });
+  let repository = null;
+  function repositoryArgs(repoRoot) {
+    if (typeof repoRoot !== 'string' || !repoRoot || /[\0\r\n]/.test(repoRoot)) return null;
+    const root = path.resolve(repoRoot);
+    if (repository && repository.root !== root) return null;
+    if (!repository) repository = Object.freeze({ root, args: battleBridgeCanonicalRepositoryArgs(root) });
+    return repository.args;
+  }
   let ancestryBudgetMs = 5_000;
   return Object.freeze({
-    isAncestor(beforeHead, afterHead, repoRoot) {
+    observeCurrentHead(repoRoot, { timeoutMs = 1000 } = {}) {
+      const timeout = Number.isFinite(timeoutMs) ? Math.min(1000, Math.floor(timeoutMs)) : 0;
+      if (timeout <= 0) return { ok: false, head: '' };
+      const args = repositoryArgs(repoRoot);
+      if (!args) return { ok: false, head: '' };
+      const result = spawnSyncFn(git.executable, [...git.fixedConfigArgs, ...args,
+        'rev-parse', '--verify', 'HEAD'], { cwd: repoRoot, shell: false, encoding: 'utf8', windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'], timeout, maxBuffer: 256, env: git.environment });
+      const valid = result?.status === 0 && !result.error && !result.signal
+        && typeof result.stdout === 'string' && /^[a-f0-9]{40}(?:\r?\n)?$/.test(result.stdout);
+      return { ok: valid, head: valid ? result.stdout.trim() : '' };
+    },
+    isAncestor(beforeHead, afterHead, repoRoot, { timeoutMs = 1000 } = {}) {
       if (typeof beforeHead !== 'string' || typeof afterHead !== 'string' || !/^[0-9a-f]{40}$/.test(beforeHead)
         || !/^[0-9a-f]{40}$/.test(afterHead) || ancestryBudgetMs <= 0) return { ok: false, ancestor: false };
+      const args = repositoryArgs(repoRoot);
+      const timeout = Number.isFinite(timeoutMs) ? Math.min(1000, ancestryBudgetMs, Math.floor(timeoutMs)) : 0;
+      if (!args || timeout <= 0) return { ok: false, ancestor: false };
       const started = Date.now();
-      const result = spawnSyncFn('git', ['merge-base', '--is-ancestor', beforeHead, afterHead], {
-        cwd: repoRoot, encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: Math.min(1_000, ancestryBudgetMs), maxBuffer: 64 * 1024,
+      const result = spawnSyncFn(git.executable, [...git.fixedConfigArgs, ...args, 'merge-base', '--is-ancestor', beforeHead, afterHead], {
+        cwd: repoRoot, encoding: 'utf8', shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout, maxBuffer: 64 * 1024, env: git.environment,
       });
       ancestryBudgetMs -= Math.max(1, Date.now() - started);
-      return { ok: !result.error && [0, 1].includes(result.status), ancestor: result.status === 0 };
+      return { ok: !result.error && !result.signal && [0, 1].includes(result.status), ancestor: result.status === 0 };
     },
     runSync(paths, { timeoutMs = SYNC_AND_REFRESH_CHILD_BUDGET_MS } = {}) {
       const timeout = boundedChildTimeoutMs(timeoutMs, SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.sync);
@@ -267,7 +298,7 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
   });
 }
 
-export async function readPendingPostSyncRefresh(paths) {
+export async function readCanonicalPostSyncRefreshEvidenceV1(paths) {
   const records = {};
   for (const [key, filename] of [['syncRecord', 'battle-bridge-github-sync-current.json'], ['refreshRecord', 'post-sync-runtime-refresh-current.json']]) {
     try {
@@ -275,8 +306,64 @@ export async function readPendingPostSyncRefresh(paths) {
       records[key] = raw.length <= 64 * 1024 ? JSON.parse(raw) : {};
     } catch (error) { records[key] = error?.code === 'ENOENT' ? null : {}; }
   }
-  const evidence = collectPostSyncRefreshDebt(records);
-  return evidence.ok && !evidence.spans.length && !evidence.completion ? null : evidence;
+  const inertRecords = projectIgnitionInertEvidenceV1(records);
+  if (!inertRecords) return Object.freeze({ ok: false, blocker: 'PENDING_POST_SYNC_EVIDENCE_INVALID' });
+  const evidence = collectPostSyncRefreshDebt(inertRecords);
+  return evidence.ok ? Object.freeze({ ...evidence,
+    schemaVersion: 'stephanos.canonical-post-sync-refresh-evidence.v1', canonicalRecords: inertRecords }) : evidence;
+}
+
+export async function readPendingPostSyncRefresh(paths) {
+  const observed = await readCanonicalPostSyncRefreshEvidenceV1(paths);
+  if (observed.ok !== true) return observed;
+  const { canonicalRecords: inertRecords, schemaVersion: _readSchema, ...evidence } = observed;
+  return evidence.ok && !evidence.spans.length && !evidence.completion ? null : Object.freeze({ ...evidence,
+    ...(evidence.ok && evidence.completion ? { completionRecord: inertRecords.refreshRecord, syncStatusRecord: inertRecords.syncRecord } : {}),
+  });
+}
+
+// Only actual published current-head records can establish settled adoption.
+// Absence of refresh history is not a positive witness. The existing adapter's
+// before/after HEAD barrier fences a concurrent main advance during re-read.
+async function readSettledIgnitionRefreshEvidence({ paths, sourceHead, sync, pendingReader, adapter, remaining }) {
+  try {
+    const published = projectIgnitionInertEvidenceV1(sync, ['result', 'receipt', 'statusRecord']);
+    if (!published || typeof adapter.observeCurrentHead !== 'function') return null;
+    const before = adapter.observeCurrentHead(paths.repoRoot, { timeoutMs: remaining() });
+    if (before?.ok !== true || before.head !== sourceHead) return null;
+    const observed = projectIgnitionInertEvidenceV1(await pendingReader(paths));
+    if (!observed || !observed.completionRecord || !observed.syncStatusRecord) return null;
+    // Summaries from the reader are not authority. Re-derive from these exact
+    // normalized canonical records before any debt/completion consumer runs.
+    const evidence = collectPostSyncRefreshDebt({ syncRecord: observed.syncStatusRecord, refreshRecord: observed.completionRecord });
+    if (!evidence.ok || !evidence.completion) return null;
+    const syncKeys = ['schemaVersion', 'kind', 'statusId', 'classification', 'localHeadBefore', 'remoteHeadObserved', 'pendingRefresh'];
+    if (syncKeys.some(key => published[key] !== observed.syncStatusRecord[key])) return null;
+    const ancestry = [];
+    const resolved = resolvePostSyncRefreshDebt({ ...evidence, currentHead: sourceHead, requireCurrentCoverage: true,
+      isAncestor(beforeHead, afterHead) {
+        const result = adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot, { timeoutMs: remaining() });
+        if (result?.ok === true && typeof result.ancestor === 'boolean') ancestry.push({ beforeHead, afterHead, ancestor: result.ancestor });
+        return result;
+      } });
+    if (!resolved.ok || resolved.debt !== null) return null;
+    const after = adapter.observeCurrentHead(paths.repoRoot, { timeoutMs: remaining() });
+    if (after?.ok !== true || after.head !== sourceHead) return null;
+    return projectIgnitionSettledRefreshEvidenceV1({ schemaVersion: IGNITION_SETTLED_REFRESH_SCHEMA_V1, sourceHead,
+      syncStatusRecord: observed.syncStatusRecord, refreshCompletionRecord: observed.completionRecord, ancestry }, sourceHead);
+  } catch { return null; }
+}
+
+async function readInertPendingRefresh(paths, pendingReader) {
+  const observed = await pendingReader(paths);
+  if (observed === null) return null;
+  return projectIgnitionInertEvidenceV1(observed)
+    || Object.freeze({ ok: false, blocker: 'PENDING_POST_SYNC_EVIDENCE_INVALID' });
+}
+
+function inertOwnerChild(value, kind = 'sync') {
+  return projectIgnitionOwnerResultV1(value, kind)
+    || Object.freeze({ ok: false, blocker: 'SYNC_AND_REFRESH_OWNER_EVIDENCE_INVALID' });
 }
 
 function refreshHeadsFromSyncResult(result = {}) {
@@ -437,11 +524,12 @@ export async function runBattleBridgeSyncAndRefresh({
     finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
   });
   const safeRemaining = () => remaining() - SYNC_AND_REFRESH_MIN_REMAINING_MS;
-  const pending = await pendingReader(paths);
+  const pending = await readInertPendingRefresh(paths, pendingReader);
   const pendingInvalid = pending?.ok === false ? pending : null;
   let pendingSpans = pending?.ok === true ? pending.spans || [{ beforeHead: pending.beforeHead, afterHead: pending.afterHead }] : [];
   let requiredTargetIds = pending?.requiredTargetIds || [];
   let sovereignRelayRefreshRequired = pending?.ok === true ? pending.sovereignRelayRefreshRequired : false;
+  let governorRefreshRequired = pending?.ok === true && pending.governorRefreshRequired === true;
   let spatialAdoptionRequired = pending?.ok === true && pending.spatialAdoptionRequired === true;
   let completion = pending?.completion || null;
   let pendingRefreshObserved = pendingSpans.length > 0;
@@ -452,7 +540,7 @@ export async function runBattleBridgeSyncAndRefresh({
 
   for (let cycle = 0; cycle < maxCycles; cycle += 1) {
     if (safeRemaining() <= 0) return budgetHeld('SYNC');
-    let sync = adapter.runSync(paths, { timeoutMs: safeRemaining() });
+    let sync = inertOwnerChild(adapter.runSync(paths, { timeoutMs: safeRemaining() }));
     while (sync?.ok === true
       && (!sync.execution || (sync.execution.status === 2 && sync.execution.errorCode === ''))
       && isNonOwnerSyncContention(sync.result)) {
@@ -475,10 +563,10 @@ export async function runBattleBridgeSyncAndRefresh({
       }
       // Do not infer admission or success from another owner's status or from
       // a disappearing lock. Re-enter the fixed executor under its own lock.
-      sync = adapter.runSync(paths, { timeoutMs: safeRemaining() });
+      sync = inertOwnerChild(adapter.runSync(paths, { timeoutMs: safeRemaining() }));
     }
     if (!sync.ok) {
-      return Object.freeze({ ok: false, blocker: sync.blocker, refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
+      return Object.freeze({ ok: false, blocker: sync.blocker, syncBlockerReason: '', refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
     }
 
     if (safeRemaining() <= 0) return budgetHeld('POST_SYNC', syncHead(sync.result));
@@ -509,6 +597,7 @@ export async function runBattleBridgeSyncAndRefresh({
       pendingSpans = [...new Map([...pendingSpans, ...freshDebt.spans].map(span => [`${span.beforeHead}:${span.afterHead}`, span])).values()];
       requiredTargetIds = [...new Set([...requiredTargetIds, ...freshDebt.requiredTargetIds])];
       if (freshDebt.sovereignRelayRefreshRequired) sovereignRelayRefreshRequired = true;
+      if (freshDebt.governorRefreshRequired) governorRefreshRequired = true;
       if (freshDebt.spatialAdoptionRequired) spatialAdoptionRequired = true;
       pendingRefreshObserved ||= freshDebt.spans.length > 0;
     }
@@ -545,10 +634,10 @@ export async function runBattleBridgeSyncAndRefresh({
 
     const pendingAfterHead = pendingSpans.at(-1)?.afterHead || '';
     const resolved = resolvePostSyncRefreshDebt({
-      spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion, sovereignRelayRefreshRequired,
+      spans: pendingSpans, requestedSpans: currentHeads ? [currentHeads] : [], requiredTargetIds, completion, sovereignRelayRefreshRequired, governorRefreshRequired,
       spatialAdoptionRequired,
       currentHead: currentSourceHead,
-      isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
+      isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot, { timeoutMs: safeRemaining() }),
     });
     if (!resolved.ok) return Object.freeze({
       ...capacityResult(),
@@ -565,7 +654,7 @@ export async function runBattleBridgeSyncAndRefresh({
 
     if (refreshHeads) {
       if (safeRemaining() <= 0) return budgetHeld('REFRESH', currentSourceHead);
-      const refresh = adapter.runRefresh({ ...refreshHeads, paths, timeoutMs: safeRemaining() });
+      const refresh = inertOwnerChild(adapter.runRefresh({ ...refreshHeads, paths, timeoutMs: safeRemaining() }), 'refresh');
       refreshes.push(Object.freeze({
         ...refreshHeads,
         pendingAfterHead,
@@ -581,7 +670,7 @@ export async function runBattleBridgeSyncAndRefresh({
           let settled = false;
           while (safeRemaining() > 1_000) {
             await sleepFn(Math.min(1_000, safeRemaining()));
-            const observedPending = await pendingReader(paths);
+            const observedPending = await readInertPendingRefresh(paths, pendingReader);
             if (!observedPending) {
               settled = true;
               break;
@@ -620,6 +709,7 @@ export async function runBattleBridgeSyncAndRefresh({
             pendingSpans = [];
             requiredTargetIds = [];
             sovereignRelayRefreshRequired = false;
+            governorRefreshRequired = false;
             spatialAdoptionRequired = false;
             completion = null;
             continue;
@@ -642,9 +732,10 @@ export async function runBattleBridgeSyncAndRefresh({
       const covered = completed.ok ? resolvePostSyncRefreshDebt({
         spans: [resolved.debt], requiredTargetIds: resolved.debt.requiredTargetIds, completion: completed,
         sovereignRelayRefreshRequired: resolved.debt.sovereignRelayRefreshRequired,
+        governorRefreshRequired: resolved.debt.governorRefreshRequired,
         spatialAdoptionRequired: resolved.debt.spatialAdoptionRequired,
         currentHead: currentSourceHead,
-        isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot),
+        isAncestor: (beforeHead, afterHead) => adapter.isAncestor?.(beforeHead, afterHead, paths.repoRoot, { timeoutMs: safeRemaining() }),
       }) : completed;
       if (!covered.ok || covered.debt) return Object.freeze({
         ...capacityResult(),
@@ -656,6 +747,7 @@ export async function runBattleBridgeSyncAndRefresh({
       pendingSpans = [];
       requiredTargetIds = [];
       sovereignRelayRefreshRequired = false;
+      governorRefreshRequired = false;
       spatialAdoptionRequired = false;
       completion = completed;
       continue;
@@ -706,7 +798,11 @@ export async function runBattleBridgeSyncAndRefresh({
       }
 
       if (!controlPlaneRepair.ok) {
+        const settledRefreshEvidence = await readSettledIgnitionRefreshEvidence({ paths, sourceHead, sync,
+          pendingReader, adapter, remaining: safeRemaining });
+        if (safeRemaining() <= 0) return budgetHeld('POST_SETTLED_REFRESH_EVIDENCE', sourceHead);
         return Object.freeze({
+          settledRefreshEvidence,
           ...capacityResult(),
           ok: false,
           blocker: controlPlaneRepair.blocker,

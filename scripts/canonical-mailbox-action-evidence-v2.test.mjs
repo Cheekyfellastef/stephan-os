@@ -26,6 +26,119 @@ function fixture(){
  return{run,api,local,reads,collect:read=>inventoryMailboxRotationExecution({read:read||api,activationHead:target,now:()=>now})};
 }
 
+function pagedFixture(total,{protectedIndexes=[]}={}){
+ const original=fixture(),reads=[];
+ const runs=Array.from({length:total},(_,i)=>({id:10000+i,status:'queued',run_attempt:1,
+  path:protectedIndexes.includes(i)?'.github/workflows/operator-merge-approval-gate.yml':'.github/workflows/unrelated-proof.yml',
+  event:'workflow_dispatch',head_sha:'c'.repeat(40)}));
+ const api=path=>{
+  reads.push(path);
+  const match=path.match(/^actions\/runs\?status=(queued|in_progress|waiting|requested|pending)&per_page=100(?:&page=([1-9][0-9]*))?$/);
+  if(match){
+   const page=Number(match[2]||1);
+   return match[1]==='queued'?{total_count:total,workflow_runs:structuredClone(runs.slice((page-1)*100,page*100))}
+    :{total_count:0,workflow_runs:[]};
+  }
+  return original.api(path);
+ };
+ return{runs,reads,api,collect:read=>inventoryMailboxRotationExecution({read:read||api,activationHead:target,now:()=>now})};
+}
+
+test('all 300 queued runs are read and protected runs on later pages remain blocking',()=>{
+ const f=pagedFixture(300,{protectedIndexes:[149,299]}),r=f.collect();
+ assert.deepEqual(f.reads.filter(p=>p.startsWith('actions/runs?status=queued')),[
+  'actions/runs?status=queued&per_page=100','actions/runs?status=queued&per_page=100&page=2',
+  'actions/runs?status=queued&per_page=100&page=3']);
+ assert.deepEqual(r.pendingRuns.map(p=>p.id),[10149,10299]);
+ assert.deepEqual(r.blockingRuns.map(p=>p.id),[10149,10299]);
+ assert.equal(mailboxActionsExecutionQuiescent(r),false);
+ assert.equal(f.reads.filter(p=>p==='commits/main').length,2);
+});
+
+test('empty and single-page inventories retain their existing complete behavior',()=>{
+ for(const total of [0,1,99,100]){
+  const f=pagedFixture(total),r=f.collect();
+  assert.equal(r.complete,true);assert.equal(mailboxActionsExecutionQuiescent(r),true);
+  assert.equal(f.reads.filter(p=>p.startsWith('actions/runs?')).length,5);
+  assert.equal(f.reads.some(p=>p.includes('&page=')),false);
+ }
+});
+
+test('the exact 1000-run bound is complete and a larger inventory stays held',()=>{
+ const f=pagedFixture(1000,{protectedIndexes:[999]}),r=f.collect();
+ assert.equal(f.reads.filter(p=>p.startsWith('actions/runs?status=queued')).length,10);
+ assert.deepEqual(r.blockingRuns.map(p=>p.id),[10999]);
+ const g=pagedFixture(1001);
+ assert.throws(()=>g.collect(),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE/);
+ assert.equal(g.reads.filter(p=>p.startsWith('actions/runs?')).length,1);
+});
+
+test('short, empty or overfull later pages cannot certify a complete inventory',()=>{
+ for(const length of [0,99,101]){
+  const f=pagedFixture(300);
+  assert.throws(()=>f.collect(path=>{
+   const response=f.api(path);
+   if(path.endsWith('&page=2'))response.workflow_runs=Array.from({length},(_,i)=>({...f.runs[100+i%100],id:20000+i}));
+   return response;
+  }),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE/);
+ }
+ const g=pagedFixture(201);
+ assert.throws(()=>g.collect(path=>{
+  const response=g.api(path);if(path.endsWith('&page=3'))response.workflow_runs=[];return response;
+ }),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE/);
+});
+
+test('changed totals between pages stay held instead of accepting a mixed snapshot',()=>{
+ for(const total of [299,301]){
+  const f=pagedFixture(300);
+  assert.throws(()=>f.collect(path=>{
+   const response=f.api(path);if(path.endsWith('&page=2'))response.total_count=total;return response;
+  }),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE/);
+ }
+});
+
+test('malformed page counts and payloads fail closed before source qualification',()=>{
+ for(const malformed of [null,{total_count:-1,workflow_runs:[]},{total_count:'300',workflow_runs:[]},
+  {total_count:1.5,workflow_runs:[]},{total_count:300,workflow_runs:null}]){
+  const f=pagedFixture(300);
+  assert.throws(()=>f.collect(path=>path.endsWith('&page=2')?malformed:f.api(path)),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE/);
+ }
+});
+
+test('duplicate identities within and across pages stay held even for unrelated workflows',()=>{
+ for(const page of [1,2]){
+  const f=pagedFixture(300);
+  assert.throws(()=>f.collect(path=>{
+   const response=f.api(path);
+   if(path===`actions/runs?status=queued&per_page=100${page===1?'':'&page=2'}`)
+    response.workflow_runs[99]={...f.runs[0]};
+   return response;
+  }),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INVALID/);
+ }
+});
+
+test('a run moving between status inventories retains the original conservative pending entry',()=>{
+ const f=pagedFixture(1,{protectedIndexes:[0]});
+ const r=f.collect(path=>path==='actions/runs?status=in_progress&per_page=100'
+  ?{total_count:1,workflow_runs:[{...f.runs[0],status:'in_progress'}]}:f.api(path));
+ assert.deepEqual(r.pendingRuns,[{id:10000,workflow:'operator-merge-approval-gate.yml',status:'queued'}]);
+ assert.deepEqual(r.blockingRuns,r.pendingRuns);assert.equal(mailboxActionsExecutionQuiescent(r),false);
+});
+
+test('malformed later-page run identities, paths and statuses stay held',()=>{
+ for(const mutate of [r=>r.id=0,r=>r.id='10299',r=>r.path=null,r=>r.status='unrecognized']){
+  const f=pagedFixture(300);
+  assert.throws(()=>f.collect(path=>{
+   const response=f.api(path);if(path.endsWith('&page=3'))mutate(response.workflow_runs[99]);return response;
+  }),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INVALID/);
+ }
+});
+
+test('a later-page read failure propagates without yielding a partial quiet result',()=>{
+ const f=pagedFixture(300);
+ assert.throws(()=>f.collect(path=>{if(path.endsWith('&page=2'))throw Error('READ_UNAVAILABLE');return f.api(path);}),/READ_UNAVAILABLE/);
+});
+
 test('V1 publication names have no aliases and current V2 publishers remain callable',()=>{
  assert.equal(mirror.MAILBOX_RECEIPT_PUBLICATION_API_VERSION,2);assert.equal('buildTrustedMailboxReceiptIndexGitHubBody' in mirror,false);
  assert.equal(typeof mirror.buildTrustedMailboxReceiptIndexGitHubBodyV2,'function');

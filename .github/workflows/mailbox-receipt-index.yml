@@ -98,6 +98,7 @@ jobs:
           scripts/battle-bridge-tailscale-prerequisite-proof.test.mjs
           scripts/battle-bridge-worker-watchdog-post-sync-deadline.test.mjs
           scripts/canonical-mailbox-action-evidence-v2.test.mjs
+          scripts/canonical-mailbox-historical-terminal.test.mjs
           scripts/canonical-mailbox-rollover-github-adapter.test.mjs
           scripts/canonical-mailbox-rotation-protocol.test.mjs
           scripts/canonical-mailbox-workflow-event-gate.test.mjs
