@@ -121,9 +121,16 @@ try {
     $stream.Flush($true)
 } finally { $stream.Dispose() }
 
-Assert-FixedPublisherTaskIdentity (Get-ScheduledTask -TaskName $taskName -ErrorAction Stop) ([string]$action.Arguments)
+# Re-read after the durable one-shot fence: the earlier task state can go stale.
+# Use one freshly identity-verified task snapshot to decide whether to stop.
+$preMutationTask = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+Assert-FixedPublisherTaskIdentity $preMutationTask ([string]$action.Arguments)
+$preMutationState = [string]$preMutationTask.State
+if ($preMutationState -ne 'Running' -and $preMutationState -ne 'Ready') {
+    throw 'NATIVE_RECONCILE_TASK_STATE_UNPROVEN'
+}
 $stopped = $false
-if ([string]$task.State -eq 'Running') {
+if ($preMutationState -eq 'Running') {
     Stop-ScheduledTask -TaskName $taskName -ErrorAction Stop
     $stopped = $true
     $quiescent = $false
@@ -138,6 +145,9 @@ $secondHead = (& $canonicalGit -C $repositoryRoot rev-parse HEAD).Trim().ToLower
 if ($LASTEXITCODE -ne 0 -or $secondHead -ne $ExpectedHead) { throw 'NATIVE_RECONCILE_SOURCE_MOVED' }
 $stillRegistered = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
 Assert-FixedPublisherTaskIdentity $stillRegistered ([string]$action.Arguments)
+if ([string]$stillRegistered.State -ne 'Ready') {
+    throw 'NATIVE_RECONCILE_TASK_RUNNING_BEFORE_RESTART'
+}
 Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
 [pscustomobject]@{
     schemaVersion = 'stephanos.native-publisher-single-task-reconcile.v1'
