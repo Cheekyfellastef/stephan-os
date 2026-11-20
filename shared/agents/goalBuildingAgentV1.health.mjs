@@ -112,10 +112,15 @@ export function validateProgramme(input, expectedHead, timing) {
 
   if (activeMissions.length > MAX_ACTIVE_MISSIONS) evidenceProblems.push('active-mission-limit-exceeded');
   if (!isNonNegativeInteger(eligibleQueuedGoalCount)) evidenceProblems.push('eligible-queued-goal-count-invalid');
-  if (!isNonNegativeInteger(qualifiedCapacity)) evidenceProblems.push('qualified-capacity-invalid');
-  if (!isNonNegativeInteger(idleQualifiedCapacity)) evidenceProblems.push('idle-qualified-capacity-invalid');
+  // Unsafe IEEE-754 integers can round away occupied mission slots. Fail closed before accounting.
+  if (!Number.isSafeInteger(qualifiedCapacity) || qualifiedCapacity < 0) evidenceProblems.push('qualified-capacity-invalid');
+  if (!Number.isSafeInteger(idleQualifiedCapacity) || idleQualifiedCapacity < 0) evidenceProblems.push('idle-qualified-capacity-invalid');
   if (isNonNegativeInteger(qualifiedCapacity) && activeMissions.length > qualifiedCapacity) evidenceProblems.push('active-missions-exceed-qualified-capacity');
   if (isNonNegativeInteger(qualifiedCapacity) && isNonNegativeInteger(idleQualifiedCapacity) && idleQualifiedCapacity > qualifiedCapacity) evidenceProblems.push('idle-capacity-exceeds-qualified-capacity');
+  if (isNonNegativeInteger(qualifiedCapacity) && isNonNegativeInteger(idleQualifiedCapacity)
+    && activeMissions.length + idleQualifiedCapacity > qualifiedCapacity) {
+    evidenceProblems.push('active-plus-idle-exceeds-qualified-capacity');
+  }
 
   const missionIds = new Set();
   const goalIds = new Set();
@@ -210,15 +215,44 @@ export function validateBlockers(input, timing) {
 }
 
 export function validateOperatorAction(input = {}) {
-  const operatorAction = input.operatorAction && typeof input.operatorAction === 'object' && !Array.isArray(input.operatorAction)
-    ? input.operatorAction
-    : {};
-  const required = operatorAction.required === true;
-  const target = boundedText(operatorAction.target, '', 280);
+  // A status projection cannot inherit an approval requirement or target
+  // through a prototype, nor execute a supplied accessor while reading it.
+  // Only data fields owned by the actual record count as operator evidence.
+  const source = Object(input);
+  const record = Object.getOwnPropertyDescriptor(source, 'operatorAction');
+  const inheritedRecord = !record && 'operatorAction' in source;
+  const accessorRecord = Boolean(record && !Object.hasOwn(record, 'value'));
+  const supplied = Boolean(record && !accessorRecord && record.value !== undefined);
+  const validShape = !accessorRecord && (!supplied || (record.value !== null
+    && typeof record.value === 'object' && !Array.isArray(record.value)));
+  const operatorAction = validShape && supplied ? record.value : {};
+  const requiredField = Object.getOwnPropertyDescriptor(operatorAction, 'required');
+  const targetField = Object.getOwnPropertyDescriptor(operatorAction, 'target');
+  const required = Boolean(requiredField && Object.hasOwn(requiredField, 'value')
+    && requiredField.value === true);
+  const targetIsData = Boolean(targetField && Object.hasOwn(targetField, 'value'));
+  // Approval destinations are text records, never objects with executable coercion.
+  // Reject malformed own values before boundedText can call String(value).
+  const invalidTargetType = targetIsData && typeof targetField.value !== 'string';
+  const target = targetIsData && !invalidTargetType
+    ? boundedText(targetField.value, '', 280) : '';
   const evidenceProblems = [];
+  if (inheritedRecord) evidenceProblems.push('operator-action-record-inherited');
+  if (accessorRecord) evidenceProblems.push('operator-action-record-accessor');
+  if (!validShape) evidenceProblems.push('operator-action-record-invalid');
+  if (!requiredField && 'required' in operatorAction) evidenceProblems.push('operator-action-required-inherited');
+  if (requiredField && !Object.hasOwn(requiredField, 'value')) evidenceProblems.push('operator-action-required-accessor');
+  if (requiredField && Object.hasOwn(requiredField, 'value')
+    && typeof requiredField.value !== 'boolean') evidenceProblems.push('operator-action-required-not-boolean');
+  if (!targetField && 'target' in operatorAction) evidenceProblems.push('operator-action-target-inherited');
+  if (targetField && !Object.hasOwn(targetField, 'value')) evidenceProblems.push('operator-action-target-accessor');
+  if (invalidTargetType) evidenceProblems.push('operator-action-target-not-string');
   if (required && !target) evidenceProblems.push('operator-action-target-missing');
   if (!required && target) evidenceProblems.push('operator-action-target-without-requirement');
-  return Object.freeze({ required, target, evidenceProblems });
+  // Contradictory evidence must not publish even a partial approval flag or
+  // target: callers may display these fields independently of the HOLD verdict.
+  return Object.freeze({ required: evidenceProblems.length === 0 && required,
+    target: evidenceProblems.length === 0 ? target : '', evidenceProblems });
 }
 
 export function prioritizeBlockers(blockers = []) {

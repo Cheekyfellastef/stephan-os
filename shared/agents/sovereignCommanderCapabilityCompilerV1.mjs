@@ -1,5 +1,6 @@
 import { CLOSED_LOOP_CAPABILITY_EXAM_V1 } from './closedLoopLearningV1.mjs';
-import { SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS } from './sovereignCommanderCapabilityParityV1.mjs';
+import { SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS, SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY,
+  SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS } from './sovereignCommanderCapabilityParityV1.mjs';
 
 export const SOVEREIGN_COMMANDER_CAPABILITY_COMPILER_SCHEMA =
   'stephanos.sovereign-commander-capability-compiler.v1';
@@ -44,7 +45,7 @@ function primitiveFor(id) {
   if (/^(?:read-file|list-directory|start-search|search-files|search-project|get-more-search-results|stop-search|list-searches|get-file-info|get-config)$/.test(id)) {
     return SOVEREIGN_COMMANDER_PRIMITIVE.OBSERVE_DATA;
   }
-  if (/^(?:write-file|edit-file|edit-block|move-file|create-directory)$/.test(id)) {
+  if (/^(?:write-file|edit-file|edit-block|move-file|create-directory|set-config-value)$/.test(id)) {
     return SOVEREIGN_COMMANDER_PRIMITIVE.MUTATE_BOUNDED;
   }
   if (/^(?:list-processes|get-usage-stats|get-recent-tool-calls|who-am-i|ping)$/.test(id)) {
@@ -154,6 +155,19 @@ function skillPacketFromPlan(plan, capability, timestampUtc) {
     riskLevel,
     plainEnglishSummary: `Build a guarded Sovereign Commander equivalent for ${id}, without depending on Remote Desktop Commander.`,
     technicalSummary: plan.strategy,
+    ...(plan.partialSovereignEquivalent ? {
+      partialSovereignEquivalent: plan.partialSovereignEquivalent,
+      partialScope: plan.partialScope,
+      parityGapReason: plan.parityGapReason,
+      parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+      runtimeParityProven: false,
+      ...(plan.atomicContentCasProven === false ? { atomicContentCasProven: false } : {}),
+      ...(plan.descendantsExcluded === false ? { descendantsExcluded: false } : {}),
+      ...(plan.nativeCustodyQualified === false ? { nativeCustodyQualified: false } : {}),
+      ...(plan.wholeDocumentAtomicityProven === false ? { wholeDocumentAtomicityProven: false } : {}),
+      ...(plan.existingPdfEditingSupported === false ? { existingPdfEditingSupported: false } : {}),
+      ...(plan.unicodeTextSupported === false ? { unicodeTextSupported: false } : {}),
+    } : {}),
     whySuggested: capability?.origin === 'sovereign-native-event'
       ? `An existing validated Sovereign Commander learning event reported ${id} as an unmet ability. This is discovery evidence, not implementation proof.`
       : `An existing parity observation classified ${id} as BUILDABLE_GAP.`,
@@ -238,7 +252,11 @@ function learningCandidate(capability, timestampUtc) {
 
 export function compileSovereignCommanderCapabilityPlanV1(ledger = {}, { nativeGaps = [] } = {}) {
   const capabilities = (Array.isArray(ledger?.capabilities) ? ledger.capabilities : []).map((capability) => {
-    const gap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[capabilityId(capability?.capabilityId)];
+    const id = capabilityId(capability?.capabilityId);
+    const mapping = SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[id];
+    if (mapping && capability?.sovereignEquivalent === mapping.sovereignEquivalent)
+      return { ...capability, ...mapping, newlyProvenParity: false, parityEvidenceScope: 'SOURCE_CATALOG_ONLY' };
+    const gap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id] || SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS[id];
     if (!gap || capability?.state === 'BOUNDARY_HOLD') return capability;
     // The compiler can receive a retained pre-correction ledger directly.
     // Reuse the same source-owned scope instead of preserving a false green.
@@ -274,7 +292,7 @@ export function compileSovereignCommanderCapabilityPlanV1(ledger = {}, { nativeG
       capabilityId: id,
       observationOrigin,
       sovereignEquivalent: text(capability.sovereignEquivalent, `sovereign-${id}`),
-      ...(SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id] || {}),
+      ...(SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id] || SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS[id] || {}),
       primitive,
       recipeId: `recipe-${id}`.slice(0, 120),
       compilerAction: requiresKernelChange ? 'PROVE_MISSING_PRIMITIVE_THEN_ADD_MINIMUM' : 'COMPOSE_GUARDED_RECIPE',
@@ -302,6 +320,8 @@ export function compileSovereignCommanderCapabilityPlanV1(ledger = {}, { nativeG
   const learningCandidates = capabilities
     .filter((item) => item?.newlyProvenParity === true
       && item?.state === 'PARITY_PRESENT'
+      && !SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[capabilityId(item?.capabilityId)]
+      && !SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS[capabilityId(item?.capabilityId)]
       && !SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[capabilityId(item?.capabilityId)])
     .map((item) => learningCandidate(item, timestampUtc));
 

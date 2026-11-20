@@ -107,12 +107,15 @@ test('externally pinned Ed25519 signer makes individual evidence visible, never 
   assert.equal(authenticated.gates[7].status, 'FAIL');
   assert.equal(authenticated.gates[8].status, 'FAIL');
   assert.equal(authenticated.gates[12].status, 'FAIL');
-  assert.equal(authenticated.gates[2].status, 'PASS');
+  // A valid signed gate-3 fact remains visible, but gate 1/2 lack proof.
+  // The causal observatory must not turn it into operational permission.
+  assert.equal(authenticated.gates[2].status, 'WAITING_FOR_PREREQUISITE');
+  assert.equal(authenticated.gates[2].reportedSignedStatus, 'PASS');
   const publicView = projectPublicGoalGateObservatoryV1(null, {
     sourceHead: head, nowMs, verifiedObservatory: authenticated,
   });
   assert.equal(publicView.counts.FAIL, 4);
-  assert.equal(publicView.counts.PASS, 1);
+  assert.equal(publicView.counts.PASS, 0);
   assert.equal(publicView.approvalAuthority, false);
   assert.equal(publicView.mergeAuthority, false);
   assert.equal(publicView.gates[7].proofRef, 'workspace:proof/goal-gate-8');
@@ -180,4 +183,63 @@ test('independent per-gate cooldown does not park native capacity behind origina
   assert.match(coreSource, /previousAttempts: lastGateStewardAttempts/);
   assert.match(coreSource, /lastGateStewardAttempts = \[/);
   assert.match(coreSource, /\.slice\(-23\)/);
+});
+
+test('exact canonical lease HOLD token is required before signed custody failure projection', () => {
+  const canonical = 'lane:elastic-lease-expired-or-not-active';
+  const idsFor = (identity, held = true) => {
+    const result = projectCoreGateEvidenceV1({
+      sourceHead: head, observedAtUtc,
+      refillSummary: {
+        refillCanonicalProgrammeHeld: held,
+        refillCanonicalProgrammeBlockerIdentity: identity,
+      },
+    });
+    assert.equal(result.ok, true);
+    return result.evidence.gates.map(gate => gate.id);
+  };
+  assert.deepEqual(idsFor(canonical), [7, 8]);
+  assert.deepEqual(idsFor('lane:other-blocker|' + canonical), [7, 8]);
+  assert.deepEqual(idsFor(canonical + '|owner:another-blocker'), [7, 8]);
+  for (const forged of [
+    'lane:not-' + canonical,
+    canonical + '-unrelated',
+    'other:' + canonical,
+    'lane:unrelated|' + canonical + '-spoof',
+    'elastic-lease-expired-or-not-active',
+  ]) {
+    assert.deepEqual(idsFor(forged), [], 'forged lease identity ' + forged);
+  }
+  assert.deepEqual(idsFor(canonical, false), []);
+  assert.deepEqual(idsFor(''), []);
+});
+
+
+
+test('malformed numeric and prototype-name gate IDs never create action proposals', () => {
+  const invalidIds = [
+    'toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf',
+    '7', '8', '08', -1, 0, 24, 7.5, NaN, null, {}, [],
+  ];
+  for (const id of invalidIds) {
+    const result = planCoreGateStewardV1({
+      sourceHead: head,
+      gates: [{ id, sourceHead: head, status: 'FAIL', typedBlocker: 'TEST_INVALID_GATE' }],
+    }, { nowMs });
+    assert.equal(result.decision, 'AWAIT_FRESH_GATE_PROOF', String(id));
+    assert.deepEqual(result.proposals, [], String(id));
+    assert.equal(result.nextAction, null, String(id));
+    assert.equal(result.proofKey, '', String(id));
+    assert.equal(result.autoExecuteAllowed, false, String(id));
+    assert.equal(result.approvalAuthority, false, String(id));
+  }
+  const positive = planCoreGateStewardV1({
+    sourceHead: head,
+    gates: [{ id: 8, sourceHead: head, status: 'FAIL', typedBlocker: 'TEST_CANONICAL_GATE' }],
+  }, { nowMs });
+  assert.equal(positive.decision, 'PROPOSE_EXISTING_AUTHORITY_ACTION');
+  assert.equal(positive.nextAction.gateId, 8);
+  assert.equal(positive.nextAction.action, 'REQUEST_ORIGINAL_WRITER_CUSTODY_WITNESS');
+  assert.equal(positive.nextAction.authority, 'independent-windows-custody');
+  assert.equal(positive.autoExecuteAllowed, false);
 });

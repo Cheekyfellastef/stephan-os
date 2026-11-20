@@ -13,6 +13,84 @@ export const SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE = Object.freeze({
   BOUNDARY_HOLD: 'BOUNDARY_HOLD',
 });
 
+// Source mappings describe only the named private contract. They cannot
+// authenticate an installed host, broaden a scope or grant execution authority.
+export const SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY = Object.freeze(Object.fromEntries([
+  ['start-search', 'start_search', 'ONE_EXPLICIT_LOCAL_WINDOWS_DIRECTORY'],
+  ['get-more-search-results', 'get_more_search_results', 'THIS_PRIVATE_SESSION_SEARCHES'],
+  ['stop-search', 'stop_search', 'THIS_PRIVATE_SESSION_SEARCHES'],
+  ['list-searches', 'list_searches', 'THIS_PRIVATE_SESSION_SEARCHES'],
+  ['get-usage-stats', 'get_usage_stats', 'THIS_PRIVATE_SESSION_ADVISORY_HISTORY'],
+  ['get-recent-tool-calls', 'get_recent_tool_calls', 'THIS_PRIVATE_SESSION_ADVISORY_HISTORY'],
+  ['get-tool-result', 'get_tool_result', 'THIS_PRIVATE_SESSION_RETAINED_RECEIPTS'],
+  ['list-remote-tool-calls', 'list_remote_tool_calls', 'THIS_PRIVATE_HTTP_SESSION_ADVISORY_HISTORY'],
+  ['set-config-value', 'set_config_value', 'THIS_PRIVATE_SESSION_TYPED_IO_LIMITS'],
+  ['copy-file-content', 'copy_file_content', 'CREATE_ONLY_SAME_VOLUME_REGULAR_FILE_CONTENT_COPY'],
+  ['get-file-hash', 'get_file_hash', 'BOUNDED_LOCAL_REGULAR_FILE_CONTENT_HASH_OBSERVATION'],
+  ['cancel-process-session', 'cancel_process_session', 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION'],
+  ['give-feedback-to-desktop-commander', 'submit_feedback', 'THIS_SOVEREIGN_WORKSPACE_UNVERIFIED_ADVISORY_FEEDBACK'],
+].map(([id, sovereignEquivalent, functionalScope]) => [id, Object.freeze({ sovereignEquivalent,
+  functionalScope, privateTransportRequired: true, runtimeParityProven: false,
+  ...(id === 'give-feedback-to-desktop-commander' ? {
+    externalVendorDelivery: false, automaticLearning: false, verifiedFailureEvidence: false,
+  } : {}) })])));
+
+// Useful scoped implementations do not close their broader vendor outcomes,
+// even if a retained ledger once called the limited route parity.
+export const SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS = Object.freeze({
+  'write-pdf': Object.freeze({
+    partialSovereignEquivalent: 'write_pdf',
+    partialScope: 'CREATE_ONLY_BOUNDED_ASCII_TEXT_PDF',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    privateTransportRequired: true,
+    wholeDocumentAtomicityProven: false,
+    existingPdfEditingSupported: false,
+    unicodeTextSupported: false,
+    parityGapReason: 'GENERAL_PDF_EDITING_AND_RENDERING_UNIMPLEMENTED',
+  }),
+  'move-file': Object.freeze({
+    partialSovereignEquivalent: 'move_file',
+    partialScope: 'SAME_PARENT_REGULAR_FILE_RENAME_NO_REPLACE',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    privateTransportRequired: true,
+    atomicContentCasProven: false,
+    parityGapReason: 'CROSS_DIRECTORY_FILE_MOVE_UNQUALIFIED',
+  }),
+  ...Object.fromEntries([
+    ['start-process', 'start_process'],
+    ['read-process-output', 'read_process_output'],
+    ['list-sessions', 'list_sessions'],
+  ].map(([id, partialSovereignEquivalent]) => [id, Object.freeze({
+    partialSovereignEquivalent,
+    partialScope: 'THIS_PRIVATE_HANDLER_TWO_FIXED_READ_ONLY_DIAGNOSTIC_PROFILES',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    privateTransportRequired: true,
+    descendantsExcluded: false,
+    nativeCustodyQualified: false,
+    parityGapReason: 'GENERAL_INTERACTIVE_PROCESS_SESSION_CONTRACT_UNQUALIFIED',
+  })])),
+  'list-devices': Object.freeze({
+    partialSovereignEquivalent: 'visibility-snapshot',
+    partialScope: 'LOCAL_BATTLE_BRIDGE_HOST_VISIBILITY_ONLY',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    parityGapReason: 'AUTHENTICATED_ACCOUNT_DEVICE_INVENTORY_UNIMPLEMENTED',
+  }),
+  'force-terminate': Object.freeze({
+    partialSovereignEquivalent: 'cancel_process_session',
+    partialScope: 'THIS_PRIVATE_HANDLER_TWO_FIXED_DIAGNOSTIC_CHILDREN_CANCELLATION',
+    parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
+    runtimeParityProven: false,
+    privateTransportRequired: true,
+    descendantsExcluded: false,
+    nativeCustodyQualified: false,
+    parityGapReason: 'GENERAL_PROCESS_TERMINATION_CUSTODY_UNQUALIFIED',
+  }),
+});
+
 const DIRECT_PARITY = Object.freeze({
   'get-config': 'get_config',
   'read-file': 'read_file',
@@ -22,9 +100,9 @@ const DIRECT_PARITY = Object.freeze({
   'edit-file': 'edit_file',
   'edit-block': 'edit_file',
   'list-directory': 'list_directory',
+  'create-directory': 'create_directory',
   'search-project': 'search_project',
   'list-processes': 'list_processes',
-  'list-devices': 'visibility-snapshot',
   'device-status': 'visibility-snapshot',
   'connection-status': 'visibility-snapshot',
   // Exact semantic actions already implemented by the canonical fixed registry.
@@ -45,17 +123,20 @@ const DIRECT_PARITY = Object.freeze({
   'repair-battle-bridge': 'repair-battle-bridge',
   'repair-openclaw-stack': 'repair-openclaw-stack',
   'source-construction': 'sovereign-source-construction-lane',
+  ...Object.fromEntries(Object.entries(SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY)
+    .map(([id, value]) => [id, value.sovereignEquivalent])),
 });
 
 // search_project is one bounded literal search in the canonical repository.
-// It does not implement Remote Commander's whole-PC or session lifecycle API.
-// Keep this source-owned scope separate from an implementation/live-proof claim.
+// It does not implement the private search-session API. Retain this correction
+// for legacy ledgers still routing session work to search_project. The current
+// private session mappings above are source evidence, never live acceptance.
 export const SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS = Object.freeze(Object.assign(Object.create(null), Object.fromEntries([
-  ['start-search', 'WHOLE_PC_SEARCH_AND_SEARCH_SESSIONS_NOT_IMPLEMENTED'],
+  ['start-search', 'PRIVATE_SESSION_SEARCH_ROUTE_NOT_BOUND'],
   ['search-files', 'WHOLE_PC_FILE_SEARCH_NOT_IMPLEMENTED'],
-  ['get-more-search-results', 'SEARCH_SESSION_PAGINATION_NOT_IMPLEMENTED'],
-  ['stop-search', 'SEARCH_SESSION_CANCELLATION_NOT_IMPLEMENTED'],
-  ['list-searches', 'SEARCH_SESSION_INVENTORY_NOT_IMPLEMENTED'],
+  ['get-more-search-results', 'PRIVATE_SESSION_PAGINATION_ROUTE_NOT_BOUND'],
+  ['stop-search', 'PRIVATE_SESSION_CANCELLATION_ROUTE_NOT_BOUND'],
+  ['list-searches', 'PRIVATE_SESSION_INVENTORY_ROUTE_NOT_BOUND'],
 ].map(([id, parityGapReason]) => [id, Object.freeze({
   partialSovereignEquivalent: 'search_project',
   partialScope: 'CANONICAL_REPOSITORY_LITERAL_SEARCH_ONLY',
@@ -161,7 +242,8 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
   const operation = operationFromEntry(entry);
   const boundaryHold = BOUNDARY_PATTERN.test(operation) || authorityWideningRequested(entry);
   const directEquivalent = DIRECT_PARITY[operation] || '';
-  const searchGap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[operation];
+  const partialGap = !directEquivalent
+    ? SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[operation] || SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS[operation] : null;
 
   const state = boundaryHold
     ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
@@ -177,7 +259,8 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
     sovereignEquivalent: directEquivalent || suggestedEquivalent(operation),
     parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
     runtimeParityProven: false,
-    ...(searchGap || {}),
+    ...(partialGap || {}),
+    ...(SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[operation] || {}),
     canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
     canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
     requiresExistingGoalSearch: false,
@@ -243,13 +326,16 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     const current = observed.get(id);
     const classified = current?.classified || null;
     const previousState = text(previous.state);
-    const searchGap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id];
+    const directEquivalent = DIRECT_PARITY[id];
+    const partialGap = !directEquivalent
+      ? SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id] || SOVEREIGN_COMMANDER_PARTIAL_PARITY_GAPS[id] : null;
     // Repair retained false equivalence too: no new Remote Commander call is
     // required to correct a prior source-catalog classification. A boundary
     // hold still wins, and a correction cannot become a new parity proof.
-    const retainedState = searchGap && previousState !== SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
-      ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP
-      : previousState;
+    const retainedState = previousState === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD
+      ? previousState : directEquivalent
+        ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT
+        : partialGap ? SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP : previousState;
     const state = classified?.state || retainedState || SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP;
     const stateTransition = previousState && previousState !== state
       ? `${previousState}->${state}`
@@ -277,9 +363,11 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
       parityEvidenceScope: 'SOURCE_CATALOG_ONLY',
       runtimeParityProven: false,
       sovereignEquivalent: text(classified?.sovereignEquivalent
-        || (searchGap ? suggestedEquivalent(id) : previous.sovereignEquivalent)
+        || directEquivalent
+        || (partialGap ? suggestedEquivalent(id) : previous.sovereignEquivalent)
         || suggestedEquivalent(id)),
-      ...(searchGap || {}),
+      ...(partialGap || {}),
+      ...(SOVEREIGN_COMMANDER_PRIVATE_SESSION_PARITY[id] || {}),
       canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
       canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
       currentObserved: Boolean(current),
