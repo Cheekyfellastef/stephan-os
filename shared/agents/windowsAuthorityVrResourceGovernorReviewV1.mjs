@@ -48,7 +48,13 @@ function exactEscalation(analysis = {}) {
     || !['findings', 'counts', 'verdict'].every((key) => Object.hasOwn(analysis, key))) return false;
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
   const counts = analysis?.counts;
+  const finding = findings[0];
   return findings.length === 1
+    // A finding's P0 identity must be in its own wire fields, never a prototype.
+    && finding !== null
+    && typeof finding === 'object'
+    && !Array.isArray(finding)
+    && ['severity', 'code', 'path'].every((key) => Object.hasOwn(finding, key))
     && counts !== null
     && typeof counts === 'object'
     && !Array.isArray(counts)

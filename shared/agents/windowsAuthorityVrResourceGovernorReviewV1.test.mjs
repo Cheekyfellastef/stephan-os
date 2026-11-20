@@ -167,6 +167,33 @@ test('direct governor specialist refuses contradictory or noncanonical upstream 
   }
 });
 
+test('direct governor reviewer rejects prototype-inherited finding identity even with registered source', () => {
+  const baseline = input(governor).analysis;
+  const control = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor));
+  assert.equal(control.clean, true, 'valid own-key source and finding remain admissible');
+  for (const field of ['severity', 'code', 'path']) {
+    const finding = { ...baseline.findings[0] };
+    const inherited = finding[field];
+    delete finding[field];
+    Object.setPrototypeOf(finding, { [field]: inherited });
+    assert.equal(Object.hasOwn(finding, field), false, field);
+    const rejected = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor, {
+      analysis: { ...baseline, findings: [finding] },
+    }));
+    assert.equal(rejected.eligible, false, field);
+    assert.equal(rejected.clean, false, field);
+    assert.deepEqual(rejected.proofRefs, [], field);
+    assert.equal(rejected.mergeAuthority, false, field);
+    assert.equal(rejected.providerQualificationAuthority, false, field);
+  }
+  const inherited = Object.create(baseline.findings[0]);
+  const rejected = analyzeWindowsAuthorityVrResourceGovernorReviewV1(input(governor, {
+    analysis: { ...baseline, findings: [inherited] },
+  }));
+  assert.equal(rejected.eligible, false, 'fully inherited finding identity');
+  assert.deepEqual(rejected.proofRefs, []);
+});
+
 test('historical fixture preserves exact pre-repair main bytes without qualification authority', () => {
   assert.equal(historicalFixture.schemaVersion, 'stephanos.test-only-historical-vr-governor-fixture.v1');
   assert.equal(historicalFixture.repository, REPOSITORY);

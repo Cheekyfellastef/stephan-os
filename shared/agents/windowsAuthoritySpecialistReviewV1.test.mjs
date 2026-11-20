@@ -88,8 +88,8 @@ function input(overrides = {}) {
 test('router preserves exact governor specialist source pin after metadata fail-closed correction', async () => {
   const reviewerSource = await readFile(new URL('./windowsAuthorityVrResourceGovernorReviewV1.mjs', import.meta.url), 'utf8');
   const routerSource = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.equal(gitBlobSha(reviewerSource), '966426add62fe80074644ad8e7721bae754c7c34');
-  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = '966426add62fe80074644ad8e7721bae754c7c34';"));
+  assert.equal(gitBlobSha(reviewerSource), 'da169c553e2ded157caa78c97f828a8e91438470');
+  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = 'da169c553e2ded157caa78c97f828a8e91438470';"));
   assert.ok(reviewerSource.includes('counts.P0 === 1'));
   assert.ok(reviewerSource.includes("analysis?.verdict === 'findings'"));
 });
@@ -150,7 +150,7 @@ test('registry source pins the current bounded mailbox recovery blobs and grants
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
   assert.match(source, /f66cc26ef865bb840522b16cbb53f830f9499838/);
-  assert.match(source, /966426add62fe80074644ad8e7721bae754c7c34/);
+  assert.match(source, /da169c553e2ded157caa78c97f828a8e91438470/);
   assert.match(source, /1b103fda85c371a218f38f20fe5163ca3f5042bf/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
@@ -497,6 +497,25 @@ test('composite review refuses contradictory typed counts and verdict before del
       analysis: { ...analysis, ...overrides }, sources,
     });
     assert.equal(review().clean, true, 'baseline confirms registered positive proof paths');
+    // A valid upstream envelope may not carry prototype-forged P0 finding fields.
+    for (const index of [0, 1]) {
+      for (const field of ['severity', 'code', 'path']) {
+        const findings = analysis.findings.map((item, i) => {
+          if (i !== index) return item;
+          const forged = { ...item };
+          const inherited = forged[field];
+          delete forged[field];
+          Object.setPrototypeOf(forged, { [field]: inherited });
+          assert.equal(Object.hasOwn(forged, field), false);
+          return forged;
+        });
+        const denied = review({ findings });
+        assert.equal(denied.eligible, true, 'inherited ' + field + ' at index ' + index);
+        assert.equal(denied.clean, false, 'inherited ' + field + ' at index ' + index);
+        assert.deepEqual(denied.proofRefs, []);
+        assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID');
+      }
+    }
     for (const [reason, forged] of [
       ['inherited full analysis', Object.create(analysis)],
       ['inherited findings', Object.assign(Object.create({ findings: analysis.findings }), {
