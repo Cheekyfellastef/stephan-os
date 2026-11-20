@@ -841,3 +841,44 @@ test('specialist entry denies nested Proxy review evidence before any sibling ca
   assert.equal(denied.finalVerdict, verdict);
   assert.deepEqual(denied.proofRefs, []);
 });
+
+test('specialist preflight rejects nested accessor source and analysis evidence without executing a getter', () => {
+  const verdict = 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE';
+  const cases = [
+    ['sources array index', (claim, getter) => {
+      Object.defineProperty(claim.sources, '0', { enumerable: true, configurable: true, get: getter });
+    }],
+    ['source object path', (claim, getter) => {
+      claim.sources = [{ path: 'untrusted.ps1' }];
+      Object.defineProperty(claim.sources[0], 'path', { enumerable: true, configurable: true, get: getter });
+    }],
+    ['analysis findings index', (claim, getter) => {
+      Object.defineProperty(claim.analysis.findings, '0', { enumerable: true, configurable: true, get: getter });
+    }],
+    ['analysis P0 count', (claim, getter) => {
+      Object.defineProperty(claim.analysis.counts, 'P0', { enumerable: true, configurable: true, get: getter });
+    }],
+    ['lineage comparison status', (claim, getter) => {
+      Object.defineProperty(claim.lineageEvidence.comparison, 'status', {
+        enumerable: true, configurable: true, get: getter,
+      });
+    }],
+  ];
+  for (const [label, alter] of cases) {
+    let getterCalls = 0;
+    const claim = input();
+    alter(claim, () => { getterCalls++; throw new Error('untrusted nested evidence ' + label); });
+    const denied = analyzeWindowsAuthoritySpecialistReview(claim);
+    assert.equal(getterCalls, 0, label + ': nested getter must not execute');
+    assert.equal(denied.finalVerdict, verdict, label);
+    assert.equal(denied.eligible, false, label);
+    assert.equal(denied.clean, false, label);
+    assert.deepEqual(denied.proofRefs, [], label);
+    for (const authority of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(denied[authority], false, label + ': ' + authority);
+    }
+  }
+  assert.notEqual(analyzeWindowsAuthoritySpecialistReview(input()).finalVerdict, verdict,
+    'ordinary literal evidence must continue through its unchanged specialist route');
+});

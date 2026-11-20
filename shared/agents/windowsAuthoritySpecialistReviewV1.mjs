@@ -164,8 +164,11 @@ function unsafeNestedReviewEvidence(value, seen = new Set(), depth = 0) {
   if (keys.length > 512) return true;
   for (const key of keys) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (descriptor && Object.hasOwn(descriptor, 'value')
-      && unsafeNestedReviewEvidence(descriptor.value, seen, depth + 1)) return true;
+    // A nested accessor is executable evidence. Sibling specialists may
+    // traverse arrays or properties before applying their own source guards.
+    // Reject it by descriptor, without invoking the getter or setter.
+    if (!descriptor || !Object.hasOwn(descriptor, 'value')) return true;
+    if (unsafeNestedReviewEvidence(descriptor.value, seen, depth + 1)) return true;
   }
   return false;
 }
