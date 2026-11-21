@@ -32,5 +32,5 @@ test('workflow_run receipt intake keys the independent review by immutable workf
   // separate already-downloaded artifact path and intentionally binds true.
   assert.match(workflow, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED:\s*'true'/);
   assert.match(workflow, /- Independent Merge Security Review/);
-  assert.match(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
+  assert.match(workflow, /contains\(fromJSON\('\["success","failure"\]'\), github\.event\.workflow_run\.conclusion\)/);
 });
