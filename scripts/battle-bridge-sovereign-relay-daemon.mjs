@@ -10,7 +10,7 @@ import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentW
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { createControlTowerBuildConsumerV1, controlTowerRequestPointersFromRelayStatusV1,
   controlTowerBuildInitialStatusV1, retainControlTowerBuildStatusV1 } from './control-tower-build-consumer-v1.mjs';
-import { readJsonObject } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+import { readJsonObject, projectMailboxGuardDiagnosticV1 } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export const SOVEREIGN_RELAY_SCHEMA = 'stephanos.sovereign-relay-daemon.v1';
 export const SOVEREIGN_RELAY_HOT_POLL_MS = 2500;
@@ -239,6 +239,9 @@ export function buildSovereignRelayInFlightStatus({
     carrierConsecutiveFailures: boundedCount(consecutiveCarrierFailures),
     blocker: priorBlocker || (fastCycleStalled ? 'SOVEREIGN_RELAY_GUARD_CYCLE_STALLED' : ''),
     guardVerdict: boundedText(previousStatus?.guardVerdict || ''),
+    // Keep the settled observation's own time; a heartbeat is not another guard result.
+    guardDiagnostic: previousStatus?.sourceHead === normalizeSourceHead(sourceHead)
+      ? projectMailboxGuardDiagnosticV1(previousStatus?.guardDiagnostic) : null,
     lastCarrierHealthyAtUtc: previousStatus?.lastCarrierHealthyAtUtc || null,
     scheduledMailboxFallbackExpected: true,
     fallbackCovered,
@@ -347,11 +350,19 @@ export function classifySovereignRelayGuardCycle({ exitCode = null, stdout = '',
   const detail = boundedText(parsed?.error || stderr || error?.message || '');
   const busy = blocker === 'MAILBOX_OUTBOX_GUARD_FAILED' && /MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING/i.test(detail);
   const ok = exitCode === 0 && parsed?.ok === true;
+  const diagnostic = projectMailboxGuardDiagnosticV1(parsed?.guardDiagnostic);
+  const diagnosticConsistent = diagnostic && (
+    diagnostic.outcome === 'CHILD_SUCCEEDED'
+      ? ok && !error && parsed?.finalVerdict === 'MAILBOX_OUTBOX_GUARD_READY'
+      : !ok && parsed?.ok === false && parsed?.finalVerdict === 'MAILBOX_OUTBOX_GUARD_BLOCKED'
+        && (diagnostic.outcome === 'GUARD_BUSY' ? busy : !busy)
+  );
   return Object.freeze({
     ok: ok || busy,
     busy,
     blocker: ok || busy ? '' : (blocker || 'SOVEREIGN_RELAY_GUARD_CYCLE_BLOCKED'),
     guardVerdict: boundedText(parsed?.finalVerdict || ''),
+    guardDiagnostic: diagnosticConsistent ? diagnostic : null,
     detail: ok || busy ? '' : detail,
     childExitCode: Number.isInteger(exitCode) ? exitCode : null,
     mailboxSelectedCount: boundedCount(parsed?.childMailboxSelectedCount),
@@ -473,6 +484,7 @@ export function buildSovereignRelayStatus({
     carrierBusy: cycle?.busy === true,
     blocker: boundedText(cycle?.blocker || ''),
     guardVerdict: boundedText(cycle?.guardVerdict || ''),
+    guardDiagnostic: projectMailboxGuardDiagnosticV1(cycle?.guardDiagnostic),
     childExitCode: Number.isInteger(cycle?.childExitCode) ? cycle.childExitCode : null,
     externalCarrierRequiredForCloudChat: true,
     externalCarrierOwnsExecution: false,

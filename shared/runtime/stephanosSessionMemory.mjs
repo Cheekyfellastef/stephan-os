@@ -16,6 +16,7 @@ import { createDefaultHostedIdeaStagingQueue, normalizeHostedIdeaStagingQueue } 
 export const STEPHANOS_SESSION_MEMORY_STORAGE_KEY = 'stephanos.session.memory.v1';
 export const STEPHANOS_SESSION_MEMORY_SCHEMA_VERSION = 1;
 export const STEPHANOS_UI_LAYOUT_STORAGE_KEY = 'stephanos_ui_layout';
+export const LAUNCHER_TILE_ORDER_LAYOUT_KEY = 'launcherTileOrder';
 export const STEPHANOS_ACTIVE_WORKSPACE = 'mission-console';
 export const STEPHANOS_ACTIVE_SUBVIEW = 'assistant';
 export const PORTABLE_SESSION_CONTINUITY_FIELDS = Object.freeze([
@@ -688,6 +689,17 @@ export function persistStephanosSessionMemory(memory, storage = globalThis?.loca
     ...sanitized,
     updatedAt: new Date().toISOString(),
   });
+
+  // Runtime pane writers omit this launcher-owned field. Preserve its latest
+  // canonical value at write time, never an older writer's startup snapshot.
+  // An explicit value (including an empty order or removal) still wins.
+  if (!Object.prototype.hasOwnProperty.call(sanitized.session?.ui?.uiLayout || {}, LAUNCHER_TILE_ORDER_LAYOUT_KEY)) {
+    const persisted = readJsonStorage(storage, STEPHANOS_SESSION_MEMORY_STORAGE_KEY);
+    const storedOrder = persisted?.session?.ui?.uiLayout?.[LAUNCHER_TILE_ORDER_LAYOUT_KEY];
+    if (Array.isArray(storedOrder)) {
+      normalized.session.ui.uiLayout[LAUNCHER_TILE_ORDER_LAYOUT_KEY] = [...storedOrder];
+    }
+  }
 
   writeJsonStorage(storage, STEPHANOS_SESSION_MEMORY_STORAGE_KEY, normalized);
   writeJsonStorage(storage, AI_SETTINGS_STORAGE_KEY, createLegacyProviderPreferencesPayload(normalized));

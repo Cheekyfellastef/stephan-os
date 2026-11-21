@@ -3,10 +3,17 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { preflightBeforeProtectedApproval } from './operator-protected-personal-repository-merge.mjs';
 import { PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS, validatePersonalRepositoryConversationState, validatePersonalRepositoryEvidence } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
+import { readyLifecycleFixture } from '../shared/agents/fixtures/protectedReadyReviewLifecycleV1.fixture.mjs';
 
-function preApprovalFixture() {
+function preApprovalFixture({ lifecycleIdentity = null } = {}) {
   const repository = 'Cheekyfellastef/stephan-os';
-  const identity = { prNumber: 3178, branch: 'feature/r7-test', sourceHead: 'a'.repeat(40),
+  const identity = lifecycleIdentity ? {
+    prNumber: lifecycleIdentity.prNumber,
+    branch: lifecycleIdentity.branch,
+    sourceHead: lifecycleIdentity.sourceHead,
+    sourceTree: lifecycleIdentity.sourceTree,
+    baseSha: lifecycleIdentity.baseSha,
+  } : { prNumber: 3178, branch: 'feature/r7-test', sourceHead: 'a'.repeat(40),
     sourceTree: 'c'.repeat(40), baseSha: 'b'.repeat(40) };
   const context = { repository, dispatch: { identity } };
   const state = {
@@ -29,6 +36,7 @@ function preApprovalFixture() {
   ].map((run) => ({ ...run, run_attempt: 1, check_suite_id: run.id + 1000,
     repository: { full_name: repository }, head_sha: identity.sourceHead,
     event: run.event || 'pull_request_target', status: 'completed',
+    created_at: '2026-10-22T11:59:00.000Z',
     pull_requests: [{ number: identity.prNumber, head: state.pullRequest.head, base: state.pullRequest.base }] }));
   const snapshot = { workflowRuns: workflows, commitStatuses: [], checkRuns: workflows.map((run, index) => ({
     id: run.id + 2000, name: index ? 'independent-security-review' : 'exact-head-review',
@@ -65,6 +73,48 @@ test('pre-approval success rechecks live identity and has no approval or mutatio
   assert.equal(result.mutationAuthority, false);
   assert.equal(result.finalRevalidationRequired, true);
   assert.equal(result.advisoryOnly, true);
+});
+
+test('pre-approval resolves an exact historical draft skip only through fresh authentic READY-review proof', async () => {
+  const lifecycle = readyLifecycleFixture();
+  const skipped = (fixture) => {
+    fixture.state.review.mergeStateStatus = 'CLEAN';
+    fixture.snapshot.workflowRuns[0].conclusion = 'skipped';
+    fixture.snapshot.checkRuns[0].conclusion = 'skipped';
+  };
+
+  const missing = preApprovalFixture({ lifecycleIdentity: lifecycle.identity });
+  skipped(missing);
+  missing.adapters.readReadyReview = async () => null;
+  await assert.rejects(preflightBeforeProtectedApproval(missing.context, missing.adapters), (error) =>
+    error.details?.blockers?.includes('personal-repository-check-run-not-exact-green'));
+
+  const admitted = preApprovalFixture({ lifecycleIdentity: lifecycle.identity });
+  skipped(admitted);
+  let lifecycleReads = 0;
+  admitted.adapters.readReadyReview = async (_context, { snapshot, expected }) => {
+    lifecycleReads += 1;
+    assert.equal(snapshot.workflowRuns[0].id, 100);
+    assert.equal(expected.sourceHead, lifecycle.identity.sourceHead);
+    return lifecycle.proof;
+  };
+  const result = await preflightBeforeProtectedApproval(admitted.context, admitted.adapters);
+  assert.equal(lifecycleReads, 2);
+  assert.equal(result.checkEvidence.some((item) => item.disposition === 'reviewed-ready-lifecycle'), true);
+
+  const changed = preApprovalFixture({ lifecycleIdentity: lifecycle.identity });
+  skipped(changed);
+  let changedReads = 0;
+  changed.adapters.readReadyReview = async () => {
+    changedReads += 1;
+    if (changedReads === 1) return lifecycle.proof;
+    const stale = structuredClone(lifecycle.proof);
+    stale.review.run.head_sha = 'd'.repeat(40);
+    return stale;
+  };
+  await assert.rejects(preflightBeforeProtectedApproval(changed.context, changed.adapters), (error) =>
+    error.details?.blockers?.includes('personal-repository-check-run-not-exact-green'));
+  assert.equal(changedReads, 2);
 });
 
 test('pre-approval stops on a consumed attempt before collecting or approving anything', async () => {

@@ -38,6 +38,8 @@ const PROTECTED_OPENCLAW_BOOTSTRAP_PATHS = new Set([
   ...APPROVAL_BOUNDARY_PATHS_V2,
   ...WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
   ...PROTECTED_OPENCLAW_SPECIALIST_SUCCESSOR_BOOTSTRAP_PATHS,
+  // GateV2 already protects this exact router regression as a self-change.
+  'shared/agents/windowsAuthoritySpecialistReviewV1.test.mjs',
 ]);
 
 const SHA40 = /^[a-f0-9]{40}$/;

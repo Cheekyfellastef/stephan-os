@@ -5,21 +5,21 @@
 import { spawnSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pathToFileURL } from 'node:url';
-import { sovereignExactCommitLoaderV1 } from '../shared/agents/sovereignExactCommitLoaderV1.mjs';
-import { resolveBattleBridgeGitExecution, createBattleBridgeMinimalChildEnvironment }
-  from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { buildInstalledReviewerLaunchPlanV1 } from '../shared/agents/sovereignInstalledReviewerProfileV1.mjs';
 
 export const HIGH_RISK_ADVISORY_EXECUTION_FILES = Object.freeze([
   'scripts/sovereign-high-risk-advisory-v1.mjs',
+  'scripts/battle-bridge-github-sync-policy.mjs',
   'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
   'scripts/sovereign-review-coverage-v1-engine.mjs',
   'shared/agents/sovereignWindowsCalibrationV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs',
   'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
   'shared/agents/battleBridgeWindowsHosts.mjs',
   'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
   'shared/agents/sovereignReviewCoverageV1.mjs',
+  'shared/agents/battleBridgeGitProbeContextV1.mjs',
   'shared/agents/sovereignAuthenticatedReviewDiffV1.mjs',
   'shared/agents/sharedAgentWorkspaceStore.mjs',
   'shared/agents/closedLoopLearningV1.mjs',
@@ -43,36 +43,12 @@ const ENTRIES = Object.freeze({
     held:'REVIEW_COVERAGE_HELD'}),
 });
 
-export function buildHighRiskAdvisoryLaunchPlanV1({
-  root = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
-  env = process.env, platform = process.platform,
-  gitExecution = resolveBattleBridgeGitExecution({ platform }),
-  entryPoint = 'advisory',
-} = {}) {
+export function buildHighRiskAdvisoryLaunchPlanV1({env=process.env,platform=process.platform,
+  entryPoint='advisory'}={}) {
   if (!Object.hasOwn(ENTRIES, entryPoint)) throw Error('FIXED_REVIEW_ENTRY_REQUIRED');
-  const route = ENTRIES[entryPoint];
-  const head = env.STEPHANOS_REVIEW_EXACT_HEAD;
-  const base = env.STEPHANOS_REVIEW_EXACT_BASE;
-  if (!/^[a-f0-9]{40}$/.test(head ?? '') || !/^[a-f0-9]{40}$/.test(base ?? '') || base === head)
-    throw Error('HIGH_RISK_TRUSTED_LAUNCH_EXACT_PAIR_REQUIRED');
-  const loader = sovereignExactCommitLoaderV1({ root, head, files: HIGH_RISK_ADVISORY_EXECUTION_FILES, git: gitExecution });
-  const childEnv = { ...createBattleBridgeMinimalChildEnvironment(env, { platform }) };
-  for (const key of ['STEPHANOS_REVIEW_EXACT_HEAD','STEPHANOS_REVIEW_EXACT_BASE',
-    'STEPHANOS_REVIEW_EXACT_BRANCH','STEPHANOS_REVIEW_PR','STEPHANOS_REVIEW_ISSUE',
-    'STEPHANOS_REVIEW_REPOSITORY','STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER',
-    'STEPHANOS_REVIEW_IMPLEMENTER_SESSION','STEPHANOS_REVIEW_SESSION',
-    'STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL','STEPHANOS_REVIEW_REVIEWER_PRINCIPAL',
-    'STEPHANOS_SOVEREIGN_REVIEW_MODEL','STEPHANOS_SHARED_AGENT_WORKSPACE'])
-    if (typeof env[key] === 'string') childEnv[key] = env[key];
-  const entry = pathToFileURL(resolve(root, route.file)).href;
-  const projection = pathToFileURL(resolve(root,'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs')).href;
-  const invoke = `const m=await import(${JSON.stringify(entry)});let r=await m.${route.method}();`
-    + (route.remote ? `r=(await import(${JSON.stringify(projection)})).projectWindowsCalibrationForRemoteV1(r);` : '')
-    + `process.stdout.write(${JSON.stringify(route.prefix+'=')}+JSON.stringify(r)+'\\n');`
-    + `if(r.status===${JSON.stringify(route.held)}${entryPoint==='advisory'?'||!r.publicationOk':''})process.exitCode=1;`;
-  return Object.freeze({ executable: process.execPath,
-    args: Object.freeze(['--experimental-loader', loader, '--input-type=module', '--eval', invoke]),
-    env: Object.freeze(childEnv), root });
+  // Reviewed PR metadata selects input objects only. The fixed native parent
+  // selects its installed producer version and observes physical code custody.
+  return buildInstalledReviewerLaunchPlanV1({env,platform,entryPoint});
 }
 
 export function runFixedSovereignReviewEntryV1(entryPoint, options = {}) {
@@ -87,12 +63,12 @@ export function runFixedSovereignReviewEntryV1(entryPoint, options = {}) {
     const plan = buildHighRiskAdvisoryLaunchPlanV1({...options, entryPoint});
     const result = spawnSync(plan.executable, plan.args, {cwd:plan.root, env:plan.env,
       shell:false, windowsHide:true, timeout:13*60*1000, maxBuffer:65536, encoding:'utf8'});
-    if (result.error || ![0,1].includes(result.status)) return held();
+    if (result.error || ![0,1,2].includes(result.status)) return held();
     const lines = result.stdout.trim().split(/\r?\n/);
     if (lines.length !== 1 || !lines[0].startsWith(route.prefix+'=')) return held();
     const value = JSON.parse(lines[0].slice(route.prefix.length+1));
     if (!value || typeof value !== 'object' || typeof value.status !== 'string') return held();
-    if (result.status === 1 && value.status !== route.held) return held();
+    if (result.status !== 0 && value.status !== route.held) return held();
     return Object.freeze(value);
   } catch { return held(); }
 }

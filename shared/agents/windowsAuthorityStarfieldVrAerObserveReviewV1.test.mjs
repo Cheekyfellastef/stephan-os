@@ -56,8 +56,8 @@ test('reviewer rejects an isolation helper that sets the compatibility disable f
   const content = (await readFile(new URL('../../scripts/windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url), 'utf8'))
     .replace(/\r\n/g, '\n');
   const disabled = content.replace(
-    "            '1',\n            'Process'",
-    "            '0',\n            'Process'",
+    "SetEnvironmentVariable($virtualDesktopOculusCompatibilityDisableEnvironment, '1', 'Process')",
+    "SetEnvironmentVariable($virtualDesktopOculusCompatibilityDisableEnvironment, '0', 'Process')",
   );
   assert.notEqual(disabled, content);
   const result = analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1(input(disabled));
@@ -112,4 +112,22 @@ test('wrong path or widened finding estate is not eligible', async () => {
       counts: { P0: 2, P1: 0, P2: 0 },
     },
   })).eligible, false);
+});
+
+// These mutations use the actual current launcher, not a synthetic old helper.
+test('current telemetry helper rejects altered process, restoration and child environment contracts', async () => {
+  const current = (await readFile(new URL('../../scripts/windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  for (const [before, after] of [
+    ["'XR_API_LAYER_PATH', $layerPath, 'Process'", "'XR_API_LAYER_PATH', $layerPath, 'Machine'"],
+    ["SetEnvironmentVariable($name, $previous[$name], 'Process')", "SetEnvironmentVariable($name, 'changed', 'Process')"],
+    ["$VisualTelemetry.capabilities.modifiesFrameData -ne $false", "$VisualTelemetry.capabilities.modifiesFrameData -eq $false"],
+    ["return Start-Process -FilePath", "return Start-Process -Verb RunAs -FilePath"],
+    ["'STEPHANOS_VR_TELEMETRY_GAME_ID', $gameId, 'Process'", "'PATH', $gameId, 'Process'"],
+  ]) {
+    const hostile = current.replace(before, after);
+    assert.notEqual(hostile, current, before);
+    assert.equal(analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1(input(hostile)).clean, false, before);
+  }
+  const extra = current + "\n[Environment]::SetEnvironmentVariable('PATH', 'changed', 'Process')\n";
+  assert.equal(analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1(input(extra)).clean, false);
 });

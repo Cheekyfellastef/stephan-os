@@ -6,7 +6,8 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { sovereignExactCommitLoaderV1 } from '../shared/agents/sovereignExactCommitLoaderV1.mjs';
-import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 
 const SOURCE_ROOT = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
 const REVIEWER = path.join(SOURCE_ROOT, 'scripts', 'sovereign-reviewer-v1.mjs');
@@ -109,7 +110,9 @@ export function planWindowsSovereignReviewerV1(env, {
 export const REVIEWER_CRITICAL_SOURCE_PATHS = Object.freeze([
   'scripts/sovereign-reviewer-v1.mjs',
   'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+  'scripts/battle-bridge-github-sync-policy.mjs',
   'shared/agents/sovereignReviewerV1.mjs',
+  'shared/agents/sovereignReviewerOllamaBindingV1.mjs',
   'shared/agents/sovereignCalibrationV1.mjs',
   'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
   'shared/agents/battleBridgeWindowsHosts.mjs',
@@ -131,21 +134,34 @@ export function verifyWslReviewerExecutableBytesV1({ run, reviewerPath, reviewEn
   }
   const root = reviewerPath.slice(0, -suffix.length);
   if (!root || root === '/') return error('REVIEWER_SOURCE_BYTES_UNVERIFIED');
-  const git = args => {
-    // No shell, user Git aliases, inherited Git config or mutable helper script.
-    const result = run(['/usr/bin/env', '-i',
-      'PATH=/usr/bin:/bin', 'HOME=/tmp', 'GIT_CONFIG_NOSYSTEM=1',
-      'GIT_CONFIG_GLOBAL=/dev/null', 'GIT_NO_REPLACE_OBJECTS=1',
-      'GIT_GRAFT_FILE=/dev/null', '/usr/bin/git', '-C', root,
-      ...args], 12_000);
+  const execution = resolveBattleBridgeGitExecution({ platform: 'linux', environment: {} });
+  const gitEnvironment = Object.entries(execution.environment).map(([key, value]) => key + '=' + value);
+  const git = (args, raw = false) => {
+    // Environment clearing alone does not disable repository-local fsmonitor
+    // or helpers. Apply the same fixed Git boundary as every other reviewer.
+    const result = run(['/usr/bin/env', '-i', 'HOME=/tmp', ...gitEnvironment,
+      execution.executable, ...execution.fixedConfigArgs, '-C', root, ...args], 12_000);
     if (result?.error || result?.status !== 0 || typeof result.stdout !== 'string'
       || result.stdout.length > 4096) throw Error('REVIEWER_SOURCE_GIT_UNVERIFIED');
-    return safe(result.stdout);
+    return raw ? result.stdout : safe(result.stdout);
   };
   try {
+    const localConfig = git(['config', '--local', '--null', '--list', '--no-includes'], true);
+    if (!validateBattleBridgeLocalGitConfiguration(localConfig).ok) {
+      return error('REVIEWER_SOURCE_GIT_UNVERIFIED');
+    }
     if (git(['rev-parse', 'HEAD']) !== reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD
-      || git(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== reviewEnv.STEPHANOS_REVIEW_EXACT_BRANCH
-      || git(['status', '--porcelain', '--untracked-files=normal']) !== '') {
+      || git(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== reviewEnv.STEPHANOS_REVIEW_EXACT_BRANCH) {
+      return error('REVIEWER_SOURCE_HEAD_OR_WORKTREE_UNVERIFIED');
+    }
+    // Do not trim porcelain's status columns or collapse a staged rename:
+    // source dirt still holds, while the canonical runtime-only policy applies.
+    const statusOutput = git(['-c', 'status.renames=false', 'status', '--porcelain', '--untracked-files=normal'], true);
+    const statusLines = statusOutput === '' ? [] : statusOutput.replace(/\r?\n$/, '').split(/\r?\n/);
+    if (statusLines.some(line => !/^(?:[ MADTU]{2}|\?\?) [^\x00-\x1f\x7f]+$/.test(line)
+      || line.startsWith('  ') || line.slice(3) !== line.slice(3).trim()
+      || line.slice(3).split('/').some(part => part === '.' || part === '..'))
+      || classifyDirt(statusLines).blocksSync) {
       return error('REVIEWER_SOURCE_HEAD_OR_WORKTREE_UNVERIFIED');
     }
     git(['merge-base', '--is-ancestor', reviewEnv.STEPHANOS_REVIEW_EXACT_BASE,
@@ -176,207 +192,12 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
   const plan = planWindowsSovereignReviewerV1(env, { platform, sourceRoot, exists });
   if (!plan.ok) return plan;
   if (!['review', 'calibration', 'preflight'].includes(mode)) return error('REVIEW_MODE_UNSUPPORTED');
-  const executable = mode === 'review' ? plan.reviewer
-    : path.win32.join(plan.sourceRoot, 'scripts', 'sovereign-reviewer-ollama-calibration-v1.mjs');
-  if (!exists(executable)) return error('CALIBRATION_SOURCE_UNAVAILABLE');
-  // wslpath is a fixed executable, and paths are passed as argv, never a shell.
-  // No caller-controlled distro, shell, executable or arbitrary command.
-  const minimalEnv = {
-    SystemRoot: text(env.SystemRoot || env.SYSTEMROOT) || 'C:\\Windows',
-    WINDIR: text(env.WINDIR) || 'C:\\Windows',
-    PATH: 'C:\\Windows\\System32;C:\\Windows',
-    WSLENV: '',
-  };
-  const run = (args, timeoutMs = mode === 'calibration' ? 570_000 : 150_000) =>
-    spawn(path.win32.resolve('C:/Windows/System32/wsl.exe'), ['--exec', ...args], {
-    encoding: 'utf8', windowsHide: true, shell: false,
-    timeout: timeoutMs,
-    maxBuffer: 16 * 1024,
-    env: minimalEnv,
-  });
-  const linuxPaths = [];
-  for (const windowsPath of [executable, plan.workspace]) {
-    // A path-only conversion must never hold the long model-exam budget.
-    const conversion = run(['/usr/bin/wslpath', '-u', windowsPath], 12_000);
-    const output = text(conversion?.stdout);
-    if (conversion?.error || conversion?.status !== 0 || !/^\/[^\r\n\0]+$/.test(output)) {
-      return error('WSL_PATH_TRANSLATION_UNAVAILABLE');
-    }
-    linuxPaths.push(output);
-  }
-  if (mode === 'review') {
-    // A tainted reviewer could fabricate its own clean status and receipt.
-    // Independently read actual Git HEAD bytes using trusted WSL executables
-    // before Node is allowed to load the reviewer or its policy imports.
-    const attested = verifySource({
-      run, reviewerPath: linuxPaths[0], reviewEnv: plan.reviewEnv,
-    });
-    if (attested?.ok !== true) return error(
-      attested?.reason === 'REVIEWER_SOURCE_INDEX_FLAGS_UNSAFE'
-        ? 'REVIEWER_SOURCE_INDEX_FLAGS_UNSAFE'
-        : attested?.reason === 'REVIEWER_SOURCE_BYTES_NOT_HEAD'
-          ? 'REVIEWER_SOURCE_BYTES_NOT_HEAD'
-          : 'REVIEWER_SOURCE_GIT_UNVERIFIED');
-  }
-  const args = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp',
-    ...Object.entries(plan.reviewEnv).map(([key, value]) => key + '=' + value),
-    'STEPHANOS_SHARED_AGENT_WORKSPACE=' + linuxPaths[1],
-    '/usr/bin/node', '--experimental-loader', sovereignExactCommitLoaderV1({
-      root: path.posix.resolve(linuxPaths[0], '../..'),
-      head: plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD,
-      files: REVIEWER_CRITICAL_SOURCE_PATHS,
-      git: resolveBattleBridgeGitExecution({ platform: 'linux', environment: {} }),
-    }), linuxPaths[0], ...(mode === 'preflight' ? ['--preflight']
-      : mode === 'calibration' ? ['--once'] : [])];
-  const executed = run(args);
-  if (executed?.error) return error('WSL_REVIEWER_EXECUTION_HELD');
-  const prefix = mode === 'calibration' ? 'SOVEREIGN_REVIEW_CALIBRATION_RESULT='
-    : mode === 'preflight' ? 'SOVEREIGN_REVIEW_PREFLIGHT_RESULT='
-    : 'SOVEREIGN_REVIEWER_RESULT=';
-  // Only a fixed, unique receipt marker can be promoted. Other stdout never
-  // enters the public status and a second marker is an ambiguous HOLD.
-  const markers = String(executed?.stdout || '').split('\n')
-    .filter(line => line.startsWith(prefix));
-  if (mode === 'preflight' && executed?.status === 2) {
-    if (markers.length !== 1) return error('WSL_REVIEWER_EXECUTION_HELD');
-    let heldReceipt;
-    try { heldReceipt = JSON.parse(markers[0].slice(prefix.length)); }
-    catch { return error('WSL_REVIEWER_EXECUTION_HELD'); }
-    if (heldReceipt?.status !== 'LOCAL_OLLAMA_PREFLIGHT_HELD'
-      || !PREFLIGHT_SAFE_HOLD_REASONS.has(heldReceipt.reason)
-      || heldReceipt.independentHostAttestation !== false
-      || heldReceipt.signatureVerified !== false
-      || heldReceipt.specialistAuthority !== false
-      || heldReceipt.independentReviewSatisfied !== false
-      || heldReceipt.protectedMergeAuthority !== false
-      || heldReceipt.sourceMutationAuthority !== false
-      || heldReceipt.leaseReleaseAuthority !== false
-      || heldReceipt.windowsCommissioningAuthority !== false
-      || heldReceipt.physicalPickupProven !== false) {
-      return error('LOCAL_OLLAMA_PREFLIGHT_UNQUALIFIED');
-    }
-    return error(heldReceipt.reason);
-  }
-  if (executed?.status !== 0) return error('WSL_REVIEWER_EXECUTION_HELD');
-  if (markers.length !== 1) return error('REVIEWER_RECEIPT_MISSING');
-  let receipt;
-  try { receipt = JSON.parse(markers[0].slice(prefix.length)); }
-  catch { return error('REVIEWER_RECEIPT_INVALID'); }
-  if (mode === 'preflight') {
-    if (receipt.status !== 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED'
-      || receipt.selectedModelPresent !== true
-      || receipt.sourceVerified !== true || receipt.gamingClear !== true
-      || !/^[a-f0-9]{64}$/.test(receipt.modelDigestSha256 ?? '')
-      || receipt.independentHostAttestation !== false
-      || receipt.signatureVerified !== false
-      || receipt.specialistAuthority !== false
-      || receipt.protectedMergeAuthority !== false
-      || receipt.leaseReleaseAuthority !== false) {
-      return error('LOCAL_OLLAMA_PREFLIGHT_UNQUALIFIED');
-    }
-    return Object.freeze({ ok: true, status: 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED',
-      qualification: 'PENDING_INDEPENDENT_ATTESTATION',
-      approvalAuthority: false, mergeAuthority: false });
-  }
-  if (mode === 'calibration') {
-    const expectedRef = 'proofs/sovereign-calibration-pr-'
-      + plan.reviewEnv.STEPHANOS_REVIEW_PR + '-'
-      + plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase().slice(0, 12)
-      + '-' + String(receipt.observationsSha256 || '').slice(0, 12) + '.json';
-    if (receipt.status !== 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED'
-      || receipt.repository !== plan.reviewEnv.STEPHANOS_REVIEW_REPOSITORY
-      || receipt.sourceHead !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase()
-      || receipt.baseSha !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_BASE.toLowerCase()
-      || receipt.completedCases !== 10 || receipt.passedCases !== 10
-      || !/^[a-f0-9]{64}$/.test(receipt.manifestSha256 ?? '')
-      || !/^[a-f0-9]{64}$/.test(receipt.observationsSha256 ?? '')
-      || !/^[a-f0-9]{64}$/.test(receipt.modelDigestSha256 ?? '')
-      || receipt.proofRef !== expectedRef
-      || !/^[a-f0-9]{64}$/.test(receipt.proofSha256 ?? '')
-      || receipt.qualification !== 'PENDING_INDEPENDENT_ATTESTATION'
-      || receipt.independentHostAttestation !== false
-      || receipt.signatureVerified !== false || receipt.specialistAuthority !== false
-      || receipt.independentReviewSatisfied !== false
-      || receipt.leaseReleaseAuthority !== false || receipt.protectedMergeAuthority !== false) {
-      return error('CALIBRATION_EVIDENCE_UNQUALIFIED');
-    }
-    // Candidate status and a claimed digest alone do not prove a stored
-    // artifact exists. Read the fixed Windows Shared Workspace proof back
-    // through the same shell-free WSL boundary, with no caller path inputs.
-    const proofFile = path.posix.join(linuxPaths[1], expectedRef);
-    if (path.posix.normalize(linuxPaths[1]) !== linuxPaths[1]
-      || !proofFile.startsWith(linuxPaths[1].replace(/\/+$/, '') + '/')) {
-      return error('CALIBRATION_PROOF_PATH_UNSAFE');
-    }
-    // A malformed / replaced proof cannot tie up GPU-capable WSL for 570s.
-    const observed = run(['/usr/bin/sha256sum', '--', proofFile], 12_000);
-    if (observed?.error || observed?.status !== 0) {
-      return error('CALIBRATION_PROOF_FILE_UNREADABLE');
-    }
-    const expectedLine = receipt.proofSha256 + '  ' + proofFile;
-    if (text(observed?.stdout) !== expectedLine) {
-      return error('CALIBRATION_PROOF_FILE_HASH_MISMATCH');
-    }
-    return Object.freeze({
-      ok: true, status: 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED',
-      sourceHead: receipt.sourceHead, completedCases: 10, passedCases: 10,
-      observationsSha256: receipt.observationsSha256,
-      modelDigestSha256: receipt.modelDigestSha256,
-      proofRef: receipt.proofRef, proofSha256: receipt.proofSha256,
-      qualification: 'PENDING_INDEPENDENT_ATTESTATION',
-      approvalAuthority: false, mergeAuthority: false,
-    });
-  }
-  const expectedProof = 'proofs/sovereign-review-pr-'
-    + plan.reviewEnv.STEPHANOS_REVIEW_PR + '-'
-    + plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase().slice(0, 12) + '.json';
-  if (receipt.status !== 'LOCAL_REVIEW_EVIDENCE_READY'
-    || receipt.repository !== plan.reviewEnv.STEPHANOS_REVIEW_REPOSITORY
-    || receipt.evidenceSchema !== 'stephanos.sovereign-review-candidate-evidence.v1'
-    || receipt.baseSha !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_BASE.toLowerCase()
-    || receipt.qualification !== 'PENDING_INDEPENDENT_ATTESTATION'
-    || receipt.riskTier !== 'standard'
-    || !Number.isSafeInteger(receipt.findingsCount)
-    || receipt.findingsCount < 0 || receipt.findingsCount > 64
-    || ((receipt.verdict === 'clean') !== (receipt.findingsCount === 0))
-    || !SHA.test(receipt.sourceHead)
-    || receipt.sourceHead.toLowerCase() !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase()
-    || receipt.prNumber !== Number(plan.reviewEnv.STEPHANOS_REVIEW_PR)
-    || receipt.proofRef !== expectedProof
-    || !/^[a-f0-9]{64}$/.test(receipt.proofSha256 ?? '')
-    || !['clean', 'findings'].includes(receipt.verdict)
-    || receipt.mergeAuthority !== false) return error('REVIEWER_RECEIPT_UNBOUND');
-  // A positive stdout marker alone proves no persisted evidence exists.
-  // Read the exact fixed artifact back through WSL before reporting READY.
-  // Do not expose the document, private diff, absolute machine path or model text.
-  const reviewWorkspace = path.posix.normalize(linuxPaths[1]);
-  const reviewProofFile = path.posix.join(linuxPaths[1], expectedProof);
-  if (reviewWorkspace !== linuxPaths[1]
-    || !reviewProofFile.startsWith(reviewWorkspace.replace(/\/+$/, '') + '/')) {
-    return error('REVIEWER_PROOF_PATH_UNSAFE');
-  }
-  const readback = run(['/usr/bin/sha256sum', '--', reviewProofFile], 12_000);
-  if (readback?.error || readback?.status !== 0) {
-    return error('REVIEWER_PROOF_FILE_UNREADABLE');
-  }
-  const hashMatch = String(readback.stdout || '').match(/^([a-f0-9]{64})  (.+)\r?\n?$/);
-  if (!hashMatch || hashMatch[2] !== reviewProofFile) {
-    return error('REVIEWER_PROOF_READBACK_INVALID');
-  }
-  if (hashMatch[1] !== receipt.proofSha256) {
-    // The workspace file may have been replaced after the child published it.
-    // A successfully hashed but unrelated same-path file is NOT evidence.
-    return error('REVIEWER_PROOF_HASH_MISMATCH');
-  }
-  return Object.freeze({
-    ok: true, status: 'LOCAL_REVIEW_EVIDENCE_READY',
-    qualification: 'PENDING_INDEPENDENT_ATTESTATION',
-    prNumber: receipt.prNumber, sourceHead: receipt.sourceHead,
-    baseSha: receipt.baseSha, repository: receipt.repository,
-    evidenceSchema: receipt.evidenceSchema, findingsCount: receipt.findingsCount,
-    proofRef: receipt.proofRef, proofSha256: hashMatch[1], verdict: receipt.verdict,
-    approvalAuthority: false, mergeAuthority: false,
-  });
+  // This legacy route selected executable producer code from the PR head. The
+  // Windows installed profile cannot attest WSL binaries/principal/custody.
+  // Preserve this explicit boundary until a purpose-correct WSL profile exists;
+  // no path conversion, candidate evaluation, Ollama or publication occurs.
+  return error('WSL_INSTALLED_REVIEWER_PROFILE_REQUIRED');
+
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

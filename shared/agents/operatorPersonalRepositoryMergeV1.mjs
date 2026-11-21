@@ -7,6 +7,7 @@ import {
   validatePersonalRepositoryReadOnlyPriorFailure
 } from './protectedMergeReadOnlyPriorFailureV1.mjs';
 import { PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR } from './protectedWorkflowDispatchMailboxV1.mjs';
+import { validateProtectedReadyReviewLifecycleEvidence } from './protectedReadyReviewLifecycleV1.mjs';
 import { inflateRawSync } from 'node:zlib';
 import {
   OPERATOR_MERGE_ENVIRONMENT,
@@ -1353,12 +1354,17 @@ export function validatePersonalRepositoryCheckRuns(
       continue;
     }
 
-    const supersededDraftSkip = conclusion === 'skipped'
+    const canonicalDraftSkip = conclusion === 'skipped'
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
       && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
       && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
-      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
-      && exactCheckBindings.some((candidate) => (
+      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check;
+    const readyReviewLifecycle = canonicalDraftSkip && options.readyReviewLifecycleEvidence
+      && run.status === 'completed'
+      && Date.parse(options.readyReviewLifecycleEvidence.review?.run?.created_at) >= Date.parse(run.created_at)
+      ? validateProtectedReadyReviewLifecycleEvidence(options.readyReviewLifecycleEvidence, expected, run.id)
+      : null;
+    const supersededDraftSkip = canonicalDraftSkip && exactCheckBindings.some((candidate) => (
         candidate !== checkBinding
         && candidate.exactRun
         && strictPositiveInteger(candidate.run?.id) > strictPositiveInteger(run?.id)
@@ -1391,6 +1397,65 @@ export function validatePersonalRepositoryCheckRuns(
       && text(run?.status).toLowerCase() === 'completed'
       && text(run?.conclusion).toLowerCase() === 'success';
 
+    // request-build is intentionally absent from pull_request executions.
+    // Neutrality requires the exact canonical workflow and a successful
+    // contract-test sibling in the same authenticated check suite.
+    const prControlTowerBuildNotRequested = conclusion === 'skipped'
+      && name === 'request-build'
+      && workflow === 'Stephanos Control Tower - Sovereign Control'
+      && path === '.github/workflows/stephanos-control-tower-build.yml'
+      && text(run?.event) === 'pull_request'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success'
+      && exactCheckBindings.some((candidate) => (
+        candidate !== checkBinding
+        && candidate.exactRun
+        && candidate.checkSuiteId === checkSuiteId
+        && candidate.run?.id === run?.id
+        && text(candidate.check?.name) === 'contract-test'
+        && text(candidate.check?.status).toLowerCase() === 'completed'
+        && text(candidate.check?.conclusion).toLowerCase() === 'success'
+      ));
+
+    // The read-only pilot requests inspection only through workflow_dispatch.
+    // A PR skip is neutral only with its own exact, trusted contract-test proof.
+    const prMailboxFreeInspectionNotRequested = conclusion === 'skipped'
+      && name === 'inspect-goal'
+      && workflow === 'Stephanos Control Tower - Mailbox-Free Read-Only Pilot'
+      && path === '.github/workflows/stephanos-mailbox-free-readonly.yml'
+      && text(run?.event) === 'pull_request'
+      && text(run?.head_branch) === branch
+      && branch !== 'main'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success'
+      && exactCheckBindings.some((candidate) => (
+        candidate !== checkBinding
+        && candidate.exactRun
+        && candidate.checkId > 0 && candidate.checkId !== checkId
+        && candidate.checkSuiteId === checkSuiteId
+        && candidate.run?.id === run?.id
+        && text(candidate.check?.name) === 'contract-test'
+        && text(candidate.check?.head_sha).toLowerCase() === sourceHead
+        && text(candidate.check?.app?.slug) === 'github-actions'
+        && strictPositiveInteger(candidate.check?.app?.id) === 15368
+        && text(candidate.check?.status).toLowerCase() === 'completed'
+        && text(candidate.check?.conclusion).toLowerCase() === 'success'
+      ));
+
+    // Mailbox Receipt Index mirrors receipts only for non-PR events. Its PR
+    // proof job still runs, so the bound mirror skip is expected only for the
+    // exact successful pull_request run. No push, dispatch, main-headed run or
+    // substituted workflow/check identity inherits this disposition.
+    const prMailboxMirrorNotRequested = conclusion === 'skipped'
+      && workflow === 'Mailbox Receipt Index'
+      && path === '.github/workflows/mailbox-receipt-index.yml'
+      && name === 'mirror'
+      && text(run?.event) === 'pull_request'
+      && text(run?.head_branch) === branch
+      && branch !== 'main'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success';
+
     let disposition = 'green';
     if (status !== 'completed') {
       blockers.push('personal-repository-check-run-not-terminal');
@@ -1400,10 +1465,20 @@ export function validatePersonalRepositoryCheckRuns(
     } else if (conclusion === 'skipped'
       && PERSONAL_REPOSITORY_NEUTRAL_SKIPPED_CHECKS.has(`${workflow}\0${name}`)) {
       disposition = 'neutral-skip';
+    } else if (prControlTowerBuildNotRequested) {
+      disposition = 'pr-control-tower-build-not-requested';
     } else if (supersededDraftSkip) {
       disposition = 'superseded-draft-skip';
+    } else if (readyReviewLifecycle?.valid === true) {
+      // Preserve the original skipped check as observed. The separate proof is
+      // a real main-headed workflow_dispatch review, never a synthetic PR check.
+      disposition = 'reviewed-ready-lifecycle';
     } else if (prPagesDeploymentNotRequested) {
       disposition = 'pr-pages-deployment-not-requested';
+    } else if (prMailboxMirrorNotRequested) {
+      disposition = 'pr-mailbox-mirror-not-requested';
+    } else if (prMailboxFreeInspectionNotRequested) {
+      disposition = 'pr-mailbox-free-inspection-not-requested';
     } else if (cleanIndependentReviewProved
       && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
@@ -1429,6 +1504,7 @@ export function validatePersonalRepositoryCheckRuns(
       status,
       conclusion,
       disposition,
+      ...(disposition === 'reviewed-ready-lifecycle' ? { readyReviewLifecycle } : {}),
     }));
   }
 

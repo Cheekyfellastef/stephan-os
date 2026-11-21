@@ -2400,7 +2400,7 @@ export async function run() {
     return;
   }
   if (ignitionMode === 'NORMAL_IGNITION') {
-    runIgnitionHousekeep({ dryRun: false, compact: true, debug: debugEnabled });
+    runIgnitionHousekeep({ dryRun: false, compact: true, debug: debugEnabled, preserveRuntimeDirt: true });
   }
   let publicationTruth = null;
   let ollamaIgnitionStatus = null;

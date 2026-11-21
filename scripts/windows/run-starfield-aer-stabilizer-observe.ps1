@@ -38,27 +38,56 @@ function Require-File([string]$Path, [string]$Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label missing: $Path" }
 }
 function Start-StarfieldWithMetaAirLinkIsolation {
-    # Virtual Desktop's implicit Oculus compatibility layer is useful for its own
-    # route, but this launcher is explicitly Meta Air Link. Keep the two stacks
-    # from interposing on the same Starfield process.
-    $previous = [Environment]::GetEnvironmentVariable(
+    param($VisualTelemetry = $null)
+
+    $environmentNames = @(
         $virtualDesktopOculusCompatibilityDisableEnvironment,
-        'Process'
+        'XR_API_LAYER_PATH',
+        'XR_ENABLE_API_LAYERS',
+        'STEPHANOS_VR_TELEMETRY_TRACE_PATH',
+        'STEPHANOS_VR_TELEMETRY_TARGET_EXE',
+        'STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID',
+        'STEPHANOS_VR_TELEMETRY_GAME_ID'
     )
+    $previous = @{}
+    foreach ($name in $environmentNames) {
+        $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+    }
     try {
-        [Environment]::SetEnvironmentVariable(
-            $virtualDesktopOculusCompatibilityDisableEnvironment,
-            '1',
-            'Process'
-        )
+        [Environment]::SetEnvironmentVariable($virtualDesktopOculusCompatibilityDisableEnvironment, '1', 'Process')
+        if ($VisualTelemetry) {
+            if ([bool]$VisualTelemetry.capabilities.modifiesFrameData -ne $false) {
+                throw 'VR telemetry layer must remain pass-through.'
+            }
+            $layerDirectory = [string]$VisualTelemetry.layerDirectory
+            $tracePath = [string]$VisualTelemetry.tracePath
+            $targetExecutable = [string]$VisualTelemetry.targetExecutable
+            $launchIdentity = [string]$VisualTelemetry.launchSessionId
+            $gameId = [string]$VisualTelemetry.gameId
+            if (-not (Test-Path -LiteralPath $layerDirectory -PathType Container) -or
+                [string]::IsNullOrWhiteSpace($tracePath) -or
+                $targetExecutable -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $launchIdentity -notmatch '^[A-Za-z0-9._-]{1,160}$' -or
+                $gameId -notmatch '^[A-Za-z0-9._-]{1,120}$') {
+                throw 'VR telemetry child environment contract is invalid.'
+            }
+            $priorLayerPath = [string]$previous['XR_API_LAYER_PATH']
+            $priorLayers = [string]$previous['XR_ENABLE_API_LAYERS']
+            $layerPath = if ($priorLayerPath) { $layerDirectory + ';' + $priorLayerPath } else { $layerDirectory }
+            $enabledLayers = if ($priorLayers) { $priorLayers + ';XR_APILAYER_STEPHANOS_telemetry_v1' } else { 'XR_APILAYER_STEPHANOS_telemetry_v1' }
+            [Environment]::SetEnvironmentVariable('XR_API_LAYER_PATH', $layerPath, 'Process')
+            [Environment]::SetEnvironmentVariable('XR_ENABLE_API_LAYERS', $enabledLayers, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TRACE_PATH', $tracePath, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_TARGET_EXE', $targetExecutable, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_LAUNCH_SESSION_ID', $launchIdentity, 'Process')
+            [Environment]::SetEnvironmentVariable('STEPHANOS_VR_TELEMETRY_GAME_ID', $gameId, 'Process')
+        }
         return Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
     }
     finally {
-        [Environment]::SetEnvironmentVariable(
-            $virtualDesktopOculusCompatibilityDisableEnvironment,
-            $previous,
-            'Process'
-        )
+        foreach ($name in $environmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
+        }
     }
 }
 function Set-MutarConfigValue([string]$Content, [string]$Name, [string]$Value) {
@@ -69,9 +98,29 @@ function Set-MutarConfigValue([string]$Content, [string]$Name, [string]$Value) {
     }
     return $Content.TrimEnd() + [Environment]::NewLine + $line + [Environment]::NewLine
 }
-function Repair-ComfortableAerConfig([string]$ConfigPath) {
+function Repair-ComfortableAerConfig([string]$ConfigPath, [switch]$ValidationOnly) {
     Require-File $ConfigPath 'MutaR config'
     $before = Get-Content -LiteralPath $ConfigPath -Raw
+
+    # ValidateOnly is a pure read of vr_config.txt, not a repair request.
+    # Refuse missing, duplicate and unsafe settings before any write-capable path.
+    if ($ValidationOnly) {
+        foreach ($entry in @(@('VR_AsyncAER', 'false'), @('DLSS_AER_Enabled', 'true'))) {
+            $name = [string]$entry[0]
+            $expected = [string]$entry[1]
+            $pattern = '(?im)^[ \t]*' + [regex]::Escape($name) + '[ \t]*=[ \t]*([^\r\n]*?)[ \t]*\r?$'
+            $values = [regex]::Matches($before, $pattern)
+            if ($values.Count -ne 1 -or $values[0].Groups[1].Value.Trim() -cne $expected) {
+                throw 'AER_VALIDATION_CONFIG_REPAIR_REQUIRED_NO_MUTATION'
+            }
+        }
+        $motionRows = [regex]::Matches($before, '(?im)^[ \t]*CreationEngine_MotionVectorFix[ \t]*=[ \t]*([^\r\n]*?)[ \t]*\r?$')
+        if ($motionRows.Count -gt 1 -or
+            ($motionRows.Count -eq 1 -and $motionRows[0].Groups[1].Value.Trim() -ine 'false')) {
+            throw 'AER_VALIDATION_CONFIG_REPAIR_REQUIRED_NO_MUTATION'
+        }
+        return $before
+    }
     $after = Set-MutarConfigValue $before 'VR_AsyncAER' 'false'
     $after = Set-MutarConfigValue $after 'DLSS_AER_Enabled' 'true'
     if ($after -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') {
@@ -105,10 +154,15 @@ function Validate-LocalState {
     if ($loaderHash -ne $expectedLoaderHash) { throw "OpenXR loader hash mismatch: $loaderHash" }
 
     $configPath = Join-Path $gameRoot 'vr_config.txt'
-    $config = Repair-ComfortableAerConfig $configPath
-    if ($config -notmatch '(?m)^VR_AsyncAER=false\s*$') { throw 'Expected comfortable baseline VR_AsyncAER=false is not active.' }
-    if ($config -notmatch '(?m)^DLSS_AER_Enabled=true\s*$') { throw 'Expected comfortable baseline DLSS_AER_Enabled=true is not active.' }
-    if ($config -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') { throw 'Rejected CreationEngine_MotionVectorFix=true is active.' }
+    $config = Repair-ComfortableAerConfig -ConfigPath $configPath -ValidationOnly:$ValidateOnly
+    # -ValidateOnly already validates single-occurrence whitespace-safe assignments,
+    # and rejects unsafe motion vectors without editing the configuration file.
+    # Retain strict legacy postconditions for the write-capable launcher route only.
+    if (-not $ValidateOnly) {
+        if ($config -notmatch '(?m)^VR_AsyncAER=false\s*$') { throw 'Expected comfortable baseline VR_AsyncAER=false is not active.' }
+        if ($config -notmatch '(?m)^DLSS_AER_Enabled=true\s*$') { throw 'Expected comfortable baseline DLSS_AER_Enabled=true is not active.' }
+        if ($config -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') { throw 'Rejected CreationEngine_MotionVectorFix=true is active.' }
+    }
 
     $protectFlagPresent = Test-Path -LiteralPath $protectFlag -PathType Leaf
 
@@ -261,7 +315,7 @@ try {
     $swapped = $true
     if ((Get-Sha256 $liveDll) -ne $expectedCustomHash) { throw 'Experimental DLL swap verification failed.' }
 
-    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
+    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead -ProviderSensors @('mutar.aer-presenter-sequence','mutar.aer-parity') -ProviderTelemetryPath $liveLog 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "Performance mode enter failed: $($perfText.Trim())" }
     $performanceMode = $perfText.Trim() | ConvertFrom-Json
     if (-not $performanceMode.mutarComfortProfile -or
@@ -293,7 +347,7 @@ try {
         throw 'Fresh canonical telemetry session identity does not match this exact launch.'
     }
 
-    $game = Start-StarfieldWithMetaAirLinkIsolation
+    $game = Start-StarfieldWithMetaAirLinkIsolation -VisualTelemetry $performanceMode.visualTelemetry
 
     $session = [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-session.v1'
@@ -310,6 +364,7 @@ try {
         sharedWorkspaceRoot = $workspaceRoot
         repoRoot = $repoRoot
         performanceSessionPath = $performanceSessionPath
+        visualTelemetry = $performanceMode.visualTelemetry
         gameProcessId = $game.Id
         canonicalReadinessReceipt = [string]$readiness.receiptPath
         routeIdentity = [ordered]@{

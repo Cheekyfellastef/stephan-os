@@ -196,7 +196,7 @@ function parkedCriticalBacklogIssueNumbers(conveyor = {}) {
   const decision = text(conveyor?.decision).toUpperCase();
   const parkedRelease = conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
     && conveyor?.validation?.valid === true
-    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY'].includes(decision)
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'PARKED_ACCEPTANCE_ONLY'].includes(decision)
     && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
     && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
     && Array.isArray(conveyor?.remainingItemIds)
@@ -207,6 +207,7 @@ function parkedCriticalBacklogIssueNumbers(conveyor = {}) {
     ...list(conveyor?.parkedMissionIds),
     ...list(conveyor?.parkedApprovalMissionIds),
     ...list(conveyor?.parkedBlockedMissionIds),
+    ...list(conveyor?.parkedAcceptanceMissionIds),
   ].map((value) => text(value)).filter(Boolean));
   return new Set(missionIds.flatMap((missionId) => criticalBacklogMissionIssueNumbers(missionId)));
 }
@@ -1505,7 +1506,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     && conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
     && conveyor?.validation?.valid === true
     && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
-    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'PARKED_ACCEPTANCE_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
     && conveyor?.finalVerdict === (
       conveyor?.decision === 'BACKLOG_COMPLETE'
         ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'
@@ -1603,7 +1604,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     ));
   const legacyCapacityReleasedForElasticSelection = selectedReadyElasticCandidate
     && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
-    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'PARKED_ACCEPTANCE_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
     && conveyor?.finalVerdict === (
       conveyor?.decision === 'BACKLOG_COMPLETE'
         ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'
