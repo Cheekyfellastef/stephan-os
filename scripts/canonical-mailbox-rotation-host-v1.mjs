@@ -84,14 +84,33 @@ export async function executeMailboxRotationOnHost(command, {
     persist(state);
   }
   if (!['CANCELLED', 'VERIFIED'].includes(record.phase)) {
-    state.mailboxRotationActions = await readActions(state.mailboxRotation);
-    state.mailboxRotation = {...state.mailboxRotation,...mailboxActionEvidenceSummary(state.mailboxRotationActions)};
-    if (!mailboxActionsExecutionQuiescent(state.mailboxRotationActions,{now:now(),mainHead:sourceHead,activationHead:state.mailboxRotation.cutoverHead})) {
+    let actionsQuiescent = false;
+    try {
+      state.mailboxRotationActions = await readActions(state.mailboxRotation);
+      state.mailboxRotation = { ...state.mailboxRotation, ...mailboxActionEvidenceSummary(state.mailboxRotationActions) };
+      actionsQuiescent = mailboxActionsExecutionQuiescent(state.mailboxRotationActions, {
+        now: now(), mainHead: sourceHead, activationHead: state.mailboxRotation.cutoverHead,
+      });
+    } catch {
+      // Preserve the hold. Never certify a drain from an ambiguous Actions read,
+      // and never copy provider exceptions or credentials into public receipts.
+      state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
+      persist(state);
+      return held('MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED');
+    }
+    if (!actionsQuiescent) {
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
     }
-    state.mailboxRotationInventory = auditMailboxRotationComments(await readComments(record.predecessorIssue), {
-      issueNumber: record.predecessorIssue, barrierCommentId: record.barrierCommentId,
-    });
+    try {
+      state.mailboxRotationInventory = auditMailboxRotationComments(await readComments(record.predecessorIssue), {
+        issueNumber: record.predecessorIssue, barrierCommentId: record.barrierCommentId,
+      });
+    } catch {
+      // Missing or malformed historical evidence is not an empty queue.
+      state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
+      persist(state);
+      return held('MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED');
+    }
     const inventory = state.mailboxRotationInventory;
     if (inventory.pendingBeforeBarrier.length || inventory.pendingAfterBarrier.length || inventory.acceptedIds.length) {
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
