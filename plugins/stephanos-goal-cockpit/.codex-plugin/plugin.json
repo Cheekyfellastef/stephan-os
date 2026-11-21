@@ -1,0 +1,33 @@
+{
+  "name": "stephanos-goal-cockpit",
+  "version": "0.1.0",
+  "description": "Read the current Stephanos goal projection in a truth-preserving cockpit.",
+  "author": {
+    "name": "Stephanos Project",
+    "url": "https://github.com/Cheekyfellastef"
+  },
+  "repository": "https://github.com/Cheekyfellastef/stephan-os",
+  "keywords": [
+    "stephanos",
+    "goals",
+    "cockpit",
+    "read-only"
+  ],
+  "interface": {
+    "displayName": "Stephanos Goal Cockpit",
+    "shortDescription": "Read current goal truth in a live cockpit.",
+    "longDescription": "Presents canonical Stephanos goal status, source freshness, operator attention, and recent change in a read-only cockpit.",
+    "developerName": "Stephanos Project",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read-only"
+    ],
+    "defaultPrompt": [
+      "Open my current Stephanos goal cockpit.",
+      "Show the goal that needs operator attention.",
+      "What changed since the last cockpit snapshot?"
+    ],
+    "brandColor": "#34D399"
+  }
+}
