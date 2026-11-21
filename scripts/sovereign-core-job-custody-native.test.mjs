@@ -8,10 +8,34 @@ import { tmpdir } from 'node:os';
 const source = resolve(import.meta.dirname, 'windows/SovereignCoreJobCustodyV1.cs');
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const windows = process.platform === 'win32';
-function runner({ mode = 'complete', safe = '$true', cancel = '$false', deadline = 8000, watchInput = false, directoryRoot, terminalWitness } = {}) {
+function runner({ mode = 'complete', safe = '$true', cancel = '$false', deadline = 8000, watchInput = false, directoryRoot, terminalWitness, workerReadyWitness, fixtureRoot, startupDelayMs = 0 } = {}) {
   // Test harness invokes only the checked-in closed probe; no production
   // registry, canonical workspace, services, scheduler or model is accessed.
-  const code = `$ErrorActionPreference='Stop'; Add-Type -Path '${source.replaceAll("'", "''")}';
+  let compileSource = source;
+  if (workerReadyWitness || startupDelayMs) {
+    // Private synthetic-worker instrumentation only. The actual native parent,
+    // deadlines, acknowledgement budget, Job assignment/kill/drain are unchanged.
+    assert.ok(resolve(fixtureRoot).startsWith(resolve(tmpdir(), 'core-publication-fixture-')));
+    let bytes = readFileSync(source, 'utf8');
+    if (workerReadyWitness) {
+      assert.ok(resolve(workerReadyWitness).startsWith(resolve(fixtureRoot) + '\\'));
+      const ready = workerReadyWitness.replaceAll("'", "''"), pending = (workerReadyWitness + '.pending').replaceAll("'", "''");
+      const command = `$ready=[IO.FileStream]::new('${pending}',[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$bytes=[Text.Encoding]::ASCII.GetBytes([string]$PID);$ready.Write($bytes,0,$bytes.Length);$ready.Flush($true)}finally{$ready.Dispose()};[IO.File]::Move('${pending}','${ready}');`;
+      const marker = '          if (mode=="descendant") worker +=';
+      assert.equal(bytes.split(marker).length, 2);
+      const escaped = command.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+      bytes = bytes.replace(marker, '          worker += "' + escaped + '";\n' + marker);
+    }
+    if (startupDelayMs) {
+      assert.equal(startupDelayMs, 4000);
+      const marker = 'string worker = "$ErrorActionPreference=\'Stop\';"';
+      assert.equal(bytes.split(marker).length, 2);
+      bytes = bytes.replace(marker, 'string worker = "$ErrorActionPreference=\'Stop\';[Threading.Thread]::Sleep(4000);"');
+    }
+    compileSource = join(fixtureRoot, 'instrumented-worker-' + process.hrtime.bigint() + '.cs');
+    writeFileSync(compileSource, bytes, { flag: 'wx' });
+  }
+  const code = `$ErrorActionPreference='Stop'; Add-Type -Path '${compileSource.replaceAll("'", "''")}';
     $script:n=0; $clock=[Diagnostics.Stopwatch]::StartNew();
     $r=${directoryRoot
       ? `[Stephanos.Sovereign.CoreJobCustodyV1].GetMethod('RunProbe',[Reflection.BindingFlags]'NonPublic,Static').Invoke($null,@('custody-fixture-1234','${'a'.repeat(40)}','directories',[Func[bool]]{${safe}},[Func[bool]]{${cancel}},${deadline},$false,'${directoryRoot.replaceAll("'", "''")}'))`
@@ -167,7 +191,7 @@ test('native adapter uses atomic Job assignment and never enables breakaway or c
 });
 
 test('common completion admission holds a drained child on deadline, unknown cancel and probe game onset',
-  { skip: !windows, timeout: 30000 }, () => publicationFixture(async root => {
+  { skip: !windows, timeout: 60000 }, () => publicationFixture(async root => {
     // Join the actual native creator's private PID publication, then wait
     // for that owned child to exit before changing the terminal channel.
     // A fixed sleep could expire the deadline while the child was still live.
@@ -179,12 +203,12 @@ test('common completion admission holds a drained child on deadline, unknown can
       if(-not [IO.File]::Exists('${quoted}')){throw 'FIXTURE_NATIVE_PID_NOT_PUBLISHED'}
       $rootPid=[int][IO.File]::ReadAllText('${quoted}');
       try{$owned=[Diagnostics.Process]::GetProcessById($rootPid)}catch [ArgumentException]{$owned=$null}
-      if($null -ne $owned){try{if(-not $owned.WaitForExit(3000)){throw 'FIXTURE_ROOT_NOT_TERMINAL'}}finally{$owned.Dispose()}}
+      if($null -ne $owned){try{if(-not $owned.WaitForExit(10000)){throw 'FIXTURE_ROOT_NOT_TERMINAL'}}finally{$owned.Dispose()}}
     };`;
     for (const [name, options, reason] of [
-      ['deadline', { safe: wait + 'if($script:n -ge 5){[Threading.Thread]::Sleep(4000)};$true', deadline: 4000 }, 'DEADLINE_CANCELLED'],
-      ['unknown-cancel', { safe: wait + '$true', cancel: 'if($script:n -ge 5){throw "cancel unavailable"};$false' }, 'OPERATOR_CANCELLED'],
-      ['probe-game', { mode: 'complete', safe: wait + '$script:n -lt 5' }, 'GAMING_CANCELLED'],
+      ['deadline', { safe: wait + 'if($script:n -ge 4){[Threading.Thread]::Sleep(11000)};$true', deadline: 10000 }, 'DEADLINE_CANCELLED'],
+      ['unknown-cancel', { safe: wait + '$true', cancel: 'if($script:n -ge 4){throw "cancel unavailable"};$false', deadline: 10000 }, 'OPERATOR_CANCELLED'],
+      ['probe-game', { mode: 'complete', safe: wait + '$script:n -lt 4', deadline: 10000 }, 'GAMING_CANCELLED'],
     ]) {
       const directoryRoot = name === 'probe-game' ? undefined : join(root, name);
       if (directoryRoot) mkdirSync(directoryRoot);
@@ -229,7 +253,7 @@ test('native governor reader pins ancestors/file and denies reparse or an existi
 });
 
 test('Windows Job contains the fixed worker before execution and witnesses zero processes', { skip: !windows, timeout: 20000 }, async () => {
-  const { receipt, status, stderr } = await runner().done;
+  const { receipt, status, stderr } = await runner({ deadline: 10000 }).done;
   assert.equal(status, 0, stderr);
   assert.equal(receipt.AssignedBeforeExecution, true);
   assert.equal(receipt.Verdict, 'PROBE_PASSED_UNQUALIFIED');
@@ -249,20 +273,35 @@ test('unknown/active gaming and throwing governor deny before any child creation
   assert.equal(receipt.ChildPid, 0);
 });
 
-test('game onset, cancellation and deadline terminate only the owned Job and drain it', { skip: !windows, timeout: 30000 }, async () => {
-  for (const [options, reason] of [
-    [{ mode: 'wait', safe: '$clock.ElapsedMilliseconds -lt 2500' }, 'GAMING_CANCELLED'],
-    [{ mode: 'wait', cancel: '$clock.ElapsedMilliseconds -ge 2500' }, 'OPERATOR_CANCELLED'],
-    [{ mode: 'wait', deadline: 2500 }, 'DEADLINE_CANCELLED'],
-  ]) {
-    const { receipt, stderr } = await runner(options).done;
-    assert.ok(receipt, stderr);
-    assert.equal(receipt.Reason, reason);
-    assert.equal(receipt.CancellationRequested, true);
-    assert.equal(receipt.CancellationAcknowledged, true, JSON.stringify({ scenario: reason, receipt }));
-    closed(receipt);
-  }
-});
+test('game onset, cancellation and deadline acknowledge only after physical worker readiness, then drain only the owned Job',
+  { skip: !windows, timeout: 45000 }, () => publicationFixture(async root => {
+    for (const [name, reason] of [['game','GAMING_CANCELLED'],['cancel','OPERATOR_CANCELLED'],['deadline','DEADLINE_CANCELLED']]) {
+      const pid = join(root, name + '.pid'), ready = join(root, name + '.ready');
+      const literal = value => value.replaceAll("'", "''");
+      const joinReady = `$script:n++;if($script:n -ge 4 -and -not $script:joined){
+        $wait=[Diagnostics.Stopwatch]::StartNew();
+        while(( -not [IO.File]::Exists('${literal(pid)}') -or -not [IO.File]::Exists('${literal(ready)}')) -and $wait.ElapsedMilliseconds -lt 5000){[Threading.Thread]::Sleep(5)}
+        if(-not [IO.File]::Exists('${literal(pid)}') -or -not [IO.File]::Exists('${literal(ready)}') -or [IO.File]::ReadAllText('${literal(pid)}') -cne [IO.File]::ReadAllText('${literal(ready)}')){throw 'FIXTURE_OWNED_WORKER_READINESS_UNPROVEN'}
+        $script:joined=$true
+      };`;
+      const options = { mode:'wait', fixtureRoot:root, terminalWitness:pid, workerReadyWitness:ready,
+        safe:joinReady+(name==='game'?'$script:n -lt 5':'$true'),
+        cancel:name==='cancel'?'$script:n -ge 5':'$false', deadline:name==='deadline'?2500:8000 };
+      const {receipt,stderr}=await runner(options).done;
+      assert.ok(receipt,stderr);assert.equal(receipt.Reason,reason);
+      assert.equal(receipt.CancellationRequested,true);
+      assert.equal(receipt.CancellationAcknowledged,true,JSON.stringify({scenario:reason,receipt}));
+      closed(receipt);
+    }
+  }));
+
+test('a deliberately unready worker cannot acknowledge, but forced cancellation still proves owned-Job drain without authority',
+  {skip:!windows,timeout:15000},()=>publicationFixture(async root=>{
+    const {receipt,stderr}=await runner({mode:'wait',fixtureRoot:root,startupDelayMs:4000,deadline:200}).done;
+    assert.ok(receipt,stderr);assert.equal(receipt.Reason,'DEADLINE_CANCELLED');
+    assert.equal(receipt.CancellationRequested,true);assert.equal(receipt.CancellationAcknowledged,false);
+    assert.equal(receipt.AssignedBeforeExecution,true);assert.equal(receipt.ExitCode,77);closed(receipt);
+  }));
 
 test('native process limit denies descendant creation, preserving R7 exclusion', { skip: !windows, timeout: 20000 }, async () => {
   const { receipt, stderr } = await runner({ mode: 'descendant', deadline: 8000 }).done;

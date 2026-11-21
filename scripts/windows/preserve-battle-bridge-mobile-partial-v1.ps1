@@ -29,7 +29,7 @@ namespace Stephanos.Sovereign {
  using Microsoft.Win32;
  using Microsoft.Win32.SafeHandles;
 
- public static class MobilePartialPreservationV1 {
+ public static partial class MobilePartialPreservationV1 {
   const string Parent=@"C:\Program Files\Stephanos";
   const string Root=Parent+@"\SovereignMobileInstallerV1";
   const string Key="Stephanos.SovereignMobileInstallerV1.Receipt";

@@ -125,6 +125,7 @@ namespace Stephanos.Sovereign {
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
 
+    internal static NamedPipeServerStream OpenManualEnrollmentExclusionV2(string sid) {return CreateServer(PipeName,sid);}
     static NamedPipeServerStream CreateServer(string name,string sid) {
       if(name!=PipeName && !Regex.IsMatch(name??"","\\AStephanos\\.MobileInstallFixture\\.[a-f0-9]{32}\\z"))
         throw new InvalidOperationException("MOBILE_PIPE_NAME_UNPROVEN");

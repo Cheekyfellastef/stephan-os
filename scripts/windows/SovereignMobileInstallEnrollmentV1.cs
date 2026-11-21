@@ -23,10 +23,14 @@ namespace Stephanos.Sovereign {
     internal const string ReceiptKeyName="Stephanos.SovereignMobileInstallerV1.Receipt";
     const string Prefix="STEPHANOS_MOBILE_INSTALL_ENROLLMENT_V1";
     const string Domain="stephanos.mobile-install-enrollment-certificate.v1\0";
+    const string PrefixV2="STEPHANOS_MOBILE_INSTALL_ENROLLMENT_V2",DomainV2="stephanos.mobile-install-enrollment-certificate.v2\0";
     static readonly UTF8Encoding Utf8=new UTF8Encoding(false,true);
     static readonly string[] Keys={"repository","machineHash","operatorSid","generation","credentialBindingSha256",
       "receiptPublicKeySpki","helperSha256","sourceHead","sourceTree","packageSha256","closureSha256",
       "releaseProofSha256","bootstrapSha256","qualificationEvidenceSha256","issuedAtUtc"};
+    static readonly string[] KeysV2={"repository","machineHash","operatorSid","generation","credentialBindingSha256",
+      "receiptPublicKeySpki","helperSha256","sourceHead","sourceTree","packageSha256","closureSha256",
+      "releaseProofSha256","bootstrapSha256","qualificationEvidenceSha256","authorizationSha256","issuedAtUtc"};
     internal readonly string MachineHash,OperatorSid,CredentialBindingSha256,SourceHead,SourceTree;
     internal readonly string PackageSha256,ClosureSha256,ReleaseProofSha256,BootstrapSha256,EnrollmentJson;
     internal readonly long Generation;
@@ -93,7 +97,7 @@ namespace Stephanos.Sovereign {
         if(!permit.PermitDataVerified || !permit.ProtectedStorageObserved || held.Binding.Generation!=permit.EnrollmentGeneration ||
           held.Binding.MachineHash!=permit.MachineHash || held.Binding.OperatorSid!=permit.OperatorSid)
           Deny("MOBILE_CLIENT_PROTECTED_ENROLLMENT_UNPROVEN");
-        VerifyCertificateV1(held.Certificate,held.Binding.ReceiptPublicKeySpki,Hash(held.HelperBytes),held.Binding,permit);
+        VerifyCertificateV2(held.Certificate,held.Binding.ReceiptPublicKeySpki,Hash(held.HelperBytes),held.Binding,permit,held.Authorization);
         return held.EnrollmentJson;
       }
     }
@@ -111,20 +115,29 @@ namespace Stephanos.Sovereign {
         {"issuedAtUtc",issuedAtUtc.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",CultureInfo.InvariantCulture)}};
       string body=Prefix+"\n";foreach(string key in Keys)body+=key+"="+values[key]+"\n";return body;
     }
+    internal static string CertificateBodyForEnrollmentV2(SovereignMobileInstallAssertionV1.MobileInstallEnrollmentBindingV1 binding,
+      MobileInstallReleaseInspectionV1 permit,string helperSha256,MobileInstallEnrollmentAuthorizationV2 authorization,DateTime issuedAtUtc) {
+      if(authorization==null)Deny("MOBILE_ENROLLMENT_AUTHORIZATION_REQUIRED");
+      authorization.VerifyBinding(binding,permit);authorization.VerifySigningTime(issuedAtUtc);
+      string original=CertificateBodyForEnrollmentV1(binding,permit,helperSha256,issuedAtUtc);
+      return original.Replace(Prefix+"\n",PrefixV2+"\n").Replace("issuedAtUtc=","authorizationSha256="+authorization.Digest+"\nissuedAtUtc=");
+    }
     static Dictionary<string,string> Certificate(string wire,out string body,out byte[] signature) {
       if(wire==null || wire.Length>8192)Deny("MOBILE_ENROLLMENT_CERTIFICATE_BOUND");
       foreach(char ch in wire)if(ch!='\n' && (ch<32 || ch>126))Deny("MOBILE_ENROLLMENT_CERTIFICATE_WIRE");
       string[] lines=wire.Split('\n');
-      if(lines.Length!=Keys.Length+3 || lines[0]!=Prefix || lines[lines.Length-1]!="")Deny("MOBILE_ENROLLMENT_CERTIFICATE_WIRE");
+      bool v2=lines.Length>0 && lines[0]==PrefixV2;string[] keys=v2?KeysV2:Keys;string prefixVersion=v2?PrefixV2:Prefix;
+      if(lines.Length!=keys.Length+3 || lines[0]!=prefixVersion || lines[lines.Length-1]!="")Deny("MOBILE_ENROLLMENT_CERTIFICATE_WIRE");
       var fields=new Dictionary<string,string>(StringComparer.Ordinal);
-      for(int i=0;i<Keys.Length;i++) {
-        string prefix=Keys[i]+"=";if(!lines[i+1].StartsWith(prefix,StringComparison.Ordinal))Deny("MOBILE_ENROLLMENT_CERTIFICATE_KEYS");
-        fields.Add(Keys[i],lines[i+1].Substring(prefix.Length));
+      for(int i=0;i<keys.Length;i++) {
+        string prefix=keys[i]+"=";if(!lines[i+1].StartsWith(prefix,StringComparison.Ordinal))Deny("MOBILE_ENROLLMENT_CERTIFICATE_KEYS");
+        fields.Add(keys[i],lines[i+1].Substring(prefix.Length));
       }
       if(fields["repository"]!="Cheekyfellastef/stephan-os")Deny("MOBILE_ENROLLMENT_CERTIFICATE_REPOSITORY");
       foreach(string key in new[]{"machineHash","credentialBindingSha256","helperSha256","packageSha256","closureSha256",
         "releaseProofSha256","bootstrapSha256","qualificationEvidenceSha256"})
         if(!Is(fields[key],"\\A[a-f0-9]{64}\\z"))Deny("MOBILE_ENROLLMENT_CERTIFICATE_DIGEST");
+      if(v2 && !Is(fields["authorizationSha256"],"\\A[a-f0-9]{64}\\z"))Deny("MOBILE_ENROLLMENT_CERTIFICATE_DIGEST");
       foreach(string key in new[]{"sourceHead","sourceTree"})if(!Is(fields[key],"\\A[a-f0-9]{40}\\z"))Deny("MOBILE_ENROLLMENT_CERTIFICATE_SOURCE");
       long generation;
       if(!Is(fields["generation"],"\\A[1-9][0-9]{0,15}\\z") || !Int64.TryParse(fields["generation"],out generation) || generation>9007199254740991L ||
@@ -134,13 +147,13 @@ namespace Stephanos.Sovereign {
       if(!DateTime.TryParseExact(fields["issuedAtUtc"],"yyyy-MM-dd'T'HH:mm:ss.fff'Z'",CultureInfo.InvariantCulture,
          DateTimeStyles.AssumeUniversal|DateTimeStyles.AdjustToUniversal,out issued) || issued>DateTime.UtcNow.AddSeconds(5))
         Deny("MOBILE_ENROLLMENT_CERTIFICATE_TIME");
-      string encoded=lines[Keys.Length+1];
+      string encoded=lines[keys.Length+1];
       if(!encoded.StartsWith("signature=",StringComparison.Ordinal))Deny("MOBILE_ENROLLMENT_CERTIFICATE_SIGNATURE");
       encoded=encoded.Substring(10);
       if(!Is(encoded,"\\A[A-Za-z0-9_-]{86}\\z"))Deny("MOBILE_ENROLLMENT_CERTIFICATE_SIGNATURE");
       signature=Convert.FromBase64String(encoded.Replace('-','+').Replace('_','/')+"==");
       if(signature.Length!=64 || Url64(signature)!=encoded)Deny("MOBILE_ENROLLMENT_CERTIFICATE_SIGNATURE");
-      body=Prefix+"\n";foreach(string key in Keys)body+=key+"="+fields[key]+"\n";
+      body=prefixVersion+"\n";foreach(string key in keys)body+=key+"="+fields[key]+"\n";
       return fields;
     }
     // Structural/signature inspection only; production qualification additionally
@@ -158,7 +171,22 @@ namespace Stephanos.Sovereign {
         Deny("MOBILE_ENROLLMENT_CERTIFICATE_BINDING");
       using(var key=SovereignMobileInstallAssertionV1.ReadP256PublicKeyV1(expectedSpki))
       using(var verifier=new ECDsaCng(key))using(var sha=SHA256.Create())
-        if(!verifier.VerifyHash(sha.ComputeHash(Utf8.GetBytes(Domain+body)),signature))Deny("MOBILE_ENROLLMENT_CERTIFICATE_SIGNATURE");
+        if(!verifier.VerifyHash(sha.ComputeHash(Utf8.GetBytes((fields.ContainsKey("authorizationSha256")?DomainV2:Domain)+body)),signature))Deny("MOBILE_ENROLLMENT_CERTIFICATE_SIGNATURE");
+    }
+    // Production qualification always requires the new authorization-bound
+    // certificate. Legacy structural fixtures do not qualify a live enrollment.
+    internal static void VerifyCertificateV2(string wire,string spki,string helper,
+      SovereignMobileInstallAssertionV1.MobileInstallEnrollmentBindingV1 binding,MobileInstallReleaseInspectionV1 permit,
+      MobileInstallEnrollmentAuthorizationV2 authorization) {
+      if(authorization==null)Deny("MOBILE_ENROLLMENT_AUTHORIZATION_REQUIRED");
+      VerifyCertificateV1(wire,spki,helper,binding,permit);
+      string body;byte[] signature;var fields=Certificate(wire,out body,out signature);
+      if(!fields.ContainsKey("authorizationSha256") || fields["authorizationSha256"]!=authorization.Digest)
+        Deny("MOBILE_ENROLLMENT_AUTHORIZATION_BINDING");
+      authorization.VerifyBinding(binding,permit);
+      DateTime signed=DateTime.ParseExact(fields["issuedAtUtc"],"yyyy-MM-dd'T'HH:mm:ss.fff'Z'",CultureInfo.InvariantCulture,
+        DateTimeStyles.AssumeUniversal|DateTimeStyles.AdjustToUniversal);
+      authorization.VerifySigningTime(signed);
     }
     internal static MobileInstallQualifiedEnrollmentV1 OpenProtected() {
       MobileInstallEnrollmentFilesV1 files=null;MobileInstallReleaseInspectionV1 release=null;SovereignMobileInstallAnchorV1 anchor=null;
@@ -168,7 +196,7 @@ namespace Stephanos.Sovereign {
         if(!release.PermitDataVerified || !release.ProtectedStorageObserved || release.EnrollmentGeneration!=files.Binding.Generation ||
            release.MachineHash!=files.Binding.MachineHash || release.OperatorSid!=files.Binding.OperatorSid)
           Deny("MOBILE_INSTALLER_RELEASE_PERMIT_UNPROVEN");
-        VerifyCertificateV1(files.Certificate,files.Binding.ReceiptPublicKeySpki,Hash(files.HelperBytes),files.Binding,release);
+        VerifyCertificateV2(files.Certificate,files.Binding.ReceiptPublicKeySpki,Hash(files.HelperBytes),files.Binding,release,files.Authorization);
         anchor=SovereignMobileInstallAnchorV1.OpenProtected();
         using(var journal=SovereignMobileInstallJournalV1.OpenProtected()) { }
         return new MobileInstallQualifiedEnrollmentV1(files,release,anchor);
@@ -181,6 +209,7 @@ namespace Stephanos.Sovereign {
   }
   internal sealed class MobileInstallEnrollmentFilesV1 : IDisposable {
     internal string Certificate,EnrollmentJson;
+    internal MobileInstallEnrollmentAuthorizationV2 Authorization;
     internal byte[] HelperBytes;
     internal SovereignMobileInstallAssertionV1.MobileInstallEnrollmentBindingV1 Binding;
     internal FixedRuntimeIdentityPinsV1 Pins;
@@ -203,17 +232,25 @@ namespace Stephanos.Sovereign {
     static object MobileComGetV1(object value,string name) {return value.GetType().InvokeMember(name,BindingFlags.GetProperty,null,value,null,CultureInfo.InvariantCulture);}
     static object MobileComCallV1(object value,string name,params object[] args) {return value.GetType().InvokeMember(name,BindingFlags.InvokeMethod,null,value,args,CultureInfo.InvariantCulture);}
     static void AssertMobileTaskDaclV1(string sddl) {
-      if(sddl==null || sddl.Length>8192)throw new InvalidOperationException("MOBILE_INSTALLER_TASK_UNPROVEN");
+      if(sddl==null || sddl.Length>8192)throw new InvalidOperationException("MOBILE_INSTALLER_TASK_DACL_UNPROVEN");
       var acl=new RawSecurityDescriptor(sddl);
       if(acl.Owner==null || (acl.Owner.Value!="S-1-5-18" && acl.Owner.Value!="S-1-5-32-544") || acl.DiscretionaryAcl==null)
-        throw new InvalidOperationException("MOBILE_INSTALLER_TASK_UNPROVEN");
+        throw new InvalidOperationException("MOBILE_INSTALLER_TASK_DACL_UNPROVEN");
       foreach(GenericAce item in acl.DiscretionaryAcl) {
         var ace=item as CommonAce;
         if(ace==null || ace.IsCallback || (ace.AceFlags&AceFlags.InheritOnly)!=0 ||
            (ace.AceQualifier==AceQualifier.AccessAllowed && (ace.AccessMask&0x500d0156)!=0 &&
             ace.SecurityIdentifier.Value!="S-1-5-18" && ace.SecurityIdentifier.Value!="S-1-5-32-544"))
-          throw new InvalidOperationException("MOBILE_INSTALLER_TASK_UNPROVEN");
+          throw new InvalidOperationException("MOBILE_INSTALLER_TASK_DACL_UNPROVEN");
       }
+    }
+    internal static void VerifyMobileTaskPrincipalV2(string owner,string sid) {
+      if(String.IsNullOrEmpty(owner) || owner.Length>256)throw new InvalidOperationException("MOBILE_INSTALLER_TASK_PRINCIPAL_UNPROVEN");
+      // Task Scheduler can return a local short name, qualified account or SID.
+      // Resolve through Windows; never accept matching name text as identity.
+      SecurityIdentifier resolved=owner.StartsWith("S-1-",StringComparison.Ordinal)?new SecurityIdentifier(owner):
+        (SecurityIdentifier)new NTAccount(owner).Translate(typeof(SecurityIdentifier));
+      if(resolved.Value!=sid)throw new InvalidOperationException("MOBILE_INSTALLER_TASK_PRINCIPAL_UNPROVEN");
     }
     static void CheckMobileTaskV1(string sid,string account) {
       var held=new List<object>();
@@ -225,20 +262,20 @@ namespace Stephanos.Sovereign {
         object definition=MobileComGetV1(task,"Definition");held.Add(definition);
         object principal=MobileComGetV1(definition,"Principal");held.Add(principal);
         string owner=Convert.ToString(MobileComGetV1(principal,"UserId"),CultureInfo.InvariantCulture);
+        VerifyMobileTaskPrincipalV2(owner,sid);
         object actions=MobileComGetV1(definition,"Actions");held.Add(actions);
         object triggers=MobileComGetV1(definition,"Triggers");held.Add(triggers);
         object settings=MobileComGetV1(definition,"Settings");held.Add(settings);
-        if((owner!=sid && !String.Equals(owner,account,StringComparison.OrdinalIgnoreCase)) ||
-           Convert.ToInt32(MobileComGetV1(principal,"LogonType"))!=3 || Convert.ToInt32(MobileComGetV1(principal,"RunLevel"))!=1 ||
+        if(Convert.ToInt32(MobileComGetV1(principal,"LogonType"))!=3 || Convert.ToInt32(MobileComGetV1(principal,"RunLevel"))!=1 ||
            Convert.ToInt32(MobileComGetV1(actions,"Count"))!=1 || Convert.ToInt32(MobileComGetV1(triggers,"Count"))!=0 ||
            Convert.ToInt32(MobileComGetV1(settings,"MultipleInstances"))!=2 || !Convert.ToBoolean(MobileComGetV1(settings,"Enabled")))
-          throw new InvalidOperationException("MOBILE_INSTALLER_TASK_UNPROVEN");
+          throw new InvalidOperationException("MOBILE_INSTALLER_TASK_DEFINITION_UNPROVEN");
         object action=actions.GetType().InvokeMember("Item",BindingFlags.GetProperty,null,actions,new object[]{1},CultureInfo.InvariantCulture);held.Add(action);
         if(Convert.ToInt32(MobileComGetV1(action,"Type"))!=0 ||
            !String.Equals(Convert.ToString(MobileComGetV1(action,"Path")),MobileInstallQualifiedEnrollmentV1.Helper,StringComparison.OrdinalIgnoreCase) ||
            Convert.ToString(MobileComGetV1(action,"Arguments"))!="" ||
            !String.Equals(Convert.ToString(MobileComGetV1(action,"WorkingDirectory")),MobileInstallQualifiedEnrollmentV1.Root,StringComparison.OrdinalIgnoreCase))
-          throw new InvalidOperationException("MOBILE_INSTALLER_TASK_UNPROVEN");
+          throw new InvalidOperationException("MOBILE_INSTALLER_TASK_ACTION_UNPROVEN");
       }finally {for(int i=held.Count-1;i>=0;i--)if(Marshal.IsComObject(held[i]))Marshal.FinalReleaseComObject(held[i]);}
     }
     internal static MobileInstallEnrollmentFilesV1 OpenMobileEnrollmentFilesV1() {
@@ -262,7 +299,9 @@ namespace Stephanos.Sovereign {
           string sid=identity.User.Value,account=identity.Name;
           var check=Task.Factory.StartNew(delegate {CheckMobileTaskV1(sid,account);});
           if(!check.Wait(5000))throw new InvalidOperationException("MOBILE_INSTALLER_TASK_OBSERVATION_TIMEOUT");
-          return new MobileInstallEnrollmentFilesV1 {EnrollmentJson=enrollment,Binding=binding,
+          MobileInstallEnrollmentAuthorizationV2 authorization;using(var permit=SovereignMobileInstallReleaseV1.OpenProtected())
+            authorization=ReadMobileAuthorizationV2(binding,permit,pins);
+          return new MobileInstallEnrollmentFilesV1 {EnrollmentJson=enrollment,Binding=binding,Authorization=authorization,
             Certificate=new UTF8Encoding(false,true).GetString(RuntimeReadPinnedV1(Path.Combine(root,"enrollment-certificate.v1"),8192,pins)),
             HelperBytes=RuntimeReadPinnedV1(MobileInstallQualifiedEnrollmentV1.Helper,2097152,pins),Pins=pins};
         }
