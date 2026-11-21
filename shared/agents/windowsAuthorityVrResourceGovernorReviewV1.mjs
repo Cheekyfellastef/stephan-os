@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { types } from 'node:util';
 
 export const WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1 = Object.freeze([
   'scripts/windows/run-vr-resource-governor.ps1',
@@ -21,12 +22,14 @@ const PATH = WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1[0];
 // Every other byte sequence requires a newly qualified source contract.
 // Changing these registrations is an approval-boundary self-change, not
 // independent review, runtime proof, or permission to merge/install.
+// Only pre-reviewer source contracts and reviewer-capable contracts with typed,
+// two-minute UTC lease proofs remain eligible. Revoked blobs are audit history only.
 const CURRENT_GOVERNOR_SOURCE_CONTRACTS = Object.freeze([
   Object.freeze({ blobSha: 'ae71e1e79ead63efeb5a4d73f4bce6a01ee0f1d9', size: 48838 }),
   Object.freeze({ blobSha: '9513dfe995a35087e1d715ef0c4dff4ca3578295', size: 49674 }),
+  Object.freeze({ blobSha: '844e5d11b74a7fa864c0160f76fffd7addfbc221', size: 64032, reviewerReservation: true, corruptOverrideFailClosed: true, scalarOverrideSchema: true, typedPrepareLease: true, dateParsedUtcLease: true, objectRootOverride: true }),
 ]);
 
-const text = (value) => String(value ?? '').trim();
 const finding = (code, summary = code) => Object.freeze({
   severity: 'P0',
   code,
@@ -39,22 +42,57 @@ function blobSha(source) {
   return createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
 }
 
+
+function ownDataFields(value, fields) {
+  // Review evidence must be literal data, never getter-based executable claims.
+  return Boolean(value && typeof value === 'object' && !types.isProxy(value) && !Array.isArray(value)
+    && fields.every((key) => {
+      const field = Object.getOwnPropertyDescriptor(value, key);
+      return field && Object.hasOwn(field, 'value');
+    }));
+}
+
 function exactEscalation(analysis = {}) {
-  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+  // Review findings, counts and verdict must be explicit, not inherited P0 claims.
+  if (!ownDataFields(analysis, ['findings', 'counts', 'verdict'])
+    || (Object.hasOwn(analysis, 'clean') && !ownDataFields(analysis, ['clean']))) return false;
+  // A Proxy in an inherited prototype can execute its HasProperty trap when
+  // the optional clean identity is checked. Only literal wire-object roots
+  // are admitted; checking the direct prototype does not invoke its traps.
+  const analysisPrototype = Object.getPrototypeOf(analysis);
+  if (analysisPrototype !== null && analysisPrototype !== Object.prototype) return false;
+  // A Proxy can execute code even through a property-descriptor inspection.
+  // Review claims must be inert arrays, including on revoked proxies.
+  if (types.isProxy(analysis.findings)) return false;
+  const findings = Array.isArray(analysis.findings) ? analysis.findings : [];
+  const counts = analysis.counts;
+  // An accessor installed at array index zero is not a wire finding.
+  const finding = Object.getOwnPropertyDescriptor(findings, '0')?.value;
   return findings.length === 1
-    && text(findings[0]?.severity).toUpperCase() === 'P0'
-    && text(findings[0]?.code) === 'unsupported-high-risk-surface'
-    && text(findings[0]?.path) === PATH;
+    // A finding's P0 identity must be in its own wire fields, never a prototype.
+    && ownDataFields(finding, ['severity', 'code', 'path'])
+    && ownDataFields(counts, ['P0', 'P1', 'P2'])
+    && Object.keys(counts).length === 3
+    && counts.P0 === 1
+    && counts.P1 === 0
+    && counts.P2 === 0
+    && (!('clean' in analysis)
+      || (ownDataFields(analysis, ['clean'])
+        && (analysis.clean === undefined || analysis.clean === false)))
+    && analysis.verdict === 'findings'
+    && findings[0]?.severity === 'P0'
+    && findings[0]?.code === 'unsupported-high-risk-surface'
+    && findings[0]?.path === PATH;
 }
 
 function exactSource(source, repository, head) {
-  const body = typeof source?.content === 'string' ? source.content : '';
+  // Validate descriptors BEFORE reading content or hashing any supplied bytes.
+  if (!ownDataFields(source,
+    ['schemaVersion', 'repository', 'path', 'ref', 'exists', 'size', 'blobSha', 'content'])) return false;
+  const body = typeof source.content === 'string' ? source.content : '';
   const size = Buffer.byteLength(body, 'utf8');
   return Boolean(
-    source
-    && typeof source === 'object'
-    && !Array.isArray(source)
-    && source.schemaVersion === SOURCE_SCHEMA
+    source.schemaVersion === SOURCE_SCHEMA
     && source.repository === repository
     && source.path === PATH
     && source.ref === head
@@ -63,7 +101,8 @@ function exactSource(source, repository, head) {
     && source.size === size
     && size > 0
     && size <= 256 * 1024
-    && SHA.test(text(source.blobSha))
+    && typeof source.blobSha === 'string'
+    && SHA.test(source.blobSha)
     && source.blobSha === blobSha(body)
   );
 }
@@ -87,10 +126,17 @@ function parameterPrefix(source) {
 
 function reviewGovernor(source, findings) {
   const observed = { blobSha: blobSha(source), size: Buffer.byteLength(source, 'utf8') };
-  if (!CURRENT_GOVERNOR_SOURCE_CONTRACTS.some((entry) =>
-    entry.blobSha === observed.blobSha && entry.size === observed.size)) {
+  const sourceContract = CURRENT_GOVERNOR_SOURCE_CONTRACTS.find((entry) =>
+    entry.blobSha === observed.blobSha && entry.size === observed.size);
+  if (!sourceContract) {
     findings.push(finding('vr-governor-source-contract-unregistered',
       'Governor bytes do not match a registered complete source contract; unknown variants require independent qualification.'));
+    return;
+  }
+  // Future reviewer-capable registrations must not reintroduce an unbounded lease.
+  if (sourceContract.reviewerReservation && (!sourceContract.typedPrepareLease || !sourceContract.dateParsedUtcLease || !sourceContract.objectRootOverride)) {
+    findings.push(finding('vr-governor-reviewer-lease-contract-unqualified',
+      'Reviewer-capable source requires a typed UTC creation time and a maximum two-minute prepare lease.'));
     return;
   }
   for (const [literal, code, summary] of [
@@ -125,7 +171,19 @@ function reviewGovernor(source, findings) {
     ['Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'vr-governor-bounded-runtime-suppression-missing', 'The exact source contract permits only observed-PID stopping inside real-VR Ollama suppression.'],
     ["@($prepared.loadedModelsAfter).Count -gt 0", 'vr-governor-prepare-loaded-model-failclose-missing', 'VR preparation must fail closed if any model remains loaded.'],
     ["$prepared.zeroLocalModelInvariant -ne $true", 'vr-governor-prepare-invariant-failclose-missing', 'VR preparation must fail closed when zero-model proof is absent.'],
-  ]) requireLiteral(findings, source, literal, code, summary);
+    ["$RequestedProfileName -eq 'review-large-context'", 'vr-governor-reviewer-profile-not-fixed', 'Large-context reviewer reservation must use the fixed profile identity.'],
+    ["$process -eq 'SovereignReviewer'", 'vr-governor-reviewer-process-not-fixed', 'Large-context reservation must remain bound to SovereignReviewer.'],
+    ["$custom = if ($reviewerReservation) { $null } else { Get-ProfileOverride -RequestedProcessName $process }", 'vr-governor-reviewer-custom-profile-forbidden', 'Reviewer reservation must never inherit caller profile overrides.'],
+    ["phase = 'REVIEWING'", 'vr-governor-reviewer-phase-missing', 'Reviewer reservation must publish a distinct non-gaming REVIEWING phase.'],
+    ["reason = 'reviewer-resource-reservation'", 'vr-governor-reviewer-reason-missing', 'Reviewer reservation must publish its fixed bounded reason.'],
+    ["$ProfileName -eq 'review-large-context'", 'vr-governor-reviewer-prepare-gate-missing', 'PrepareGaming must separately verify the fixed reviewer reservation.'],
+    ["$ProcessName -ne 'SovereignReviewer' -or", 'vr-governor-reviewer-prepare-process-failclose-missing', 'Reviewer preparation must fail closed for any other process identity.'],
+  ]) {
+    // The original registered governors predate reviewer reservations. Apply
+    // these extra gates only to the exact registered reviewer-capable variant.
+    if (code.startsWith('vr-governor-reviewer-') && !sourceContract.reviewerReservation) continue;
+    requireLiteral(findings, source, literal, code, summary);
+  }
 
   requirePattern(
     findings,
@@ -134,6 +192,161 @@ function reviewGovernor(source, findings) {
     'vr-governor-requested-vr-profile-not-park-all',
     'An explicitly requested VR maximum profile must force park-all behavior.',
   );
+  if (sourceContract.reviewerReservation) {
+  requirePattern(
+    findings,
+    source,
+    /\$reviewerReservation = \[bool\]\([\s\S]{0,260}\$RequestedProfileName -eq 'review-large-context'[\s\S]{0,260}\$process -eq 'SovereignReviewer'[\s\S]{0,260}-not \$Signal\.active[\s\S]{0,260}\)/,
+    'vr-governor-reviewer-reservation-not-closed',
+    'Reviewer reservation must require the fixed profile, fixed process and an idle gaming signal.',
+  );
+  requirePattern(
+    findings,
+    source,
+    /if \(\$Signal\.active\) \{[\s\S]{0,180}Clear-PrepareLease[\s\S]{0,500}phase = 'GAMING'[\s\S]{0,1200}phase = 'REVIEWING'/,
+    'vr-governor-gaming-not-ahead-of-reviewer',
+    'A real game/headset signal must clear preparation and win before REVIEWING can be projected.',
+  );
+  requirePattern(
+    findings,
+    source,
+    /\[string\]\$profile\.name -eq 'review-large-context'[\s\S]{0,180}\[string\]\$profile\.processName -eq 'SovereignReviewer'[\s\S]{0,220}phase = 'REVIEWING'[\s\S]{0,160}active = \$false/,
+    'vr-governor-reviewer-effective-state-widened',
+    'REVIEWING must remain an inactive fixed-profile reservation rather than gaming authority.',
+  );
+  requireLiteral(findings, source,
+    "if ($phase -in @('GAMING','PREPARING')) { return $true }",
+    'vr-governor-reviewer-pending-game-cooldown-protection-missing',
+    'Reviewer reservation cannot displace gaming or preparation before the cooldown is published.');
+  requireLiteral(findings, source,
+    '$protectedUntilUtc = $nowUtc.AddSeconds($protectedSeconds)',
+    'vr-governor-reviewer-pending-cooldown-deadline-missing',
+    'The original gaming cooldown duration must be materialized before reviewer admission.');
+  requireLiteral(findings, source,
+    'Test-ReviewerReservationBlockedByCooldown -State $PriorState',
+    'vr-governor-reviewer-cooldown-protection-missing',
+    'A reviewer lease cannot displace a prior protected gaming cooldown.');
+  // Both admission and no-lease reconciliation must consult the *same*
+  // persisted-state consistency classifier. These are source-exact gates;
+  // the two reviewer-definition bootstrap P0 holds remain independent.
+  requireLiteral(findings, source,
+    "if ($phase -notin @('NORMAL','REVIEWING','GAMING','PREPARING','COOLDOWN')) { return $true }",
+    'vr-governor-reviewer-unknown-prior-state-failclosed-missing',
+    'An unknown persisted gaming phase must remain protected even when stored idle flags look safe.');
+  requireLiteral(findings, source,
+    "return [bool]($State.active -eq $true -or $State.localModelAllowed -eq $false)",
+    'vr-governor-reviewer-contradictory-idle-protection-missing',
+    'Contradictory NORMAL or REVIEWING flags must not release a gaming cooldown.');
+  requireLiteral(findings, source,
+    "return (Test-InconsistentGovernorIdleState -State $State)",
+    'vr-governor-reviewer-admission-classifier-missing',
+    'Reviewer admission must use the same protected-idle predicate as watcher reconciliation.');
+  requireLiteral(findings, source,
+    "$priorInconsistent = (Test-InconsistentGovernorIdleState -State $PriorState)",
+    'vr-governor-reviewer-unknown-phase-reconcile-missing',
+    'Watch and cancellation must classify persisted protected idle state before reconciliation.');
+  requireLiteral(findings, source,
+    "if ($priorWasProtected -and ($priorInconsistent -or $cooldownUntil -eq [DateTime]::MinValue)) {",
+    'vr-governor-reviewer-contradictory-expired-deadline-failclosed-missing',
+    'Contradictory or unknown states must reconstruct a cooldown even when a persisted deadline parses but is expired.');
+  requireLiteral(findings, source,
+    "throw 'GOVERNOR_PERSISTED_STATE_REQUIRED_FIELD_MISSING'",
+    'vr-governor-persisted-missing-required-fields-not-rejected',
+    'Present but incomplete persisted state must not become permissive NORMAL.');
+  requireLiteral(findings, source,
+    "throw 'GOVERNOR_PERSISTED_STATE_REQUIRED_FIELD_INVALID'",
+    'vr-governor-persisted-invalid-required-types-not-rejected',
+    'Wrong-typed persisted phase or permission flags must remain protected.');
+  requireLiteral(findings, source,
+    "throw 'GOVERNOR_PERSISTED_STATE_INVALID_SHAPE'",
+    'vr-governor-unreadable-state-shape-not-rejected',
+    'A persisted unreadable or non-object state cannot be mistaken for clean first boot.');
+  requireLiteral(findings, source,
+    "reason = 'unreadable-governor-state'",
+    'vr-governor-unreadable-state-failclosed-missing',
+    'Persisted source corruption must project UNKNOWN protection and a bounded cooldown.');
+  requireLiteral(findings, source,
+    '$recoveryProfileRequired = [bool](',
+    'vr-governor-recovery-profile-check-missing',
+    'Unknown or contradictory state must select a protective cooldown profile.');
+  requireLiteral(findings, source,
+    '($PriorState.localModelAllowed -eq $false -and -not [bool]$profile.parkAllModels)',
+    'vr-governor-persisted-model-denial-recovery-missing',
+    'Persisted model denial must not inherit a permissive profile.');
+  requirePattern(findings, source,
+    /if \(\$recoveryProfileRequired\) \{[\s\S]{0,270}lightweightOnly = \$true[\s\S]{0,95}parkAllModels = \$true/,
+    'vr-governor-recovery-park-all-contract-missing',
+    'Recovered corrupt or denied state must deny heavy and all local models.');
+  if (sourceContract.corruptOverrideFailClosed) {
+    const overrideReader = source.split('function Read-OverrideMode {')[1]
+      ?.split('function Write-OverrideMode {')[0] || '';
+    requireLiteral(findings, overrideReader,
+      "if (-not (Test-Path -LiteralPath $overridePath -PathType Leaf)) { return 'AUTO' }",
+      'vr-governor-override-absent-default-not-fixed',
+      'Only a genuinely absent override may default to AUTO.');
+    requireLiteral(findings, overrideReader,
+      "schemaVersion -eq 'stephanos.gaming-resource-override.v1'",
+      'vr-governor-override-schema-not-checked',
+      'A present override must validate its exact schema before granting AUTO.');
+    if (sourceContract.scalarOverrideSchema) {
+      requireLiteral(findings, overrideReader,
+        '$state.schemaVersion -is [string]',
+        'vr-governor-override-schema-type-not-checked',
+        'A collection-valued schema may not authorise FORCE_OFF or AUTO.');
+    }
+    if (sourceContract.objectRootOverride) {
+      requireLiteral(findings, overrideReader,
+        "$raw -notmatch '^\\s*\\{'",
+        'vr-governor-override-wire-root-unchecked',
+        'A persisted single-element JSON array may never become a scalar FORCE_OFF or AUTO.');
+      requireLiteral(findings, overrideReader,
+        '$state = $raw | ConvertFrom-Json',
+        'vr-governor-override-wire-parse-not-bound',
+        'Parse the same root-validated raw text, not an unverified pipeline.');
+    }
+    requireLiteral(findings, overrideReader,
+      '$state.mode -is [string]',
+      'vr-governor-override-mode-type-not-checked',
+      'Wrong-typed persisted override must never become AUTO.');
+    requireLiteral(findings, overrideReader,
+      "return 'FORCE_ON'",
+      'vr-governor-override-corrupt-failclosed-missing',
+      'Unreadable or invalid persisted override must retain forced gaming protection.');
+  }
+  if (sourceContract.typedPrepareLease) {
+    const leaseReader = source.split('function Read-PrepareLease {')[1]
+      ?.split('function Get-ProfileOverride {')[0] || '';
+    for (const [required, code] of [
+      ['$lease -isnot [pscustomobject]', 'vr-governor-prepare-lease-object-type-unchecked'],
+      ["$raw -notmatch '^\\s*\\{'", 'vr-governor-prepare-lease-root-array-unchecked'],
+      ['$lease.schemaVersion -isnot [string]', 'vr-governor-prepare-lease-schema-type-unchecked'],
+      ['$lease.active -isnot [bool]', 'vr-governor-prepare-lease-active-type-unchecked'],
+      ['$lease.processName -isnot [string]', 'vr-governor-prepare-lease-principal-type-unchecked'],
+      ['$lease.profileName -isnot [string]', 'vr-governor-prepare-lease-profile-type-unchecked'],
+      ['$lease.createdAtUtc -isnot [string]', 'vr-governor-prepare-lease-created-type-unchecked'],
+      ['$lease.expiresAtUtc -isnot [string]', 'vr-governor-prepare-lease-expiry-type-unchecked'],
+      ['$expiry -gt $created.AddMinutes(2)', 'vr-governor-prepare-lease-unbounded-expiry'],
+      ['$created -gt $nowUtc.AddSeconds(5)', 'vr-governor-prepare-lease-future-created'],
+      ['Clear-PrepareLease', 'vr-governor-prepare-lease-corrupt-cleanup-missing'],
+    ]) requireLiteral(findings, leaseReader, required, code,
+      'A persisted reviewer reservation must remain a typed, bounded two-minute lease.');
+    if (sourceContract.dateParsedUtcLease) {
+      for (const required of [
+        '$lease.createdAtUtc -isnot [datetime]',
+        '$lease.expiresAtUtc -isnot [datetime]',
+        '$lease.createdAtUtc.ToUniversalTime().ToString',
+        '$lease.expiresAtUtc.ToUniversalTime().ToString',
+        'TryParse($createdText', 'TryParse($expiryText',
+      ]) requireLiteral(findings, leaseReader, required,
+        'vr-governor-prepare-lease-date-normalization-missing',
+        'ISO UTC JSON strings parsed as DateTime must retain bounded scalar custody.');
+    }
+  }
+  requireLiteral(findings, source,
+    'REVIEWER_RESERVATION_BLOCKED_BY_GAMING_COOLDOWN',
+    'vr-governor-reviewer-cooldown-preflight-missing',
+    'The reviewer admission path must reject a protected cooldown before writing a lease.');
+  }
   requirePattern(
     findings,
     source,
@@ -183,8 +396,10 @@ function reviewGovernor(source, findings) {
 }
 
 export function analyzeWindowsAuthorityVrResourceGovernorReviewV1(input = {}) {
-  const repository = text(input.repository);
-  const sourceHead = text(input.sourceHead).toLowerCase();
+  // Fail closed rather than coercing collection identities into trusted source claims.
+  const hasIdentity = ownDataFields(input, ['repository', 'sourceHead', 'analysis']);
+  const repository = hasIdentity && typeof input.repository === 'string' ? input.repository : '';
+  const sourceHead = hasIdentity && typeof input.sourceHead === 'string' ? input.sourceHead : '';
   if (repository !== REPOSITORY || !SHA.test(sourceHead) || !exactEscalation(input.analysis)) {
     return Object.freeze({
       schemaVersion: SCHEMA,
@@ -201,15 +416,17 @@ export function analyzeWindowsAuthorityVrResourceGovernorReviewV1(input = {}) {
     });
   }
 
-  const sources = Array.isArray(input.sources) ? input.sources : [];
-  const source = sources.length === 1 ? sources[0] : null;
+  const sources = ownDataFields(input, ['sources']) && !types.isProxy(input.sources)
+    && Array.isArray(input.sources) ? input.sources : [];
+  const source = sources.length === 1 ? Object.getOwnPropertyDescriptor(sources, '0')?.value : null;
   const findings = [];
   const proofRefs = [];
   if (!exactSource(source, repository, sourceHead)) {
     findings.push(finding('windows-authority-vr-resource-governor-source-evidence-invalid'));
   } else {
     reviewGovernor(source.content, findings);
-    proofRefs.push(
+    // A rejected P0 source is never positive custody proof, even with a self-consistent envelope.
+    if (findings.length === 0) proofRefs.push(
       'proofs/windows-authority-vr-resource-governor/'
       + PATH + '@' + sourceHead + '#' + source.blobSha + ':' + source.size,
     );
