@@ -3543,7 +3543,12 @@ export function useAIConsole() {
       hostedCloudConfig: hostedCloudConfigOverlay,
     };
     const localDesktopBackendUrl = resolveLocalDesktopBackendBaseUrl(nextRuntimeConfig.frontendOrigin);
-    const effectiveRuntimeBaseUrl = shouldIgnoreHomeNodeForThisSession
+    const configuredLoopbackHost = extractHostname(nextRuntimeConfig.baseUrl);
+    // The explicitly configured loopback target is authoritative, even when
+    // the browser's own origin uses a different loopback hostname (IPv4/IPv6).
+    // Only replace a stale non-loopback home-node target for this local session.
+    const configuredLocalBackend = localDesktopSession && isLoopbackHost(configuredLoopbackHost.replace(/^\[|\]$/g, ''));
+    const effectiveRuntimeBaseUrl = shouldIgnoreHomeNodeForThisSession && !configuredLocalBackend
       ? localDesktopBackendUrl
       : nextRuntimeConfig.baseUrl;
     const compatibleBackendBaseUrl = resolveCompatibleTarget(
@@ -3572,11 +3577,13 @@ export function useAIConsole() {
           ? (shouldIgnoreHomeNodeForThisSession ? 'local-backend-session:operator-override' : 'local-backend-session')
           : (discovery.preferredNode?.source || discovery.source || nextRuntimeConfig.homeNode?.source || 'route-diagnostics'),
         preferredTarget,
-        actualTargetUsed: resolveCompatibleTarget(
-          discovery.preferredNode?.backendUrl || nextRuntimeConfig.homeNode?.backendUrl || '',
-          compatibleBackendBaseUrl,
-          { allowLoopback: localDesktopSession },
-        ),
+        actualTargetUsed: configuredLocalBackend
+          ? compatibleBackendBaseUrl
+          : resolveCompatibleTarget(
+            discovery.preferredNode?.backendUrl || nextRuntimeConfig.homeNode?.backendUrl || '',
+            compatibleBackendBaseUrl,
+            { allowLoopback: localDesktopSession },
+          ),
         restoreDecision: !localDesktopSession && isLoopbackHost(extractHostname(nextRuntimeConfig.baseUrl))
           ? 'Ignored loopback backend target for non-local session; using current home-node/network context instead.'
           : (shouldIgnoreHomeNodeForThisSession
@@ -3695,7 +3702,7 @@ export function useAIConsole() {
       const finalized = finalizeRuntimeContext(resolvedRuntimeContext, providerHealthRef.current, false);
       setApiStatus({
         state: 'offline',
-        label: 'Backend offline',
+        label: 'Backend connection unreachable from this browser',
         detail: uiError.output,
         target: resolvedRuntimeContext.target || runtimeConfig.target,
         baseUrl: resolvedRuntimeContext.baseUrl || runtimeConfig.baseUrl,
@@ -5494,7 +5501,7 @@ export function useAIConsole() {
             lastCheckedAt: new Date().toISOString(),
           };
         }
-        return { ...prev, state: 'offline', label: 'Backend offline', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() };
+        return { ...prev, state: 'offline', label: 'Backend connection unreachable from this browser', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() };
       });
 
       setCommandHistory((prev) => {

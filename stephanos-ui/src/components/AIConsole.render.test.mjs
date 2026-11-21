@@ -64,6 +64,37 @@ test('AIConsole renders mission console shell with internal message region and a
   assert.match(rendered, /Context Used/);
 });
 
+test('AIConsole renders an accessible collapsed Command Deck and reopens without losing its canonical shell', async () => {
+  const { renderAIConsole } = await importBundledModule(
+    path.join(srcRoot, 'test/renderAIConsoleEntry.jsx'),
+    aliases,
+    'ai-console-collapse-state',
+  );
+
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({ uiLayout: { commandDeck: false } });
+  const collapsed = renderAIConsole();
+  assert.match(collapsed, /data-panel-open="false"/);
+  assert.match(collapsed, /aria-expanded="false"/);
+  assert.match(collapsed, /aria-label="Expand Stephanos AI Chat Command Deck"/);
+  assert.doesNotMatch(collapsed, /data-testid="command-deck-answer-history"/);
+
+  globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({ uiLayout: { commandDeck: true } });
+  const expanded = renderAIConsole();
+  assert.match(expanded, /data-panel-open="true"/);
+  assert.match(expanded, /aria-expanded="true"/);
+  assert.match(expanded, /aria-label="Collapse Stephanos AI Chat Command Deck"/);
+  assert.match(expanded, /data-testid="command-deck-answer-history"/);
+  assert.match(expanded, /data-testid="command-deck-composer"/);
+});
+
+test('AIConsole Answer History viewport stretches to parent width without losing scroll containment', async () => {
+  const styles = await fs.readFile(path.join(srcRoot, 'styles.css'), 'utf8');
+  assert.match(styles, /\.mission-console-shell > \.mission-console-pane\[data-testid="command-deck-body"\] \{[^}]*width:\s*100%;/);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history \{[^}]*width:\s*100%;/);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history \{[^}]*box-sizing:\s*border-box;/);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history \{[^}]*overflow-y:\s*auto;/);
+});
+
 test('AIConsole scroll targeting binds to latest assistant answer pane ref rather than generic latest history item', async () => {
   const source = await fs.readFile(path.join(srcRoot, 'components/AIConsole.jsx'), 'utf8');
   assert.match(source, /latestAssistantAnswerRef/);

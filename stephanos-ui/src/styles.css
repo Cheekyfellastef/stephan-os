@@ -4617,8 +4617,19 @@ pre {
   min-height: 0;
 }
 
+/* Answer History fills the available width of its Command Deck parent. */
+.mission-console-shell > .mission-console-pane[data-testid="command-deck-body"] {
+  width: 100%;
+  min-width: 0;
+  align-self: stretch;
+}
+
 .mission-console-pane__body.mission-console__history {
   flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  align-self: stretch;
   min-height: clamp(20rem, 46vh, 34rem);
   max-height: clamp(28rem, 66vh, 50rem);
   height: auto;
