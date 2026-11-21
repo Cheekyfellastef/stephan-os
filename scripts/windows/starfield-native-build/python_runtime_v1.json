@@ -1,0 +1,199 @@
+{
+  "schemaVersion": "stephanos.starfield-python-runtime.v1",
+  "version": "3.14.10",
+  "archiveUrl": "https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-amd64.zip",
+  "archiveSha256": "90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159",
+  "archiveBytes": 12619664,
+  "expandedBytes": 24450611,
+  "files": [
+    {
+      "name": "python.exe",
+      "bytes": 106208,
+      "sha256": "d718435b892db4ad5b547d12fec61be7baa7faf7a58d857ea58053be24c7a000"
+    },
+    {
+      "name": "pythonw.exe",
+      "bytes": 104672,
+      "sha256": "36392dade900489423a15686340bf5f95a64d661d9322bb4c0e0f1d4e6a84cb7"
+    },
+    {
+      "name": "python314.dll",
+      "bytes": 6816992,
+      "sha256": "d8a06cc6ca3348925ea29e343e1c5c5895fe0bb433ff913e1cee44caf358aa6a"
+    },
+    {
+      "name": "python3.dll",
+      "bytes": 73952,
+      "sha256": "7bb0a7df2d5cb829319dd8d122039843e2a762361bb5a61bb5d24ca34f4040b5"
+    },
+    {
+      "name": "vcruntime140.dll",
+      "bytes": 178616,
+      "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"
+    },
+    {
+      "name": "vcruntime140_1.dll",
+      "bytes": 50112,
+      "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"
+    },
+    {
+      "name": "LICENSE.txt",
+      "bytes": 35407,
+      "sha256": "935cf13e19f8c31b497d20b05d73623431a226b230c3599bc30fa3348979bc68"
+    },
+    {
+      "name": "pyexpat.pyd",
+      "bytes": 202464,
+      "sha256": "87b0f7401749bd19bddf8872c17965a99142928fdefab0b513ded9c116f3da6b"
+    },
+    {
+      "name": "select.pyd",
+      "bytes": 33504,
+      "sha256": "0da869c017fd3231cfc1c1e4c4bef1bb7bf5cba38236e6d7bf1630c3507c5a1d"
+    },
+    {
+      "name": "unicodedata.pyd",
+      "bytes": 758496,
+      "sha256": "4c4e9f9e71e299a7e0093830e79f955f2b12b4eb0a6bb45003d42256b6e5985d"
+    },
+    {
+      "name": "winsound.pyd",
+      "bytes": 32992,
+      "sha256": "df409ab34d986e3379b55a42f88e3879f903be7dc952cf8c066f704b69511723"
+    },
+    {
+      "name": "_asyncio.pyd",
+      "bytes": 79072,
+      "sha256": "c833cfdab82da58163acdada02cdb2b92d42bc543e1b5519dbcbe4d3805a98fc"
+    },
+    {
+      "name": "_bz2.pyd",
+      "bytes": 87776,
+      "sha256": "9590a3f4b7c0801cd379341d40bb89b5dc9a4e232c9498b6f3bc6b5e99d4ae7f"
+    },
+    {
+      "name": "_ctypes.pyd",
+      "bytes": 143072,
+      "sha256": "adf71d85781a2fe937fcc44c0961498e2cf30849f9863ff7b5f7510817cea952"
+    },
+    {
+      "name": "_decimal.pyd",
+      "bytes": 290016,
+      "sha256": "9605f332fb52636d77a3125abc7e42ba22b3838dcf136d81f37fe5875cbd62d6"
+    },
+    {
+      "name": "_elementtree.pyd",
+      "bytes": 138976,
+      "sha256": "77707cb19dc91eb634d70f31b21022ee4c6ea5ce834c6952bc56ba00c6fd644d"
+    },
+    {
+      "name": "_hashlib.pyd",
+      "bytes": 68832,
+      "sha256": "9052a85ac9947afbbdfdd62b0cad7501b668e6107832cefaa4b76377d710dae0"
+    },
+    {
+      "name": "_lzma.pyd",
+      "bytes": 160992,
+      "sha256": "9ff9f63ad79f161722106e029b4c3afc6494848fd73f9bcc2ed5434a15c71bde"
+    },
+    {
+      "name": "_multiprocessing.pyd",
+      "bytes": 38624,
+      "sha256": "7606f4044ffc923eac208f5bc5acb1dea14fe8edf2efe08a63e11177f4c7a016"
+    },
+    {
+      "name": "_overlapped.pyd",
+      "bytes": 58080,
+      "sha256": "8f35ff35e76a2308ce0a50200fb01b55569f30952098239f7e000f3da1393a61"
+    },
+    {
+      "name": "_queue.pyd",
+      "bytes": 36576,
+      "sha256": "51a3d8e40b061db4fc77f9a3b18e6c2f912c4edf467e46c95ac325d35f2be4df"
+    },
+    {
+      "name": "_remote_debugging.pyd",
+      "bytes": 105184,
+      "sha256": "d4351e7236bd94e0a3242fdb6f26b914b9629b567ab63ec5f2a3661bcc1b7041"
+    },
+    {
+      "name": "_socket.pyd",
+      "bytes": 87776,
+      "sha256": "11f2ace2a37e59bf0f2fcfcc2523307408fa2e7f0aec561bc7531a8db130a83c"
+    },
+    {
+      "name": "_sqlite3.pyd",
+      "bytes": 133344,
+      "sha256": "33e91d0de7924180012c86efb17611ec589b93f90b321ed9ec3c2f4c99fae5be"
+    },
+    {
+      "name": "_ssl.pyd",
+      "bytes": 193248,
+      "sha256": "56fdbe70896e4b3c6d4e8897fad1d011129354172566832371289edca0d85a21"
+    },
+    {
+      "name": "_uuid.pyd",
+      "bytes": 28384,
+      "sha256": "ad949327a9730feefc7f2c14db9b1b43f4351df1aad3688dc1e68e4a23f7e81c"
+    },
+    {
+      "name": "_wmi.pyd",
+      "bytes": 40160,
+      "sha256": "c8f6705d2da1be12b10050a1311b7c865fd79f11404cfad1a70b3f8962051056"
+    },
+    {
+      "name": "_zoneinfo.pyd",
+      "bytes": 51936,
+      "sha256": "cbc875a462df36415e17c1ef182e50b541697e4d5ef9199c38737888de4317ad"
+    },
+    {
+      "name": "_zstd.pyd",
+      "bytes": 503520,
+      "sha256": "7a7b50c580428daf3d43c87b121988d2e8c7af9533fa2195f1aef8652fc2c489"
+    },
+    {
+      "name": "libcrypto-3.dll",
+      "bytes": 6021880,
+      "sha256": "75495fe0e079ab00d49be740d3c710a0b94e3f74f9648cb7cc9f768fc7f52319"
+    },
+    {
+      "name": "libffi-8.dll",
+      "bytes": 39696,
+      "sha256": "eff52743773eb550fcc6ce3efc37c85724502233b6b002a35496d828bd7b280a"
+    },
+    {
+      "name": "libssl-3.dll",
+      "bytes": 1308920,
+      "sha256": "8957182a9c385bfd9f3f790921de2ddc614cf91f99edbed4e9e5446a46504e32"
+    },
+    {
+      "name": "libtommath.dll",
+      "bytes": 95456,
+      "sha256": "b1834c6e5a2789cff054bafe96d6c96db18b3a9d72c4df88711ef9c7c8bc45d9"
+    },
+    {
+      "name": "sqlite3.dll",
+      "bytes": 1584864,
+      "sha256": "679cac0aa7dc1f9ba3c188565884c29a954b64f8bfbcc3b0e2163ee05b492b45"
+    },
+    {
+      "name": "python314.zip",
+      "bytes": 4158438,
+      "sha256": "4e97b321fe7f470c5a2cda0414f2b9caa896835edadf03eef251a0ebc3c24cc3"
+    },
+    {
+      "name": "python314._pth",
+      "bytes": 80,
+      "sha256": "2ed7ccda80e9e28ab5877902a9a325586c8a7b7b3e6731d944565bee082e216c"
+    },
+    {
+      "name": "python.cat",
+      "bytes": 602294,
+      "sha256": "1621ec5a5ade1c57d38c1a0ef26535c878fcbfd260205e8335177a35d31d13b2"
+    }
+  ],
+  "provenance": [
+    "https://www.python.org/downloads/release/python-31410/",
+    "https://www.python.org/ftp/python/3.14.10/python-3.14.10-embed-amd64.zip.spdx.json"
+  ]
+}

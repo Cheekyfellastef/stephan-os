@@ -123,3 +123,47 @@ test('rich response fails closed on secret-shaped direct text, invalid continuit
   assert.equal(unknown.valid, false);
   assert.deepEqual(unknown.errors, ['structured-extension-unknown-field:hiddenAuthority']);
 });
+
+test('ambient rich responses retain durable correlation without inventing a formal round', () => {
+  const ambientQuestion = question();
+  delete ambientQuestion.roundId;
+  const result = buildStephanosRichConversationalResponseV1({
+    question: ambientQuestion,
+    answer: answer(),
+    correlationId: 'ambient-conversation-001',
+  });
+  assert.equal(result.valid, true, result.errors.join(','));
+  assert.deepEqual(result.continuity, {
+    conversationMode: 'AMBIENT',
+    correlationId: 'ambient-conversation-001',
+    questionId: ambientQuestion.questionId,
+  });
+  assert.equal(Object.hasOwn(result.continuity, 'roundId'), false);
+  assert.equal(result.directAnswer, answer().answerText);
+  assert.equal(result.authority.commandExecutionAllowed, false);
+  assert.equal(result.authority.privateUiTruthAllowed, false);
+});
+
+test('rich-response lineage rejects missing or mixed correlation and accessor inputs without executing getters', () => {
+  const ambientQuestion = question();
+  delete ambientQuestion.roundId;
+  for (const input of [
+    { question: ambientQuestion, answer: answer() },
+    { question: question(), answer: answer(), correlationId: 'different-conversation' },
+  ]) {
+    const result = buildStephanosRichConversationalResponseV1(input);
+    assert.equal(result.valid, false);
+    assert.deepEqual(result.errors, ['continuity-identity-invalid']);
+  }
+  let getterCalls = 0;
+  for (const location of ['packet-correlation', 'question-round']) {
+    const input = { question: question(), answer: answer() };
+    Object.defineProperty(location === 'packet-correlation' ? input : input.question,
+      location === 'packet-correlation' ? 'correlationId' : 'roundId', {
+        enumerable: true,
+        get() { getterCalls += 1; return 'stephanos-round-001'; },
+      });
+    assert.equal(buildStephanosRichConversationalResponseV1(input).valid, false, location);
+  }
+  assert.equal(getterCalls, 0);
+});
