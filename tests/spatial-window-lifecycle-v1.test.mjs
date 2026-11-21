@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {request} from 'node:http';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -214,4 +214,16 @@ test('native request timeouts retain their bounded list and consent budgets afte
       assert.equal((await next).status,'windows');
     }finally{h.adapter.stop();}
   }
+});
+
+test('native consent never promises that Disconnect stops Voice in the original app',()=>{
+  // Source guard: a successful local capture stop cannot terminate original
+  // ChatGPT Voice, and an unconfirmed native stop must never claim that it did.
+  const source=readFileSync(new URL('../src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',import.meta.url),'utf8');
+  const consent=source.match(/const auto prompt=L"Allow the Spatial Workspace[\s\S]*?;\n/);
+  assert.ok(consent,'the real native consent prompt must remain inspectable');
+  assert.match(consent[0],/Disconnect requests stopping workspace capture and input only/);
+  assert.match(consent[0],/does not stop ChatGPT Voice or other audio in the original app/);
+  assert.match(consent[0],/stop Voice there separately/);
+  assert.doesNotMatch(consent[0],/Disconnect in the workspace to stop/);
 });
