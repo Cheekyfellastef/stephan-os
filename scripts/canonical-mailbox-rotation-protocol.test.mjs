@@ -339,3 +339,23 @@ test('rotation executor exception reports mailbox-rotation failure, never native
   assert.equal(JSON.stringify(result).includes('SENSITIVE_INTERNAL_EXCEPTION_MUST_NOT_LEAK'), false);
   assert.equal(JSON.stringify(result).includes('STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED'), false);
 });
+
+test('native FREEZE evidence read exceptions preserve DRAINING with a specific bounded blocker', async () => {
+  for (const [reader, blocker] of [
+    ['readActions', 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED'],
+    ['readComments', 'MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED'],
+  ]) {
+    const f = fixture();
+    f[reader] = async () => { throw new Error('PRIVATE_GITHUB_TOKEN_MUST_NEVER_LEAK'); };
+    const result = await executeMailboxRotationOnHost(command(), f);
+    assert.equal(result.ok, false, reader);
+    assert.equal(result.blocker, blocker, reader);
+    assert.equal(f.state.mailboxRotation.phase, 'DRAINING', reader);
+    assert.equal(f.state.mailboxRotation.drained, false, reader);
+    assert.equal(f.state.mailboxRotation.globalFencePublished, true, reader);
+    assert.equal(f.events[0].type, 'persist', reader);
+    assert.equal(f.events[1].type, 'fence', reader);
+    assert.equal(JSON.stringify(result).includes('PRIVATE_GITHUB_TOKEN_MUST_NEVER_LEAK'), false);
+    assert.equal(JSON.stringify(result).includes('STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED'), false);
+  }
+});
