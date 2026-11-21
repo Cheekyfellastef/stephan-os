@@ -15,7 +15,8 @@ if ($parseErrors.Count -ne 0) { throw ($parseErrors | Out-String) }
 
 $functionNames = @('Enter-StarfieldSplashOwner', 'Exit-StarfieldSplashOwner', 'New-MonitorProcessStartInfo', 'Start-MonitorProcess',
     'Read-MonitorProbeResult', 'Find-MonitorPython', 'Get-MonitorCustodyPaths', 'Test-MonitorCustodyPathPresent',
-    'Read-MonitorCustodyReceipt', 'Test-MonitorProviderCustody', 'Add-MonitorDetail', 'Update-HybridButton',
+    'Read-MonitorCustodyReceipt', 'Test-MonitorProviderCustody', 'Add-MonitorDetail',
+    'Get-MonitorDiagnosticField', 'Get-MonitorCleanupDiagnostics', 'Invoke-MonitorWaitingGameFocus', 'Update-HybridButton',
     'Set-MonitorProviderControls', 'Stop-MonitorTransport', 'Send-MonitorCommand',
     'Test-MonitorBooleanFields', 'Receive-MonitorEvent')
 $definitions = @{}
@@ -82,8 +83,12 @@ function Reset-MonitorFixture {
         ClosedReceived = $false; TransportFailed = $false; ProviderSlotReleased = $true; SafeToClose = $true
         DurableCustodyReleased = $true; DurableCustodyReason = 'fixture-no-custody'
         Busy = $false; Mode = 'ready'; AllowedActions = @('prepare', 'close'); ConfirmationToken = $null
-        RunId = $null; GameProcess = $null; Result = $null; DetailText = ''; StartedAtUtc = $null; ExitedAtUtc = $null
+        RunId = $null; GameProcess = $null; GameProcessIdentity = $null; WitnessedRunId = $null; Result = $null; DetailText = ''; FocusAttemptedRunId = ''; FocusAttemptCount = 0
+        LastCleanupDiagnosticKey = ''; StartedAtUtc = $null; ExitedAtUtc = $null
     }
+    $script:focusRetryTimer = [pscustomobject]@{ StartCalls = 0; StopCalls = 0 }
+    $focusRetryTimer | Add-Member -MemberType ScriptMethod -Name Start -Value { $this.StartCalls += 1 }
+    $focusRetryTimer | Add-Member -MemberType ScriptMethod -Name Stop -Value { $this.StopCalls += 1 }
     $script:vorpxProfileConfigured = $true
     $script:mutarProfileConfigured = $true
     $script:mutarPackageStaged = $true
@@ -163,6 +168,7 @@ try {
         Assert-True ($parseErrors.Count -eq 0) 'PowerShell parse errors'
         Assert-True ([Stephanos.Starfield.MonitorPipe]::QuoteArgument('a"b') -ceq '"a\"b"') 'Embedded quote escaping changed'
         Assert-True ([Stephanos.Starfield.MonitorPipe]::QuoteArgument('C:\folder with spaces\') -ceq '"C:\folder with spaces\\"') 'Trailing slash escaping changed'
+        Assert-True ([Stephanos.Starfield.MonitorPipe]::FocusBoundGame(0, '') -ceq 'game-identity-missing') 'The native focus helper lost its fail-closed process identity check'
     }
     Invoke-Fixture 'ready handshake cannot synthesize preparation or confirmation' {
         Reset-MonitorFixture
@@ -182,6 +188,7 @@ try {
     Invoke-Fixture 'waiting receipt requires the actual confirmation dispatch' {
         Reset-MonitorFixture
         Send-FixtureFrame (New-StateFrame 'waiting')
+        Assert-True ($monitorState.FocusAttemptCount -eq 1 -and $focusRetryTimer.StartCalls -eq 0) 'Unknown HWND identity caused an unbounded retry'
         Assert-True ($monitorState.Process.StandardInput.ToString().Length -eq 0) 'Waiting synthesized confirmation'
         Assert-True (Send-MonitorCommand -Command 'confirm') 'Explicit confirmation was refused'
         $sent = $monitorState.Process.StandardInput.ToString() | ConvertFrom-Json
@@ -192,12 +199,152 @@ try {
         Assert-True ($monitorState.Busy -and -not $monitorState.ProviderSlotReleased -and -not $monitorState.DurableCustodyReleased) 'Mutation was not reserved before writing'
         Assert-True (-not (Send-MonitorCommand -Command 'confirm')) 'Double click dispatched again'
     }
+    Invoke-Fixture 'same-run game identity drift is rejected before confirmation state changes' {
+        foreach ($variant in @('pid', 'birth')) {
+            Reset-MonitorFixture
+            Send-FixtureFrame (New-StateFrame 'waiting')
+            $changed = New-StateFrame 'waiting'
+            $changed.eventSequence = 2
+            if ($variant -ceq 'pid') { $changed.process.pid = 54322 }
+            else { $changed.process.createdFileTime = '134384678410182998' }
+            $correctRefusal = $false
+            try { Send-FixtureFrame $changed }
+            catch { $correctRefusal = $_.Exception.Message -ceq 'monitor-state-game-identity-drift' }
+            Assert-True $correctRefusal ('Native run identity changed without refusal: ' + $variant)
+            Assert-True ($monitorState.RunId -ceq ('1' * 32) -and $monitorState.GameProcess.pid -eq 54321 -and
+                $monitorState.GameProcess.createdFileTime -ceq '134384678410182997') 'Rejected drift replaced game identity'
+            Assert-True ($monitorState.ConfirmationToken -ceq ('2' * 32) -and
+                $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Rejected drift changed confirmation authority'
+        }
+    }
+    Invoke-Fixture 'null-process cleanup frame does not erase the same-run game identity' {
+        Reset-MonitorFixture
+        Send-FixtureFrame (New-StateFrame 'waiting')
+        $withoutGame = New-StateFrame 'waiting'
+        $withoutGame.eventSequence = 2
+        $withoutGame.process = $null
+        $withoutGame.allowedActions = @('cancel', 'close')
+        $withoutGame.confirmationToken = $null
+        Send-FixtureFrame $withoutGame
+        Assert-True (-not $monitorState.GameProcess -and
+            $monitorState.GameProcessIdentity.pid -eq 54321 -and
+            $monitorState.GameProcessIdentity.createdFileTime -ceq '134384678410182997') 'Cleanup frame erased the original game identity'
+        $retarget = New-StateFrame 'waiting'
+        $retarget.eventSequence = 3
+        $retarget.process.pid = 54322
+        $rejected = $false
+        try { Send-FixtureFrame $retarget }
+        catch { $rejected = $_.Exception.Message -ceq 'monitor-state-game-identity-drift' }
+        Assert-True $rejected 'Same-run process retarget after a null frame was accepted'
+        Assert-True ($monitorState.GameProcessIdentity.pid -eq 54321 -and
+            $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Rejected retarget changed identity or sent confirmation'
+    }
+    Invoke-Fixture 'one child cannot replace the native run ID after waiting or a null cleanup frame' {
+        foreach ($variant in @('direct', 'null-gap')) {
+            Reset-MonitorFixture
+            Send-FixtureFrame (New-StateFrame 'waiting')
+            Assert-True ($monitorState.WitnessedRunId -ceq ('1' * 32)) 'Initial run identity was not witnessed'
+            if ($variant -ceq 'null-gap') {
+                $missing = New-StateFrame 'waiting'
+                $missing.eventSequence = 2
+                $missing.runId = $null
+                $missing.process = $null
+                $missing.confirmationToken = $null
+                $missing.allowedActions = @('cancel', 'close')
+                Send-FixtureFrame $missing
+                Assert-True ($monitorState.WitnessedRunId -ceq ('1' * 32) -and
+                    $monitorState.GameProcessIdentity.pid -eq 54321) 'Null cleanup frame erased witnessed identities'
+            }
+            $changed = New-StateFrame 'waiting'
+            $changed.eventSequence = if ($variant -ceq 'null-gap') { 3 } else { 2 }
+            $changed.runId = '9' * 32
+            $changed.confirmationToken = '8' * 32
+            $rejected = $false
+            try { Send-FixtureFrame $changed }
+            catch { $rejected = $_.Exception.Message -ceq 'monitor-state-run-identity-drift' }
+            Assert-True $rejected ('Changed runId was admitted for the same child: ' + $variant)
+            Assert-True ($monitorState.WitnessedRunId -ceq ('1' * 32) -and
+                $monitorState.GameProcessIdentity.pid -eq 54321 -and
+                $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Rejected new run changed custody or dispatched input'
+        }
+    }
+    Invoke-Fixture 'a native game process without its run ID is rejected' {
+        Reset-MonitorFixture
+        $frame = New-StateFrame 'waiting'
+        $frame.runId = $null
+        $rejected = $false
+        try { Send-FixtureFrame $frame }
+        catch { $rejected = $_.Exception.Message -ceq 'monitor-state-process-without-run' }
+        Assert-True $rejected 'Unbound native game process was admitted'
+        Assert-True (-not $monitorState.WitnessedRunId -and -not $monitorState.GameProcessIdentity -and
+            $monitorState.Process.StandardInput.ToString().Length -eq 0) 'Invalid frame created native authority'
+    }
     Invoke-Fixture 'failed foreground transfer consumes neither token nor request sequence' {
         Reset-MonitorFixture
         Send-FixtureFrame (New-StateFrame 'waiting')
         $monitorState.Pipe.Permit = $false
         Assert-True (-not (Send-MonitorCommand -Command 'confirm')) 'Denied foreground still dispatched'
         Assert-True ($monitorState.RequestSequence -eq 0 -and $monitorState.ConfirmationToken -ceq ('2' * 32)) 'Rejected foreground consumed the confirmation'
+    }
+    Invoke-Fixture 'explicit cancel or close revokes queued foreground focus before monitor input closes' {
+        foreach ($terminal in @('cancel', 'close')) {
+            Reset-MonitorFixture
+            $monitorState.Mode = 'waiting'
+            $monitorState.RunId = '3' * 32
+            $monitorState.FocusAttemptedRunId = $monitorState.RunId
+            $monitorState.FocusAttemptCount = 1
+            $monitorState.GameProcess = [pscustomobject]@{ pid = 54321; createdFileTime = '134384678410182997' }
+            $monitorState.PrepareDispatched = $true
+            $monitorState.ProviderSlotReleased = $false
+            $monitorState.DurableCustodyReleased = $false
+            $monitorState.SafeToClose = $false
+            $focusRetryTimer.Start()
+            Assert-True (Send-MonitorCommand -Command $terminal) ('Terminal monitor request failed: ' + $terminal)
+            Assert-True ($monitorState.CloseSent -and $focusRetryTimer.StopCalls -eq 1 -and
+                $monitorState.Pipe.CloseCalls -eq 1) ('Terminal request retained focus timer or open input: ' + $terminal)
+            Assert-True (($monitorState.Pipe.InputAtClose | ConvertFrom-Json).command -ceq $terminal) 'Wrong flushed terminal command'
+            Invoke-MonitorWaitingGameFocus
+            Assert-True ($monitorState.FocusAttemptCount -eq 1 -and $focusRetryTimer.StopCalls -eq 2) 'Explicit stop retried game focus'
+            $lateFrame = New-StateFrame 'waiting'
+            Send-FixtureFrame $lateFrame
+            Assert-True ($monitorState.FocusAttemptCount -eq 1 -and $monitorState.FocusAttemptedRunId -ceq ('3' * 32)) 'Late waiting frame rearmed focus after terminal command'
+            Assert-True ($monitorState.Process.StandardInput.ToString().Length -gt 0 -and
+                $monitorState.Pipe.CloseCalls -eq 1) 'Late waiting frame dispatched or reopened input'
+        }
+    }
+    Invoke-Fixture 'broken transport stops foreground focus retry and retains provider custody' {
+        Reset-MonitorFixture
+        $monitorState.Mode = 'waiting'
+        $monitorState.RunId = '3' * 32
+        $monitorState.FocusAttemptedRunId = $monitorState.RunId
+        $monitorState.FocusAttemptCount = 1
+        $monitorState.GameProcess = [pscustomobject]@{ pid = 54321; createdFileTime = '134384678410182997' }
+        $monitorState.PrepareDispatched = $true
+        $monitorState.ProviderSlotReleased = $false
+        $monitorState.DurableCustodyReleased = $false
+        $monitorState.SafeToClose = $false
+        $focusRetryTimer.Start()
+        Stop-MonitorTransport -Reason 'fixture-transport-broken'
+        Assert-True ($monitorState.TransportFailed -and -not $monitorState.ProviderSlotReleased -and -not $monitorState.DurableCustodyReleased) 'Failure released provider custody'
+        Assert-True ($focusRetryTimer.StopCalls -eq 1 -and $monitorState.Pipe.CloseCalls -eq 1) 'Focus timer or input was not terminated'
+        Assert-True ($monitorState.FocusAttemptCount -eq 1) 'Failure retried focus'
+        Invoke-MonitorWaitingGameFocus
+        Assert-True ($monitorState.FocusAttemptCount -eq 1 -and $focusRetryTimer.StopCalls -eq 2) 'Failed transport still attempted native focus'
+        Assert-True ($monitorState.Process.StandardInput.ToString().Length -eq 0) 'Failed transport dispatched monitor input'
+    }
+    Invoke-Fixture 'offline cleanup shows a safe reason without dispatching another operation' {
+        Reset-MonitorFixture
+        $frame = New-StateFrame 'cleanup'
+        $frame.allowedActions = @('finish', 'cancel', 'close')
+        $frame.safeToClose = $false
+        $frame.providerSlotReleased = $false
+        $frame.unresolvedChild = $true
+        $frame.stage = 'CLEANUP_REQUIRED'
+        Send-FixtureFrame $frame
+        Assert-True ($monitorState.Process.StandardInput.ToString().Length -eq 0) 'Diagnostic read dispatched a command'
+        Assert-True ($detailsBox.Visible -and $detailsBox.Text -match 'Local cleanup diagnostic') 'Offline diagnostic did not appear'
+        Assert-True ($statusHint.Text -match 'Cleanup held:') 'Cleanup reason was not presented'
+        Assert-True (-not $vorpxButton.Enabled -and -not $mutarButton.Enabled) 'A diagnostic read released provider custody'
     }
     Invoke-Fixture 'wrong channel, sequence and child identities are rejected' {
         foreach ($case in @('channel', 'sequence', 'child', 'bridge', 'runner')) {
