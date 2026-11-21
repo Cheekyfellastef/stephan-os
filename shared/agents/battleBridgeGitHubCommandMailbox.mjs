@@ -350,8 +350,10 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
       : executeStephanosNativeCapacityPublisherInstallOnBattleBridge;
     return await executor(shape.command, options);
   } catch {
-    return fail(kind === 'environment'
-      ? 'OPERATOR_ENVIRONMENT_APPROVAL_EXECUTION_FAILED'
+    return fail(kind === 'mailbox-rotation'
+      ? 'MAILBOX_ROTATION_EXECUTION_FAILED'
+      : kind === 'environment'
+        ? 'OPERATOR_ENVIRONMENT_APPROVAL_EXECUTION_FAILED'
       : (kind === 'codex-dispatch' || kind === 'codex-readback')
         ? 'GUARDED_CODEX_EXECUTION_FAILED'
         : kind === 'sovereign-install'
