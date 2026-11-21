@@ -152,6 +152,28 @@ test('fresh ACCEPTED ownership keeps duplicate suppression until its fixed lease
   assert.deepEqual(state.consumedRequestIds, []);
 }));
 
+test('the larger state boundary does not admit a local terminal receipt above 256 KiB', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-oversized-terminal-request';
+  const accepted = acceptedReceipt(requestId, '2026-09-09T12:02:00.000Z');
+  await writeState(stateRoot, { consumedRequestIds: [], acceptedRequestIds: [requestId], lastAcceptedReceipt: accepted,
+    pendingReceiptPublications: [] });
+  const before = await readFile(join(stateRoot, 'state.json'), 'utf8');
+  const oversized = { ...doneReceipt(requestId, accepted.acceptedAt, '2026-09-09T12:02:05.000Z'), padding: 'x'.repeat(256 * 1024) };
+  for (const root of [stateRoot, receiptRoot]) {
+    const receiptPath = await writeReceiptAt(root, oversized);
+    assert.ok(Buffer.byteLength(await readFile(receiptPath, 'utf8'), 'utf8') > 256 * 1024);
+    const result = reconcileStaleAcceptedMailboxReceipts({
+      env, workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+      now: () => new Date('2026-09-09T12:06:00.000Z'),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.freshCount, 1);
+    assert.equal(result.reconciledCount, 0);
+    assert.equal(result.replayPerformed, false);
+    assert.equal(await readFile(join(stateRoot, 'state.json'), 'utf8'), before);
+  }
+}));
+
 test('accepted ownership outlives the guarded child, then expires without replay or duplicate mutation', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
   const requestId = 'accepted-heartbeat-lost-request-1';
   const receipt = acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z');
