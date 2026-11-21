@@ -6,9 +6,9 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
   const garden = buildSeedGardenProjectionV1({ observedAtUtc: '2026-10-04T19:00:00.000Z' });
   assert.equal(garden.schemaVersion, 'stephanos.seed-garden-projection.v1');
   assert.equal(garden.freshness, 'STATIC');
-  assert.equal(garden.highLevelSeedCount, 9);
+  assert.equal(garden.highLevelSeedCount, 10);
   assert.equal(garden.capabilitySeedCount, 15);
-  assert.equal(garden.seedCount, 24);
+  assert.equal(garden.seedCount, 25);
   assert.deepEqual(garden.highLevelSeeds.map((seed) => seed.seedId), [
     'starfield-vr-outcome-ownership',
     'stephanos-whole-system-capability-closure',
@@ -19,6 +19,7 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
     'stephanos-full-sovereignty-every-function',
     'workspace-integrity-provenance',
     'goal-conveyor-fleet-care',
+    'openclaw-local-standalone-continuous-excellence',
   ]);
   assert.equal(garden.highLevelSeeds[0].title, 'Starfield VR Excellence');
   assert.equal(garden.highLevelSeeds[0].northStar, 'Continuously improve Starfield into the best VR experience achievable on the Battle Bridge while preserving safe operator control.');
@@ -45,6 +46,9 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
   assert.match(garden.highLevelSeeds[7].northStar, /canonical source through transport and transformation/i);
   assert.equal(garden.highLevelSeeds[8].issue, '#2972');
   assert.equal(garden.highLevelSeeds[8].canonicalOwnerGoals.some((owner) => owner.issue === '#2961'), true);
+  assert.equal(garden.highLevelSeeds[9].issue, '#3094');
+  assert.equal(garden.highLevelSeeds[9].source, 'shared/runtime/openClawExcellenceSeedV1.mjs');
+  assert.equal(garden.highLevelSeeds[9].agentIdentities.length, 2);
   assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'openclaw-control' && seed.status === 'blocked'));
   assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'vr-spatial-surface' && seed.status === 'not-started'));
 });
