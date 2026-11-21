@@ -140,14 +140,10 @@ function New-CryptographicInvocationId {
 function Wait-MissionWorkerSelfCleanupObservation {
     param([Parameter(Mandatory = $true)][string]$ExpectedRepoRoot)
 
-    # Observation only: never extend the restart/mutation deadline. The nominal
-    # window remains the full cleanup budget, but a new task/CIM iteration may
-    # start only while bounded operation slack remains before that deadline.
+    # Observation only: this fresh read-only window begins after restart
+    # authority is spent. It never authorizes more mutation and remains bounded
+    # by the fixed Mission Worker cleanup timeout.
     $observationDeadlineUtc = [datetime]::UtcNow.AddSeconds($missionWorkerCleanupTimeoutSeconds)
-    $reserveDeadlineUtc = $script:operationDeadlineUtc.AddSeconds($missionWorkerCleanupTimeoutSeconds)
-    if ($observationDeadlineUtc -gt $reserveDeadlineUtc) {
-        $observationDeadlineUtc = $reserveDeadlineUtc
-    }
     $observationOperationReserveSeconds = 2
     while ([datetime]::UtcNow.AddSeconds($observationOperationReserveSeconds) -lt $observationDeadlineUtc) {
         try {
