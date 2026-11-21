@@ -15,11 +15,11 @@ import { buildStephanosRichConversationalResponseV1 } from './stephanosRichConve
 
 const NOW = new Date('2026-08-21T00:30:00.000Z');
 
-function richResponse(answerText = 'Stephanos has a bounded private Conversation Canvas handoff ready for the existing UI Agent presenter.') {
+function richResponse(answerText = 'Stephanos has a bounded private Conversation Canvas handoff ready for the existing UI Agent presenter.', { ambient = false } = {}) {
   const result = buildStephanosRichConversationalResponseV1({
     question: {
       questionId: 'stephanos-round-001-q01',
-      roundId: 'stephanos-round-001',
+      ...(ambient ? {} : { roundId: 'stephanos-round-001' }),
       questionClass: 'CURRENT_PROGRAMME_TRUTH',
     },
     answer: {
@@ -31,6 +31,7 @@ function richResponse(answerText = 'Stephanos has a bounded private Conversation
       cannotAnswerReason: null,
       answerVerdict: 'ANSWERED_GROUNDED',
     },
+    ...(ambient ? { correlationId: 'ambient-canvas-001' } : {}),
     structured: {
       goalsMissions: [{ ref: '#1308', label: 'Stephanos conversational intelligence', state: 'ACTIVE', evidenceRefs: ['receipts/live-round-source'] }],
       agentProviderContributions: [{ contributorId: 'stephanos', contributionType: 'SYSTEM_SYNTHESIS', summary: 'Synthesised live durable truth.', evidenceRefs: ['receipts/live-round-source'] }],
@@ -45,9 +46,9 @@ function richResponse(answerText = 'Stephanos has a bounded private Conversation
   return result;
 }
 
-function canvasHandoff(answerText) {
+function canvasHandoff(answerText, options = {}) {
   const result = buildStephanosConversationCanvasHandoffV1({
-    richResponse: richResponse(answerText),
+    richResponse: richResponse(answerText, options),
     surface: 'ipad',
     state: 'READY',
     expandedSections: ['evidence', 'action'],
@@ -166,4 +167,69 @@ test('requires caller-supplied proof lineage before a private Canvas handoff can
   assert.equal(result.valid, false);
   assert.deepEqual(result.errors, ['workspace-proofRefs-required']);
   assert.equal(result.record, null);
+});
+
+test('ambient private workspace handoffs bind every continuity layer to the durable correlation', () => {
+  const handoff = canvasHandoff(undefined, { ambient: true });
+  const input = { ...workspaceInput(handoff), correlationId: 'ambient-canvas-001' };
+  const result = buildStephanosConversationCanvasWorkspaceHandoffRecordV1(input, { nowMs: NOW.getTime() });
+  assert.equal(result.valid, true, result.errors.join(','));
+  assert.equal(result.record.correlationId, input.correlationId);
+  const body = JSON.parse(result.record.body);
+  for (const continuity of [body.continuity, body.presenterInput.richResponse.continuity]) {
+    assert.equal(continuity.conversationMode, 'AMBIENT');
+    assert.equal(continuity.correlationId, input.correlationId);
+    assert.equal(Object.hasOwn(continuity, 'roundId'), false);
+  }
+  assert.equal(body.privacy.publicRelayProjectionAllowed, false);
+  assert.equal(body.authority.presenterActionExecutionAllowed, false);
+
+  const mismatchedCorrelation = buildStephanosConversationCanvasWorkspaceHandoffRecordV1({
+    ...input, correlationId: 'different-conversation',
+  }, { nowMs: NOW.getTime() });
+  assert.equal(mismatchedCorrelation.valid, false);
+  assert.deepEqual(mismatchedCorrelation.errors, ['workspace-correlation-must-match-lineage']);
+
+  const forged = {
+    ...handoff,
+    presenterInput: {
+      ...handoff.presenterInput,
+      richResponse: {
+        ...handoff.presenterInput.richResponse,
+        continuity: { ...handoff.presenterInput.richResponse.continuity, correlationId: 'different-conversation' },
+      },
+    },
+  };
+  const mismatchedRichResponse = buildStephanosConversationCanvasWorkspaceHandoffRecordV1({
+    ...input, canvasHandoff: forged,
+  }, { nowMs: NOW.getTime() });
+  assert.equal(mismatchedRichResponse.valid, false);
+  assert.deepEqual(mismatchedRichResponse.errors, ['rich-response-continuity-mismatch']);
+});
+
+test('private workspace handoffs reject accessor-bearing correlation without invoking getters', () => {
+  const handoff = canvasHandoff(undefined, { ambient: true });
+  let getterCalls = 0;
+  for (const location of ['handoff', 'rich-response', 'packet']) {
+    const continuity = { ...handoff.continuity };
+    const richContinuity = { ...handoff.presenterInput.richResponse.continuity };
+    const input = {
+      ...workspaceInput({
+        ...handoff,
+        continuity,
+        presenterInput: {
+          ...handoff.presenterInput,
+          richResponse: { ...handoff.presenterInput.richResponse, continuity: richContinuity },
+        },
+      }),
+      correlationId: 'ambient-canvas-001',
+    };
+    const target = location === 'packet' ? input : location === 'handoff' ? continuity : richContinuity;
+    Object.defineProperty(target, 'correlationId', {
+      enumerable: true,
+      get() { getterCalls += 1; return 'ambient-canvas-001'; },
+    });
+    assert.equal(buildStephanosConversationCanvasWorkspaceHandoffRecordV1(input, { nowMs: NOW.getTime() }).valid, false, location);
+  }
+  assert.equal(getterCalls, 0);
 });

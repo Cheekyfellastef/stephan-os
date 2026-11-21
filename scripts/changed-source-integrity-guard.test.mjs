@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import {
   collectChangedJavaScriptFiles,
   validateJavaScriptFiles,
-} from './changed-source-integrity-guard.mjs';
+} from '../.github/scripts/changed-source-integrity-guard.mjs';
 
 test('changed source discovery is deterministic and limits itself to JavaScript source', () => {
   const files = collectChangedJavaScriptFiles({

@@ -57,7 +57,7 @@ jobs:
           SOURCE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           node --input-type=module -e '
-            import { runChangedSourceIntegrityGuard } from "../trusted/scripts/changed-source-integrity-guard.mjs";
+            import { runChangedSourceIntegrityGuard } from "../trusted/.github/scripts/changed-source-integrity-guard.mjs";
             const base = process.env.SOURCE_BASE_SHA;
             if (!/^[0-9a-f]{40}$/.test(base || "")) process.exit(1);
             const result = runChangedSourceIntegrityGuard({ cwd: process.cwd(), baseRef: base });

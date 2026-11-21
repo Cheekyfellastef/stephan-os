@@ -32,7 +32,7 @@ jobs:
           node-version: '22'
 
       - name: Prove changed JavaScript syntax (informational PR-controlled check)
-        run: node scripts/changed-source-integrity-guard.mjs
+        run: node .github/scripts/changed-source-integrity-guard.mjs
 
       - name: Guard regression (informational PR-controlled tests)
         run: node --test scripts/changed-source-integrity-guard.test.mjs

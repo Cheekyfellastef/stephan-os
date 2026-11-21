@@ -1,0 +1,16 @@
+{
+  "generatedAtUtc": "2026-07-08T00:00:00.000Z",
+  "pullRequests": [
+    {"number": 1444, "title": "Harden runtime shell", "url": "https://github.com/Cheekyfellastef/stephan-os/pull/1444", "branch": "openclaw/runtime-hardening", "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "claimedHeadSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "publicationVerified": true, "checksStatus": "pass", "issueNumbers": [1284]},
+    {"number": 1448, "title": "Publish PR verifier", "url": "https://github.com/Cheekyfellastef/stephan-os/pull/1448", "branch": "openclaw/pr-publication-verifier", "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "claimedHeadSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "checksStatus": "pass", "issueNumbers": [1286], "readyForReview": true},
+    {"number": 1450, "title": "Battle Bridge claimed head drift", "url": "https://github.com/Cheekyfellastef/stephan-os/pull/1450", "branch": "openclaw/head-drift", "headSha": "cccccccccccccccccccccccccccccccccccccccc", "claimedHeadSha": "dddddddddddddddddddddddddddddddddddddddd", "publicationVerified": true, "issueNumbers": [1287]}
+  ],
+  "issues": [
+    {"number": 1284, "title": "Runtime hardening", "url": "https://github.com/Cheekyfellastef/stephan-os/issues/1284", "status": "waiting-for-proof", "reason": "Needs hardened runtime proof."},
+    {"number": 1286, "title": "GitHub Operator Assistant V1", "url": "https://github.com/Cheekyfellastef/stephan-os/issues/1286", "status": "waiting-for-implementation"},
+    {"number": 1287, "title": "Battle Bridge proof reconciliation", "url": "https://github.com/Cheekyfellastef/stephan-os/issues/1287", "status": "waiting-for-operator", "reason": "Operator must approve proof reconciliation policy."}
+  ],
+  "evidence": [
+    {"kind": "pr-publication-verifier", "prNumber": 1448, "marker": "PR_PUBLICATION_VERIFIER_PASS", "summary": "PR #1448 publication verified.", "ref": "proof/pr-1448-publication.json"}
+  ]
+}

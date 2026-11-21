@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { STEPHANOS_RICH_CONVERSATIONAL_RESPONSE_SCHEMA_VERSION } from './stephanosRichConversationalResponseV1.mjs';
+import { resolveStephanosConversationLineage } from './stephanosConversationLineageV1.mjs';
 
 export const STEPHANOS_CONVERSATION_CANVAS_HANDOFF_SCHEMA_VERSION = 'stephanos.conversation-canvas-handoff.v1';
 export const STEPHANOS_CONVERSATION_CANVAS_TARGET_PRESENTER_SCHEMA_VERSION = 'stephanos.ui-agent.conversation-canvas-presenter.v1';
@@ -24,6 +25,7 @@ function dataObject(value) {
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) return null;
     if (Object.getOwnPropertySymbols(value).length > 0) return null;
+    if (Object.values(Object.getOwnPropertyDescriptors(value)).some((descriptor) => !Object.hasOwn(descriptor, 'value'))) return null;
     return value;
   } catch {
     return null;
@@ -108,11 +110,15 @@ export function buildStephanosConversationCanvasHandoffV1(input = {}) {
 
     const directAnswer = text(richResponse.directAnswer);
     const continuity = dataObject(richResponse.continuity);
-    const roundId = text(continuity?.roundId, 256);
+    const lineage = resolveStephanosConversationLineage({
+      ...(continuity && Object.hasOwn(continuity, 'roundId') ? { roundId: continuity.roundId } : {}),
+      correlationId: continuity?.correlationId === undefined ? continuity?.roundId : continuity.correlationId,
+    });
     const questionId = text(continuity?.questionId, 256);
     const responseId = text(richResponse.responseId, 256);
     if (!directAnswer) return invalid(['direct-answer-required']);
-    if (!SAFE_ID.test(roundId) || !SAFE_ID.test(questionId) || !SAFE_ID.test(responseId)) {
+    if (!lineage.valid || !SAFE_ID.test(questionId) || !SAFE_ID.test(responseId)
+      || (continuity?.conversationMode !== undefined && continuity.conversationMode !== lineage.kind)) {
       return invalid(['continuity-identity-invalid']);
     }
 
@@ -141,7 +147,9 @@ export function buildStephanosConversationCanvasHandoffV1(input = {}) {
       targetPresenterSchemaVersion: STEPHANOS_CONVERSATION_CANVAS_TARGET_PRESENTER_SCHEMA_VERSION,
       targetPayloadField: STEPHANOS_CONVERSATION_CANVAS_TARGET_PAYLOAD_FIELD,
       surface,
-      continuity: Object.freeze({ roundId, questionId, responseId }),
+      continuity: Object.freeze(lineage.kind === 'FORMAL_ROUND'
+        ? { roundId: lineage.roundId, questionId, responseId }
+        : { conversationMode: lineage.kind, correlationId: lineage.correlationId, questionId, responseId }),
       presenterInput,
       privacy: Object.freeze({
         sharedWorkspacePrivateHandoffRequired: true,

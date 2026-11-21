@@ -8,7 +8,6 @@ import { deflateSync } from 'node:zlib';
 import { sovereignExactCommitLoaderV1 } from './sovereignExactCommitLoaderV1.mjs';
 import { resolveBattleBridgeGitExecution } from './battleBridgeExecutionBoundaryV1.mjs';
 import { REVIEWER_CRITICAL_SOURCE_PATHS } from '../../scripts/sovereign-reviewer-wsl-bridge-v1.mjs';
-import { WINDOWS_CALIBRATION_SOURCE_PATHS } from './sovereignCommanderV1.mjs';
 
 const git = resolveBattleBridgeGitExecution();
 function command(root, args) {
@@ -90,12 +89,14 @@ test('corrupt object-store bytes cannot masquerade as the pinned module hash', (
   assert.equal(r.stdout, '');
 }));
 
-test('both production closures initialize solely from committed modules and remain held without identity', () => {
+test('standard reviewer compatibility closure initializes solely from committed modules and remains held without identity', () => {
+  // Commander calibration now executes the protected installed host. Its
+  // production closure is exercised by sovereign-installed-reviewer-v1.test,
+  // never re-admitted here as PR-selected exact-commit producer code.
   const root = resolve(import.meta.dirname, '../..');
   const head = command(root, ['rev-parse', 'HEAD']);
   for (const [files, entry, args, marker] of [
     [REVIEWER_CRITICAL_SOURCE_PATHS, 'scripts/sovereign-reviewer-v1.mjs', [], 'SOVEREIGN_REVIEWER_RESULT='],
-    [WINDOWS_CALIBRATION_SOURCE_PATHS, 'scripts/sovereign-windows-review-calibration-v1.mjs', ['--commander-once'], 'SOVEREIGN_WINDOWS_CALIBRATION_REMOTE_RESULT='],
   ]) {
     const loader = sovereignExactCommitLoaderV1({ root, head, files, git });
     const r = spawnSync(process.execPath, ['--no-warnings', '--experimental-loader', loader, join(root, entry), ...args],
