@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { buildMissionWorkerAction, issueMissionWorkerAuthorization } from './missionOrchestratorWorker.mjs';
+import { buildMissionWorkerAction, issueMissionWorkerAuthorization,
+  missionWorkerActionGrantsMatchV1, projectMissionWorkerSourceFailureV1 } from './missionOrchestratorWorker.mjs';
+import { classifyElasticMissionIdentityV1 } from '../runtime/seedGrowthWorkV1.mjs';
+import { createExactWorkerActionGrant } from './durableFlywheelControllerVNext.mjs';
 import { verifyOpenClawGitHubAuthorization } from './openClawGitHubAuthorization.mjs';
 
 const now = new Date('2026-06-24T22:00:00.000Z');
@@ -14,6 +17,51 @@ const base = {
   approval: { requiredToken: `APPROVE_OPENCLAW_SQUASH_MERGE:1267:${'a'.repeat(40)}` }, repair: { currentRound: 0 },
   deployment: { sync: { status: 'pending' }, build: { status: 'pending' }, verify: { status: 'pending' }, restart: { status: 'pending' } }, evidenceReceipts: [],
 };
+
+test('the entire reserved elastic namespace has one exact accepted identity grammar', () => {
+  for (const id of ['1', '1557', String(Number.MAX_SAFE_INTEGER)]) {
+    const canonical = `critical-${id}-elastic-goal`, branch = `openclaw/elastic-goal-${id}`;
+    assert.equal(classifyElasticMissionIdentityV1(canonical).kind, 'CANONICAL_ELASTIC');
+    assert.equal(classifyElasticMissionIdentityV1(canonical, branch).kind, 'CANONICAL_ELASTIC');
+    for (const suffix of ['copy', ':copy', '_copy', '-copy', '.copy', '/copy', '\\copy', '\u0000', ' ', '\t']) {
+      assert.equal(classifyElasticMissionIdentityV1(canonical + suffix).kind, 'NONCANONICAL_ELASTIC');
+      assert.equal(classifyElasticMissionIdentityV1(canonical + suffix, 'openclaw/unit-engine').kind, 'NONCANONICAL_ELASTIC');
+    }
+  }
+  for (const separator of ['-', '_', ':', '.', '/', '\\', ' ', '\t', '']) {
+    for (const id of ['1', '0', '01557', 'abc', '', '9007199254740992']) {
+      for (const suffix of ['', 'copy', ':copy', '/copy']) {
+        const identity = ['critical', id, 'elastic', 'goal'].join(separator) + suffix;
+        const expected = separator === '-' && id === '1' && suffix === '' ? 'CANONICAL_ELASTIC' : 'NONCANONICAL_ELASTIC';
+        assert.equal(classifyElasticMissionIdentityV1(identity).kind, expected, JSON.stringify(identity));
+        assert.equal(classifyElasticMissionIdentityV1(identity, 'openclaw/unit-engine').kind, 'NONCANONICAL_ELASTIC');
+      }
+    }
+  }
+  for (const alias of ['CRITICAL-1557-ELASTIC-GOAL', ' critical-1557-elastic-goal',
+    'critical-1557-elastic-goal\t', 'critical-1557-elastic', 'ＣＲＩＴＩＣＡＬ－１５５７－ＥＬＡＳＴＩＣ－ＧＯＡＬ'])
+    assert.equal(classifyElasticMissionIdentityV1(alias).kind, 'NONCANONICAL_ELASTIC', alias);
+  for (const branch of ['OPENCLAW/ELASTIC-GOAL-1557', 'openclaw_elastic_goal_1557',
+    'openclaw/elastic-goal-1557copy', 'openclaw/elastic-goal-1558']) {
+    assert.equal(classifyElasticMissionIdentityV1('critical-1557-elastic-goal', branch).kind, 'NONCANONICAL_ELASTIC');
+    assert.equal(classifyElasticMissionIdentityV1('unit-engine', branch).kind, 'NONCANONICAL_ELASTIC');
+  }
+  for (const ordinary of ['critical-2009-native-executor', 'critical-3001-offline-forge',
+    'unit-source-engine', 'ordinary-critical-1557-elastic-goal'])
+    assert.equal(classifyElasticMissionIdentityV1(ordinary, 'openclaw/unit-engine').kind, 'OTHER', ordinary);
+});
+
+test('source failure observations cannot become authority or invoke copied accessors', () => {
+  const action = { missionId: 'critical-1557-elastic-goal', actionId: 'original-source-action', allowedFiles: ['shared/agents/a.mjs'] };
+  assert.equal(projectMissionWorkerSourceFailureV1(new Error('ordinary failure'), action), null);
+  let traps = 0;
+  const error = new Error('original error');
+  Object.defineProperty(error, 'sourceFailure', { get() { traps++; throw new Error('MUST_NOT_RUN'); } });
+  const observed = projectMissionWorkerSourceFailureV1(error, action);
+  assert.equal(traps, 0); assert.equal(observed.sourceState, 'UNKNOWN');
+  assert.equal(observed.rollbackDisposition, 'UNPROVEN');
+  assert.equal(observed.recoveryRequired, true); assert.equal(observed.mutationAuthority, false);
+});
 
 function explicitCodexCapacityRouting() {
   return {
@@ -41,6 +89,55 @@ test('creates a bounded signed worktree action on the OpenClaw branch family', (
   assert.equal(action.operation, 'create-worktree');
   assert.equal(action.claims.repositoryRoot, base.repositoryRoot);
   assert.equal(action.claims.singleUse, true);
+});
+
+test('actual signed lifecycle producer retains a closed non-capacity grant representation', () => {
+  const missionId = 'critical-1557-elastic-goal', branch = 'openclaw/elastic-goal-1557';
+  // Pure projection fixture only. The server separately proves the mint audit,
+  // actual owner decision, current cohort, source and retained contract.
+  const state = { ...base, missionId, git: { ...base.git, branch },
+    currentOrdinarySourcePlan: { schemaVersion: 'stephanos.current-ordinary-source-plan.v1',
+      purpose: 'REAFFIRM_EXISTING_ORDINARY_SOURCE_PLAN', missionId, branch,
+      authorityPlanFingerprint: 'b'.repeat(64) } };
+  const grant = createExactWorkerActionGrant({ observedAtUtc: now.toISOString(),
+    criticalBacklog: { activeMission: state } }, 'a'.repeat(40));
+  assert.equal(grant.capacityRoute, '');
+  assert.equal(grant.actionKind, 'signed-openclaw-operation');
+  assert.equal(grant.adapter, 'openclaw-signed');
+  assert.equal(missionWorkerActionGrantsMatchV1(grant, grant), true);
+  for (const delta of [{ actionKind: 'agent-handoff' }, { adapter: 'unknown-adapter' },
+    { operation: 'arbitrary-command' }, { currentPhase: 'AGENT_IMPLEMENTATION' },
+    { capacityReceiptId: 'invented-capacity' }, { capacityProofRefs: ['invented-proof'] },
+    { capacityRoute: 'FOUNDRY_FORGE' }, { workerId: 'unrelated-worker' }]) {
+    const changed = { ...grant, ...delta };
+    assert.equal(missionWorkerActionGrantsMatchV1(changed, changed), false, JSON.stringify(delta));
+  }
+});
+
+test('actual Forge publication producer retains its exact artifact action without invented capacity', () => {
+  const missionId = 'critical-1646-elastic-goal', branch = 'openclaw/elastic-goal-1646';
+  const state = { ...base, missionId, currentPhase: 'GITHUB_COMMIT',
+    git: { ...base.git, branch }, pullRequest: { number: null, headSha: '' },
+    dispatch: { adapter: 'foundry-forge', status: 'complete' },
+    sourcePublication: { artifactSha256: '7'.repeat(64), exactParentHead: 'a'.repeat(40),
+      exactResultTree: '8'.repeat(40), canonicalBranch: branch,
+      outboxId: 'offline-publication-' + '9'.repeat(24) },
+    currentOrdinarySourcePlan: { schemaVersion: 'stephanos.current-ordinary-source-plan.v1',
+      purpose: 'REAFFIRM_EXISTING_ORDINARY_SOURCE_PLAN', missionId, branch,
+      authorityPlanFingerprint: 'b'.repeat(64) } };
+  const grant = createExactWorkerActionGrant({ observedAtUtc: now.toISOString(),
+    criticalBacklog: { activeMission: state } }, 'a'.repeat(40));
+  assert.equal(grant.capacityRoute, '');
+  assert.equal(grant.capacityReceiptId, null);
+  assert.deepEqual(grant.capacityProofRefs, []);
+  assert.equal(grant.actionKind, 'forge-escrow-publication');
+  assert.equal(missionWorkerActionGrantsMatchV1(grant, grant), true);
+  for (const delta of [{ actionKind: 'agent-handoff' }, { adapter: 'openclaw-signed' },
+    { currentPhase: 'GITHUB_PUSH' }, { operation: 'push' }, { workerId: 'unrelated-worker' },
+    { capacityReceiptId: 'invented' }, { capacityProofRefs: ['invented'] }]) {
+    const changed = { ...grant, ...delta };
+    assert.equal(missionWorkerActionGrantsMatchV1(changed, changed), false, JSON.stringify(delta));
+  }
 });
 
 test('blocks signed mutation when mission branch is outside openclaw/*', () => {

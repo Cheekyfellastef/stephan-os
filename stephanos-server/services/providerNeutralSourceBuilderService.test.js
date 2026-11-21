@@ -2,12 +2,26 @@ import { appendExecutionReceipt, createExecutionReceipt, readExecutionReceiptHis
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { produceProviderNeutralSourceBuildProposalV1, processNextProviderNeutralSourceBuild as buildSource } from './providerNeutralSourceBuilderService.js';
+import { createMissionRecord, appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
+import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
+import { processNextStephanosNativeItem } from './missionOrchestratorWorkerConsumer.js';
+import { exactElasticExternalGrant } from './criticalBacklogConveyorServiceCore.js';
+import { forgeLifeboatProofRef } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import { executeStephanosNativeAction } from './missionOrchestratorStephanosNativeExecutor.js';
+import { admitCurrentOrdinaryFixtureV1, prepareOrdinaryGoalFixtureV1 } from './fixtures/currentOrdinarySourcePlanFixtureV1.mjs';
+
+// Low-level goal-context fixtures deliberately use a noncanonical mission ID.
+// They exercise model/context parsing without claiming a production mission
+// admission. The real canonical producer/queue/claim tests below prove the
+// independent authority and cancellation boundary.
 
 // Existing edit fixtures describe a complete model message. Present them on the
 // real streaming Response interface now used by the builder transport.
@@ -134,7 +148,7 @@ async function fixture(requiredTests = ['node --test focused.test.mjs']) {
     repository: 'Cheekyfellastef/stephan-os',
     repositoryRoot: repoRoot,
     worktreePath: repoRoot,
-    branch: 'openclaw/elastic-goal-3001',
+    branch: 'openclaw/offline-forge-unit-3001',
     operatorIntent: 'Make the bounded local source change.',
     intendedOutcome: 'The focused test passes.',
     allowedFiles: ['shared/agents/**'],
@@ -165,6 +179,233 @@ const PATCH = [
   '+export const value = 2;',
   '',
 ].join('\n');
+
+async function canonicalSourceFixture(t, repository = 'Cheekyfellastef/stephan-os', adapter = 'foundry-forge', claimNow = true) {
+  const fx = await fixture(['node --test shared/agents/example.test.mjs']);
+  t.after(() => rm(fx.parent, { recursive: true, force: true }));
+  await writeFile(join(fx.repoRoot, 'shared/agents/example.test.mjs'),
+    "import assert from 'node:assert/strict'; import {value} from './example.mjs'; assert.equal(value,2);\n");
+  assert.equal(run('git.exe', ['add', '.'], { cwd: fx.repoRoot }).status, 0);
+  assert.equal(run('git.exe', ['commit', '-m', 'canonical retained behavior oracle'], { cwd: fx.repoRoot }).status, 0);
+  const missionId = 'critical-3001-elastic-goal', branch = 'openclaw/elastic-goal-3001';
+  assert.equal(run('git.exe', ['checkout', '-b', branch], { cwd: fx.repoRoot }).status, 0);
+  const options = { root: join(fx.parent, 'missions'), queueRoot: join(fx.parent, 'queue'),
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot, repoRoot: fx.repoRoot, env: {}, now: new Date() };
+  await prepareOrdinaryGoalFixtureV1(missionId, options);
+  await createMissionRecord({ ...fx.action, missionKind: 'implementation', missionId, branch, repository,
+    allowedFiles: ['shared/agents/example.mjs', 'shared/agents/example.mjs/**'] }, options);
+  await appendMissionEvent(missionId, { eventId: 'canonical-source-worktree', eventType: 'WORKTREE_READY',
+    worktreePath: fx.repoRoot, clean: true, receipt: { receiptId: 'canonical-source-worktree-proof',
+      requirement: 'isolated worktree', source: 'canonical-temp-git-fixture', evidenceType: 'command-output', verified: true, exitCode: 0 } }, options);
+  const actual = await admitCurrentOrdinaryFixtureV1(t, missionId, options);
+  options.actionGrant = exactElasticExternalGrant(actual.state, {
+    route: adapter === 'stephanos-native' ? 'STEPHANOS_NATIVE' : 'FOUNDRY_FORGE', adapter,
+    workerId: adapter === 'stephanos-native' ? 'stephanos-native-battle-bridge' : 'stephanos-forge-lifeboat-local',
+    receiptId: 'canonical-context-fixture-capacity',
+    proofRefs: [forgeLifeboatProofRef(actual.sourceHead)] }, actual.sourceHead, options.now);
+  assert.equal((await publishMissionWorkerAction(actual.state, options)).published, true);
+  const claim = claimNow ? await claimNextMissionWorkerItem(adapter, options) : null;
+  if (claimNow) assert.ok(claim);
+  return { ...fx, options, actual, claim };
+}
+
+test('actual ordinary authority and retained claim gate a useful temp-Git build and escrow', async t => {
+  for (const fault of ['none', 'copied-processing', 'plan-substitution', 'kind-substitution',
+    'source-contract-drift', 'canonical-cancellation', 'canonical-owner-revocation',
+    'post-model-processing-drift']) await t.test(fault, async t => {
+    const fx = await fixture(['node --test shared/agents/example.test.mjs']);
+    t.after(() => rm(fx.parent, { recursive: true, force: true }));
+    await writeFile(join(fx.repoRoot, 'shared/agents/example.test.mjs'),
+      "import test from 'node:test'; import assert from 'node:assert/strict'; import {value} from './example.mjs'; test('required behavior',()=>assert.equal(value,2));\n");
+    assert.equal(run('git.exe', ['add', '.'], { cwd: fx.repoRoot }).status, 0);
+    assert.equal(run('git.exe', ['commit', '-m', 'retained behavior oracle'], { cwd: fx.repoRoot }).status, 0);
+    const missionId = 'critical-3001-elastic-goal', branch = 'openclaw/elastic-goal-3001';
+    assert.equal(run('git.exe', ['checkout', '-b', branch], { cwd: fx.repoRoot }).status, 0);
+    const options = { root: join(fx.parent, 'missions'), queueRoot: join(fx.parent, 'queue'),
+      sharedWorkspaceRoot: fx.sharedWorkspaceRoot, repoRoot: fx.repoRoot, env: {}, now: new Date() };
+    await prepareOrdinaryGoalFixtureV1(missionId, options);
+    await createMissionRecord({ ...fx.action, missionKind: 'implementation', missionId, branch, repositoryRoot: fx.repoRoot,
+      allowedFiles: ['shared/agents/example.mjs', 'shared/agents/example.mjs/**'] }, options);
+    await appendMissionEvent(missionId, { eventId: 'actual-source-worktree', eventType: 'WORKTREE_READY',
+      worktreePath: fx.repoRoot, clean: true,
+      receipt: { receiptId: 'actual-source-worktree-proof', requirement: 'isolated worktree', source: 'temp-git-fixture',
+        evidenceType: 'command-output', verified: true, exitCode: 0 } }, options);
+    const actual = await admitCurrentOrdinaryFixtureV1(t, missionId, options);
+    const actionGrant = exactElasticExternalGrant(actual.state, { route: 'FOUNDRY_FORGE', adapter: 'foundry-forge',
+      workerId: 'stephanos-forge-lifeboat-local', receiptId: 'actual-source-fixture-capacity',
+      proofRefs: [forgeLifeboatProofRef(actual.sourceHead)] }, actual.sourceHead, options.now);
+    options.actionGrant = actionGrant;
+    const published = await publishMissionWorkerAction(actual.state, options);
+    assert.equal(published.published, true, JSON.stringify(published));
+    const claim = await claimNextMissionWorkerItem('foundry-forge', options);
+    assert.ok(claim);
+    if (fault === 'copied-processing') claim.processingPath = join(fx.parent, 'copied-processing.json');
+    if (fault === 'plan-substitution') claim.item.actionGrant.sourcePlanFingerprint = '0'.repeat(64);
+    if (fault === 'kind-substitution') {
+      claim.item.actionGrant.sourcePlanKind = 'SEED_SELF';
+      claim.item.payload.sourcePlanKind = 'SEED_SELF';
+      claim.item.executionBinding.sourcePlanKind = 'SEED_SELF';
+      await writeFile(claim.processingPath, JSON.stringify(claim.item));
+    }
+    if (fault === 'source-contract-drift') {
+      const current = await readMissionRecord(missionId, options);
+      await writeFile(current.statePath, JSON.stringify({ ...current.state, requiredTests: ['npm run stephanos:verify'] }));
+    }
+    let proposals = 0, commands = 0;
+    const result = await buildSource({ ...options, preferredAdapter: 'foundry-forge',
+      claimNext: async () => claim,
+      localModelFetchImpl: async (_url, request) => {
+        proposals++;
+        assert.match(JSON.parse(request.body).messages[0].content,
+          /Implement this existing ordinary bounded source contract\./,
+          'actual canonical fixed goal reader must supply model context');
+        if (fault === 'canonical-cancellation') await appendMissionEvent(missionId, {
+          eventId: 'canonical-cancel-after-model', eventType: 'MISSION_CANCELLED',
+          reason: 'Fixture cancels the original mission before any candidate source effect.',
+        }, options);
+        if (fault === 'canonical-owner-revocation') actual.authority.closed = true;
+        if (fault === 'post-model-processing-drift') {
+          const changed = structuredClone(claim.item);
+          changed.payload.allowedFiles = ['shared/agents/unapproved.mjs'];
+          await writeFile(claim.processingPath, JSON.stringify(changed));
+        }
+        return new Response(JSON.stringify({ done: true, message: { content: JSON.stringify({
+          edits: [{ path: 'shared/agents/example.mjs', old: 'export const value = 1;', new: 'export const value = 2;' }],
+          summary: 'Pass the retained behavior oracle.',
+        }) } }) + '\n');
+      },
+      runCommand: (...args) => { commands++; return run(...args); } });
+    if (fault !== 'none') {
+      assert.equal(result.success, false);
+      if (fault === 'canonical-cancellation') {
+        assert.equal(proposals, 1, 'the genuine canonical model response precedes cancellation');
+        assert.match(result.error, /ORIGINAL_SOURCE_ATTEMPT_FENCED/);
+        assert.equal((await readMissionRecord(missionId, options)).state.currentPhase, 'CANCELLED');
+      } else if (['canonical-owner-revocation', 'post-model-processing-drift'].includes(fault)) {
+        assert.equal(proposals, 1, 'fresh actual source admission is rechecked after the model reply');
+        assert.match(result.error, /SOURCE_SCOPE_RECONCILIATION_REQUIRED/);
+      } else {
+        assert.equal(proposals, 0, 'unproven authority must stop before proposal/model');
+        assert.equal(commands, 0, 'unproven authority must stop before source/test commands');
+      }
+      assert.equal(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), 'export const value = 1;\n');
+      assert.equal(result.sourceArtifact ?? null, null);
+      return;
+    }
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.testsPassed, true);
+    assert.equal(proposals, 1);
+    assert.match(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), /value = 2/);
+    const artifact = /^shared-workspace:\/\/source-artifacts\/([0-9a-f]{64})\.json$/.exec(result.sourceArtifactRef);
+    assert.ok(artifact, JSON.stringify(result));
+    const bundle = JSON.parse(await readFile(join(fx.sharedWorkspaceRoot, 'source-artifacts', artifact[1] + '.json'), 'utf8'));
+    assert.equal(bundle.missionId, missionId);
+    assert.equal(bundle.actionId, claim.item.actionId);
+    assert.equal(bundle.canonicalBranch, branch);
+    assert.equal(bundle.exactParentHead, actual.sourceHead);
+    assert.deepEqual(bundle.testsRun, ['node --test shared/agents/example.test.mjs']);
+    const history = await readExecutionReceiptHistory(fx.sharedWorkspaceRoot,
+      { executionId: claim.item.actionId }, { repoRoot: fx.repoRoot });
+    assert.equal(history.latestReceipt.state, 'completed');
+    assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'complete');
+  });
+});
+
+test('actual ordinary Native parent revalidates owner authority after model await before staging or source effects', async t => {
+  const fx = await canonicalSourceFixture(t, 'Cheekyfellastef/stephan-os', 'stephanos-native');
+  let modelCalls = 0, testCalls = 0;
+  const grant = fx.options.actionGrant;
+  await assert.rejects(executeStephanosNativeAction(fx.claim.item.payload, fx.claim, { ...fx.options,
+    testOnly: true,
+    readVerifiedCandidate: async () => ({ ok: true, candidate: {
+      route: 'STEPHANOS_NATIVE', adapter: 'stephanos-native', workerId: grant.workerId,
+      provider: 'ollama-local', transport: 'http-loopback-fixed',
+      capacityReceiptId: grant.capacityReceiptId, sourceHead: grant.sourceRevision,
+      repository: 'Cheekyfellastef/stephan-os', endpoint: 'http://127.0.0.1:11434', model: 'test-only:14b',
+    } }),
+    runCommand: (executable, args, options) => {
+      if (executable === process.execPath && args[0] === '--test') testCalls++;
+      return run(executable, args, options);
+    },
+    fetchImpl: async () => {
+      modelCalls++; fx.actual.authority.closed = true;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ model: 'test-only:14b', message: {
+        content: JSON.stringify({ schemaVersion: 'stephanos.native-model-result.v1',
+          missionId: fx.claim.item.missionId, actionId: fx.claim.item.actionId,
+          baseHead: grant.sourceRevision, replacements: [{ path: 'shared/agents/example.mjs',
+            beforeSha256: '0'.repeat(64), content: 'export const value = 2;\n' }], summary: 'uncommitted reply' }),
+      } }) };
+    },
+  }), /SOURCE_SCOPE_RECONCILIATION_REQUIRED/);
+  assert.equal(modelCalls, 1);
+  assert.equal(testCalls, 0);
+  assert.equal(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), 'export const value = 1;\n');
+  assert.equal(existsSync(join(fx.sharedWorkspaceRoot, 'native-staging')), false);
+  // This fixture proves the real JS parent boundary; it does not qualify
+  // production source-test credential isolation or the compiled child route.
+});
+
+test('actual Native post-promotion withdrawal preserves the original owner and durable unknown-source recovery record', async t => {
+  for (const fault of ['owner-revocation', 'cancellation', 'processing-drift']) await t.test(fault, async t => {
+    const fx = await canonicalSourceFixture(t, 'Cheekyfellastef/stephan-os', 'stephanos-native', false);
+    const grant = fx.options.actionGrant, before = await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8');
+    let models = 0, testBoundaries = 0;
+    const initial = (await readMissionRecord(grant.missionId, fx.options)).state;
+    const result = await processNextStephanosNativeItem({ ...fx.options,
+      executeStephanosNativeAction: (action, claim) => executeStephanosNativeAction(action, claim, {
+        ...fx.options, testOnly: true,
+        readVerifiedCandidate: async () => ({ ok: true, candidate: {
+          route: 'STEPHANOS_NATIVE', adapter: 'stephanos-native', workerId: grant.workerId,
+          provider: 'ollama-local', transport: 'http-loopback-fixed', model: 'test-only:14b',
+          capacityReceiptId: grant.capacityReceiptId, sourceHead: grant.sourceRevision,
+          repository: action.repository, endpoint: 'http://127.0.0.1:11434',
+        } }),
+        readSourceMutationLease: async () => ({ ok: true, present: false }),
+        runCommand: (executable, args, options) => {
+          if (executable !== process.execPath || args[0] !== '--test') return run(executable, args, options);
+          return (async () => {
+            testBoundaries++;
+            assert.match(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), /value = 2/);
+            if (fault === 'owner-revocation') fx.actual.authority.closed = true;
+            if (fault === 'cancellation') await appendMissionEvent(grant.missionId, {
+              eventId: 'cancel-after-native-promotion', eventType: 'MISSION_CANCELLED', reason: 'Post-promotion fixture cancellation.',
+            }, fx.options);
+            if (fault === 'processing-drift') {
+              const changed = structuredClone(claim.item); changed.payload.allowedFiles = ['shared/agents/unapproved.mjs'];
+              await writeFile(claim.processingPath, JSON.stringify(changed));
+            }
+            return { status: 0, stdout: 'fixture test boundary; no external command executed', stderr: '' };
+          })();
+        },
+        fetchImpl: async () => {
+          models++;
+          return { ok: true, status: 200, text: async () => JSON.stringify({ model: 'test-only:14b', message: {
+            content: JSON.stringify({ schemaVersion: 'stephanos.native-model-result.v1', missionId: action.missionId,
+              actionId: action.actionId, baseHead: grant.sourceRevision, summary: 'Bounded fixture candidate.',
+              replacements: [{ path: 'shared/agents/example.mjs', beforeSha256: createHash('sha256').update(before).digest('hex'),
+                content: 'export const value = 2;\n' }] }),
+          } }) };
+        },
+      }),
+    });
+    assert.equal(models, 1); assert.equal(testBoundaries, 1);
+    assert.equal(result.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
+    assert.match(result.result.error, /SOURCE_SCOPE_RECONCILIATION_REQUIRED|ORIGINAL_SOURCE_ATTEMPT_FENCED/);
+    const failure = result.result.sourceFailure;
+    assert.equal(failure.sourceState, 'UNKNOWN'); assert.equal(failure.rollbackDisposition, 'REFUSED');
+    assert.equal(failure.promotionDisposition, 'COMPLETED');
+    assert.equal(failure.lastConfirmedSourceState, 'CANDIDATE_FILE_BYTES_OBSERVED');
+    assert.equal(failure.recoveryRequired, true); assert.equal(failure.responsibilityRetained, true);
+    assert.equal(failure.mutationAuthority, false); assert.equal(failure.observedSha256, '');
+    assert.deepEqual(JSON.parse(await readFile(result.resultPath, 'utf8')).sourceFailure, failure);
+    assert.match(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), /value = 2/,
+      'lost authority never authorizes rollback');
+    const current = (await readMissionRecord(grant.missionId, fx.options)).state;
+    assert.equal(current.git.branch, initial.git.branch); assert.equal(current.git.worktreePath, initial.git.worktreePath);
+    assert.deepEqual(current.allowedFiles, initial.allowedFiles); assert.deepEqual(current.repair, initial.repair);
+    if (fault === 'cancellation') assert.equal(current.currentPhase, 'CANCELLED');
+  });
+});
 
 test('general verification cannot substitute for a required independent behavior test outside edit scope', async t => {
   for (const candidateValue of [2, 3]) await t.test(candidateValue === 2 ? 'correct behavior is escrowed' : 'wrong behavior rolls back', async () => {
@@ -216,24 +457,6 @@ test('general verification cannot substitute for a required independent behavior
     assert.equal(run('git.exe', ['status', '--porcelain'], { cwd: fx.repoRoot }).stdout.trim(), '');
   }
   });
-});
-
-test('cancellation observed after provider response prevents any source edit', async () => {
-  const fx = await fixture(); fx.action.missionId = 'critical-3001-elastic-goal';
-  let providerReturned = false;
-  const result = await processNextProviderNeutralSourceBuild({
-    preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
-    repoRoot: fx.repoRoot, actionGrant: fx.actionGrant, runCommand: run,
-    claimNext: async () => fx.claim,
-    goalContext: 'Bounded source repair.',
-    generatePatch: async () => { providerReturned = true; return PATCH; },
-    readMissionRecord: async () => ({ state: { cancelled: providerReturned } }),
-    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
-  });
-  assert.equal(result.success, false);
-  assert.match(result.error, /ORIGINAL_SOURCE_ATTEMPT_FENCED/);
-  assert.equal((await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8')).trim(), 'export const value = 1;');
-  assert.equal(run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot }).stdout.trim(), '');
 });
 
 test('local Forge builder edits, tests, escrows and queues source while offline publication remains zero-authority', async () => {
@@ -770,9 +993,9 @@ test('local Forge builder removes a structured new file when a later required te
   assert.equal(status.stdout.trim(), '');
 });
 
-test('elastic Forge model creates a scoped new file with structured edits when source snapshots are empty', async () => {
+test('low-level goal-context fixture: elastic Forge model creates a scoped new file with structured edits when source snapshots are empty', async () => {
   const fx = await fixture(['node --check shared/agents/no-snapshot-target.mjs']);
-  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.missionId = 'unit-goal-context-3001';
   fx.action.allowedFiles = ['shared/agents/no-snapshot-target.mjs'];
   let calls = 0;
   const result = await processNextProviderNeutralSourceBuild({
@@ -816,9 +1039,9 @@ test('elastic Forge model creates a scoped new file with structured edits when s
   );
 });
 
-test('elastic Forge rejects an out-of-scope structured new file with no source snapshots', async () => {
+test('low-level goal-context fixture: elastic Forge rejects an out-of-scope structured new file with no source snapshots', async () => {
   const fx = await fixture();
-  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.missionId = 'unit-goal-context-3001';
   fx.action.allowedFiles = ['shared/agents/approved-new.mjs'];
   let calls = 0;
   const result = await processNextProviderNeutralSourceBuild({
@@ -849,9 +1072,9 @@ test('elastic Forge rejects an out-of-scope structured new file with no source s
   assert.equal(run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot }).stdout.trim(), '');
 });
 
-test('elastic Forge model can create an allowed new file with structured edits while source snapshots exist', async () => {
+test('low-level goal-context fixture: elastic Forge model can create an allowed new file with structured edits while source snapshots exist', async () => {
   const fx = await fixture(['node --check shared/agents/model-created.mjs']);
-  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.missionId = 'unit-goal-context-3001';
   let prompt = '';
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
@@ -894,9 +1117,9 @@ test('elastic Forge model can create an allowed new file with structured edits w
   );
 });
 
-test('elastic Forge model retries a semantically invalid structured edit before mutation', async () => {
+test('low-level goal-context fixture: elastic Forge model retries a semantically invalid structured edit before mutation', async () => {
   const fx = await fixture();
-  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.missionId = 'unit-goal-context-3001';
   let calls = 0;
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
@@ -948,9 +1171,9 @@ test('elastic Forge model retries a semantically invalid structured edit before 
   );
 });
 
-test('elastic Forge model rejects unified-diff fallback when source snapshots are available', async () => {
+test('low-level goal-context fixture: elastic Forge model rejects unified-diff fallback when source snapshots are available', async () => {
   const fx = await fixture();
-  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.missionId = 'unit-goal-context-3001';
   let calls = 0;
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
@@ -1113,9 +1336,9 @@ test('local Forge builder retains patch mode for mixed tracked-source plus new-f
 });
 
 
-test('elastic Forge builder hydrates authoritative goal context and retries malformed local-model output once', async () => {
+test('low-level goal-context fixture: elastic Forge builder hydrates authoritative goal context and retries malformed local-model output once', async () => {
   const fx = await fixture();
-  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.missionId = 'unit-goal-context-3001';
   let modelCalls = 0;
   const prompts = [];
   const result = await processNextProviderNeutralSourceBuild({
@@ -1159,154 +1382,71 @@ test('elastic Forge builder hydrates authoritative goal context and retries malf
   assert.match(prompts[1], /previous response did not satisfy/i);
 });
 
-test('elastic Forge resolves lowercase canonical GitHub goal identity but rejects lookalike repositories', async () => {
-  for (const [repository, admitted] of [
-    ['cheekyfellastef/stephan-os', true],
-    ['CHEEKYFELLASTEF/STEPHAN-OS', true],
-    ['cheekyfellastef/stephan-os-fork', false],
-  ]) {
-    const fx = await fixture();
-    fx.action.missionId = 'critical-3001-elastic-goal';
-    fx.action.repository = repository;
-    let githubReads = 0;
-    let modelCalls = 0;
-    const result = await processNextProviderNeutralSourceBuild({
-      preferredAdapter: 'foundry-forge',
-      sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
-    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
-      repoRoot: fx.repoRoot,
-      actionGrant: fx.actionGrant,
-      runCommand: run,
-      claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+test('actual canonical context reader resolves canonical GitHub identity and rejects a lookalike payload before model effects', async t => {
+  for (const foreign of [false, true]) await t.test(String(foreign), async t => {
+    const fx = await canonicalSourceFixture(t);
+    if (foreign) {
+      fx.claim.item.payload.repository = 'Cheekyfellastef/stephan-os-lookalike';
+      await writeFile(fx.claim.processingPath, JSON.stringify(fx.claim.item));
+    }
+    let githubReads = 0, modelCalls = 0;
+    const result = await processNextProviderNeutralSourceBuild({ ...fx.options,
+      preferredAdapter: 'foundry-forge', runCommand: run, claimNext: async () => fx.claim,
       githubAuth: { configured: true, authority: 'test', token: 'test-token' },
-      githubFetchImpl: async (url) => {
-        githubReads += 1;
+      githubFetchImpl: async url => {
+        githubReads++;
         assert.equal(url, 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3001');
-        return {
-          ok: true, status: 200,
-          json: async () => ({
-            number: 3001, state: 'open', title: 'Goal 3001',
-            body: 'Update shared/agents/example.mjs.', labels: [{ name: 'goal' }],
-          }),
-        };
+        return { ok: true, status: 200, json: async () => ({ number: 3001, state: 'open',
+          title: 'Bounded original goal', body: 'Update shared/agents/example.mjs.', labels: [{ name: 'goal' }] }) };
       },
       localModelFetchImpl: async () => {
-        modelCalls += 1;
-        return {
-          ok: true, status: 200,
-          json: async () => ({ message: { content: JSON.stringify({
-            edits: [{
-              path: 'shared/agents/example.mjs',
-              old: 'export const value = 1;\n',
-              new: 'export const value = 2;\n',
-            }],
-            summary: 'Change the approved file.',
-          }) } }),
-        };
-      },
-      collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
-    });
-    // Canonical scheduler casing now survives all boundaries: GitHub goal
-    // authority, provider invocation, verified tests and immutable escrow.
-    // A similarly named repository must fail before any model invocation.
-    assert.equal(result.success, admitted, repository + ': ' + result.error);
-    if (admitted) {
-      assert.equal(result.testsPassed, true, repository);
-      assert.match(result.sourceArtifactRef, /^shared-workspace:\/\/source-artifacts\//);
-      assert.match(result.offlinePublicationOutboxId, /^offline-publication-/);
-    } else {
-      assert.match(result.error, /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/);
-    }
-    assert.equal(result.providerInvoked, admitted, repository);
-    assert.equal(result.providerCompleted, admitted, repository);
-    assert.equal(githubReads, admitted ? 1 : 0, repository);
-    assert.equal(modelCalls, admitted ? 1 : 0, repository);
-    assert.equal(
-      (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
-      admitted ? 'export const value = 2;\n' : 'export const value = 1;\n',
-      repository,
-    );
-  }
+        modelCalls++;
+        return { ok: true, json: async () => ({ message: { content: JSON.stringify({
+          edits: [{ path: 'shared/agents/example.mjs', old: 'export const value = 1;', new: 'export const value = 2;' }],
+          summary: 'Satisfy the existing independent behavior oracle.',
+        }) } }) };
+      } });
+    assert.equal(result.success, !foreign, result.error);
+    assert.equal(githubReads, foreign ? 0 : 1);
+    assert.equal(modelCalls, foreign ? 0 : 1);
+    if (foreign) assert.match(result.error, /SOURCE_SCOPE_RECONCILIATION_REQUIRED/);
+    assert.match(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'),
+      foreign ? /value = 1/ : /value = 2/);
+  });
 });
 
-test('elastic Forge builder fails closed before model invocation when authoritative goal context is unavailable', async () => {
-  const fx = await fixture();
-  fx.action.missionId = 'critical-3001-elastic-goal';
-  let modelCalled = false;
-  const result = await processNextProviderNeutralSourceBuild({
-    preferredAdapter: 'foundry-forge',
-    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
-    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
-    repoRoot: fx.repoRoot,
-    actionGrant: fx.actionGrant,
-    runCommand: run,
-    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
-    loadGoalContext: async () => '',
-    localModelFetchImpl: async () => {
-      modelCalled = true;
-      throw new Error('model must not run');
-    },
-    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
-  });
+test('actual canonical builder fails before model effects when authoritative goal context is unavailable', async t => {
+  const fx = await canonicalSourceFixture(t);
+  let modelCalls = 0;
+  const result = await processNextProviderNeutralSourceBuild({ ...fx.options,
+    preferredAdapter: 'foundry-forge', runCommand: run, claimNext: async () => fx.claim,
+    loadGoalContext: async () => '', localModelFetchImpl: async () => { modelCalls++; throw new Error('MODEL_MUST_NOT_RUN'); } });
   assert.equal(result.success, false);
   assert.match(result.error, /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/);
-  assert.equal(modelCalled, false);
+  assert.equal(modelCalls, 0);
+  assert.equal(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), 'export const value = 1;\n');
 });
 
-
-test('elastic Forge builder revalidates queued GitHub goal authority before source mutation', async () => {
+test('actual canonical builder rejects revoked GitHub goal context before model effects', async t => {
   const revokedCases = [
-    {
-      name: 'closed issue',
-      payload: { number: 3001, state: 'closed', title: 'Goal 3001', body: 'change source', labels: [{ name: 'goal' }] },
-    },
-    {
-      name: 'goal label removed',
-      payload: { number: 3001, state: 'open', title: 'Goal 3001', body: 'change source', labels: [{ name: 'other' }] },
-    },
-    {
-      name: 'pull request identity',
-      payload: { number: 3001, state: 'open', title: 'Goal 3001', body: 'change source', labels: [{ name: 'goal' }], pull_request: { url: 'https://example.invalid/pr/3001' } },
-    },
-    {
-      name: 'wrong issue identity',
-      payload: { number: 3002, state: 'open', title: 'Goal 3002', body: 'change source', labels: [{ name: 'goal' }] },
-    },
+    { number: 3001, state: 'closed', title: 'Goal 3001', body: 'change source', labels: [{ name: 'goal' }] },
+    { number: 3001, state: 'open', title: 'Goal 3001', body: 'change source', labels: [{ name: 'other' }] },
+    { number: 3001, state: 'open', title: 'Goal 3001', body: 'change source', labels: [{ name: 'goal' }], pull_request: { url: 'https://example.invalid/pr/3001' } },
+    { number: 3002, state: 'open', title: 'Goal 3002', body: 'change source', labels: [{ name: 'goal' }] },
   ];
-
-  for (const revoked of revokedCases) {
-    const fx = await fixture();
-    fx.action.missionId = 'critical-3001-elastic-goal';
-    let modelCalled = false;
-    const result = await processNextProviderNeutralSourceBuild({
-      preferredAdapter: 'foundry-forge',
-      sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
-    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
-      repoRoot: fx.repoRoot,
-      actionGrant: fx.actionGrant,
-      runCommand: run,
-      claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+  for (const payload of revokedCases) await t.test(JSON.stringify(payload), async t => {
+    const fx = await canonicalSourceFixture(t);
+    let modelCalls = 0;
+    const result = await processNextProviderNeutralSourceBuild({ ...fx.options,
+      preferredAdapter: 'foundry-forge', runCommand: run, claimNext: async () => fx.claim,
       githubAuth: { configured: true, authority: 'test', token: 'test-token' },
-      githubFetchImpl: async () => ({
-        ok: true,
-        status: 200,
-        json: async () => revoked.payload,
-      }),
-      localModelFetchImpl: async () => {
-        modelCalled = true;
-        throw new Error('model must not run after goal authority is revoked');
-      },
-      collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
-    });
-    assert.equal(result.success, false, revoked.name);
-    assert.match(result.error, /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/, revoked.name);
-    assert.equal(modelCalled, false, revoked.name);
-    assert.equal(
-      (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
-      'export const value = 1;\n',
-      revoked.name,
-    );
-  }
+      githubFetchImpl: async () => ({ ok: true, status: 200, json: async () => payload }),
+      localModelFetchImpl: async () => { modelCalls++; throw new Error('MODEL_MUST_NOT_RUN'); } });
+    assert.equal(result.success, false);
+    assert.match(result.error, /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/);
+    assert.equal(modelCalls, 0);
+    assert.equal(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), 'export const value = 1;\n');
+  });
 });
 
 
@@ -1527,10 +1667,10 @@ test('failed source terminal receipt follows test failure and result collection'
   assert.ok(Date.parse(h.latestReceipt.timestampUtc) >= collectedAt, 'terminal receipt reused the invocation start time');
 });
 
-test('EOF-only model response is corrected within the existing bounded retry before source mutation', async t => {
+test('low-level goal-context fixture: EOF-only model response is corrected within the existing bounded retry before source mutation', async t => {
   for (const corrected of [true, false]) await t.test(corrected ? 'next response implements behavior' : 'exhaustion preserves source', async () => {
     const fx = await fixture();
-    fx.action.missionId = 'critical-3001-elastic-goal';
+    fx.action.missionId = 'unit-goal-context-3001';
     let calls = 0;
     const original = (await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8')).replace(/\r\n/g, '\n');
     const result = await processNextProviderNeutralSourceBuild({
@@ -1621,4 +1761,57 @@ test('source proposal rejects absent bounded runner and wrong class before execu
     runCommand: () => { throw new Error('RUNNER_MUST_NOT_RUN'); },
     localModelFetchImpl: () => { throw new Error('MODEL_MUST_NOT_RUN'); },
   }), /LOCAL_SOURCE_PROPOSAL_CLAIM_REQUIRED/);
+});
+
+test('copied canonical seed proposal context cannot replace authenticated native child custody', async t => {
+  const fx = await fixture();
+  t.after(() => rm(fx.parent, { recursive: true, force: true }));
+  const missionId = 'critical-3106-elastic-goal', actionId = 'critical-3106-elastic-goal-source-1';
+  Object.assign(fx.action, { missionId, actionId, branch: 'openclaw/elastic-goal-3106' });
+  Object.assign(fx.actionGrant, { adapter: 'foundry-forge', actionKind: 'agent-handoff',
+    capacityRoute: 'FOUNDRY_FORGE', workerId: 'stephanos-forge-lifeboat-local',
+    boundedActionCount: 1, mergeAuthority: false, leaseSeizureAllowed: false,
+    missionId, actionId, repository: fx.action.repository, branch: fx.action.branch,
+    sourcePlanFingerprint: 'a'.repeat(64) });
+  Object.assign(fx.claim.item, { schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'foundry-forge', missionId, actionId });
+  const original = await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8');
+  const noEffects = () => assert.fail('copied proposal context produced an effect');
+  await assert.rejects(produceProviderNeutralSourceBuildProposalV1(fx.claim, {
+    repoRoot: fx.repoRoot, sharedWorkspaceRoot: fx.sharedWorkspaceRoot, actionGrant: fx.actionGrant,
+    runCommand: noEffects, localModelFetchImpl: noEffects, generatePatch: noEffects,
+    // Deliberately plausible copied flags are not authority.
+    semanticAdmissionVerified: true, nativeParentAuthenticated: true,
+  }), /SOURCE_TASK_CHILD_SEMANTIC_CUSTODY_REQUIRED/);
+  assert.equal(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), original);
+  assert.equal(existsSync(join(fx.sharedWorkspaceRoot, 'source-artifacts')), false);
+});
+
+test('standalone copied source proposals cannot evade semantic custody through mission identity aliases', async () => {
+  for (const missionId of ['critical-3106-elastic-goal', 'CRITICAL-3106-ELASTIC-GOAL',
+    'critical-3106-Elastic-goal', ' critical-3106-elastic-goal', 'critical-03106-elastic-goal',
+    'critical-3106-elastic-goal-copy', 'critical-3106-elastic-goalcopy',
+    'critical-3106-elastic-goal:copy', 'critical_3106_elastic_goal']) {
+    const actionId = 'copied-source-action';
+    const action = { missionId, actionId, adapter: 'foundry-forge', actionKind: 'agent-handoff',
+      repository: 'Cheekyfellastef/stephan-os', branch: missionId === 'critical-3106-elastic-goal'
+        ? 'openclaw/elastic-goal-3106' : 'openclaw/unit-source-engine',
+      worktreePath: 'C:\\unobserved-fixture', allowedFiles: ['shared/agents/example.mjs'],
+      requiredTests: ['node --test shared/agents/example.test.mjs'] };
+    const grant = { schemaVersion: 'stephanos.mission-worker-action-grant.v1', missionId, actionId,
+      adapter: 'foundry-forge', actionKind: 'agent-handoff', branch: action.branch,
+      repository: action.repository, capacityRoute: 'FOUNDRY_FORGE', workerId: 'stephanos-forge-lifeboat-local',
+      boundedActionCount: 1, mergeAuthority: false, leaseSeizureAllowed: false, sourceRevision: 'a'.repeat(40),
+      sourcePlanFingerprint: 'b'.repeat(64), sourcePlanKind: 'SEED_SELF' };
+    const claim = { adapter: 'foundry-forge', processingPath: 'C:\\unobserved-fixture\\copied.json',
+      item: { schemaVersion: 'stephanos.mission-worker-queue-item.v1', adapter: 'foundry-forge',
+        missionId, actionId, payload: action, actionGrant: grant } };
+    let runnerCalls = 0, modelCalls = 0;
+    await assert.rejects(produceProviderNeutralSourceBuildProposalV1(claim, {
+      runCommand: () => { runnerCalls++; throw new Error('RUNNER_MUST_NOT_RUN'); },
+      localModelFetchImpl: () => { modelCalls++; throw new Error('MODEL_MUST_NOT_RUN'); },
+    }), missionId === 'critical-3106-elastic-goal'
+      ? /SOURCE_TASK_CHILD_SEMANTIC_CUSTODY_REQUIRED/ : /NONCANONICAL_ELASTIC_MISSION_IDENTITY/);
+    assert.equal(runnerCalls, 0, missionId); assert.equal(modelCalls, 0, missionId);
+  }
 });

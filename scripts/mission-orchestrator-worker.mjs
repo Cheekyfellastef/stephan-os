@@ -3,6 +3,7 @@ import { FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE, projectMissionContr
 import { CODEX_TASK_CLASS } from '../shared/agents/codexCapacityGovernorV1.mjs';
 import { projectNarrowedMissionSourceScopeV1 } from '../shared/agents/missionOrchestrator.mjs';
 import { missionWorkerActionGrantsMatchV1 } from '../shared/agents/missionOrchestratorWorker.mjs';
+import { classifyElasticMissionIdentityV1 } from '../shared/runtime/seedGrowthWorkV1.mjs';
 import { inspectStephanosNativeCapacityGamingAdmissionV1 } from '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs';
 import { readMissionRecord, runWithMissionStatePrecondition } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { finalizeSourceArtifactEscrowFromCapturedIdentityV1 } from '../stephanos-server/services/sourceArtifactEscrowStore.js';
@@ -33,6 +34,7 @@ import {
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
 import {
   collectAgentWorkerResult,
+  assertCanonicalMissionSourceEffectV1,
   publishNextMissionWorkerAction,
   readMissionWorkerQueue,
 } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
@@ -231,6 +233,8 @@ function inspectChangedFiles(worktreePath, run) {
 
 export async function executeCodexAction(action, claim, options = {}) {
   if (action?.actionKind !== 'agent-handoff' || action.adapter !== 'codex') throw new Error('Unsupported Codex worker action.');
+  const sourceEffect = await assertCanonicalMissionSourceEffectV1(action, claim, options);
+  if (sourceEffect) { action = sourceEffect.action; claim = sourceEffect.claim; }
   const worktreePath = text(action.worktreePath);
   if (!worktreePath || !existsSync(worktreePath)) throw new Error('Codex handoff requires an existing isolated worktree.');
   const schemaPath = `${claim.processingPath}.codex-schema.json`;
@@ -609,6 +613,8 @@ function sourceEvidenceFromTestReceipts(action, testReceipts, timestamp, source 
     }));
 }
 export async function executeOpenClawStandaloneAction(action, claim, options = {}) {
+  const sourceEffect = await assertCanonicalMissionSourceEffectV1(action, claim, options);
+  if (sourceEffect) { action = sourceEffect.action; claim = sourceEffect.claim; }
   if (action?.actionKind !== 'agent-handoff' || action.adapter !== 'openclaw-standalone') {
     throw new Error('Unsupported OpenClaw Standalone worker action.');
   }
@@ -735,6 +741,8 @@ export async function executeOpenClawStandaloneAction(action, claim, options = {
 }
 
 export async function executeOpenClawLocalAction(action, claim, options = {}) {
+  const sourceEffect = await assertCanonicalMissionSourceEffectV1(action, claim, options);
+  if (sourceEffect) { action = sourceEffect.action; claim = sourceEffect.claim; }
   if (action?.actionKind !== 'agent-handoff' || action.adapter !== 'openclaw-local') {
     throw new Error('Unsupported OpenClaw Local worker action.');
   }
@@ -963,6 +971,8 @@ export async function executeOpenClawReadonlyAction(action, claim, options = {})
 }
 
 export async function executeSignedOperation(payload, claim, options = {}) {
+  const sourceEffect = await assertCanonicalMissionSourceEffectV1(payload, claim, options);
+  if (sourceEffect) { payload = sourceEffect.action; claim = sourceEffect.claim; }
   const claims = payload?.authorization?.claims || {};
   const repositoryRoot = text(claims.repositoryRoot);
   const bridgePath = options.bridgePath || resolve(repositoryRoot, 'scripts', 'windows', 'invoke-openclaw-github-operator-bridge.ps1');
@@ -1089,6 +1099,8 @@ export function selectGrantedMissionWorkerQueueItem(queue = [], actionGrant = {}
 
 
 export async function executeForgePublicationAction(action, claim, options = {}) {
+  const sourceEffect = await assertCanonicalMissionSourceEffectV1(action, claim, options);
+  if (sourceEffect) { action = sourceEffect.action; claim = sourceEffect.claim; }
   if (action?.actionKind !== 'forge-escrow-publication'
       || action?.adapter !== 'forge-publication'
       || !claim?.item?.actionGrant
@@ -1182,6 +1194,11 @@ function sourceContract(state) {
   return sourceFingerprint({missionId:state.missionId,repository:text(state.repository).toLowerCase(),
     branch:state.git?.branch,worktreePath:state.git?.worktreePath,allowedFiles:state.allowedFiles,
     requiredTests:state.requiredTests,requiredEvidence:state.requiredEvidence,
+    sourcePlanFingerprint:state.currentOrdinarySourcePlan?.authorityPlanFingerprint
+      || state.seedSourceWorkDescriptor?.authorityPlanFingerprint || null,
+    sourcePlanKind:state.currentOrdinarySourcePlan && state.seedSourceWorkDescriptor ? 'CONFLICT'
+      : state.currentOrdinarySourcePlan ? 'CURRENT_ORDINARY_SOURCE_PLAN'
+        : state.seedSourceWorkDescriptor ? 'SEED_SELF' : null,
     repairRound:state.repair?.currentRound,repairMaximum:state.repair?.maximumRounds});
 }
 function fixedSourceFile(path, maximum) {
@@ -1247,8 +1264,12 @@ function readFixedSourceProposal(nativeResult,binding,claim) {
 // Existing Mission Worker owns the one claim and chain; this is its Windows
 // adapter, never a second worker/scheduler or a caller-qualified execution lane.
 async function processFixedSourceTaskInWorker(options) {
+  const identity = classifyElasticMissionIdentityV1(options.actionGrant?.missionId, options.actionGrant?.branch);
+  if (identity.kind === 'NONCANONICAL_ELASTIC') return { processed: false, reason: 'NONCANONICAL_ELASTIC_MISSION_IDENTITY' };
   const grant=JSON.parse(JSON.stringify(options.actionGrant));
   if(!fixedSourceGrantClass(grant))return {processed:false,reason:'native-source-local-worker-class-required'};
+  if(identity.kind === 'CANONICAL_ELASTIC')
+    return {processed:false,reason:'SOURCE_TASK_CHILD_SEMANTIC_CUSTODY_REQUIRED'};
   const before=await readMissionRecord(grant.missionId,options);
   if(projectMissionControllerTaskV1(before.state).taskClass!==CODEX_TASK_CLASS.FOCUSED_REPAIR
     || !Array.isArray(before.state.allowedFiles) || before.state.allowedFiles.length<1 || before.state.allowedFiles.length>4)
@@ -1590,7 +1611,7 @@ export async function runMissionWorkerTick(options = {}) {
   } else if (selection.entry.adapter === 'openclaw-signed') {
     processed = await processNextSignedOpenClawItem({
       ...workerOptions,
-      executeSignedOperation: (payload, claim) => executeSignedOperation(payload, claim, options),
+      executeSignedOperation: (payload, claim) => executeSignedOperation(payload, claim, workerOptions),
       inspectSignedOperation: (payload, execution, claim) => inspectSignedOperation(payload, execution, claim, options),
     });
   } else if (selection.entry.adapter === 'openclaw-github-readonly') {
@@ -1601,7 +1622,7 @@ export async function runMissionWorkerTick(options = {}) {
   } else if (selection.entry.adapter === 'codex') {
     processed = await processNextCodexItem({
       ...workerOptions,
-      executeCodexAction: (action, claim) => executeCodexAction(action, claim, options),
+      executeCodexAction: (action, claim) => executeCodexAction(action, claim, workerOptions),
     });
   } else if (selection.entry.adapter === 'stephanos-native') {
     processed = await processNextStephanosNativeItem({

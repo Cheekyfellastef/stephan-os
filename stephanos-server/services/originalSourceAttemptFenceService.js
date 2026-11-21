@@ -1,5 +1,6 @@
 import { prepareSupervisedR7RecoveryV1 } from './supervisedR7RecoveryPreparationV1.mjs';
 import { createHash } from 'node:crypto';
+import { classifyElasticMissionIdentityV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import { SUPERVISED_R7_FENCE_SCHEMA, supervisedR7FenceBindsLease,
   readSupervisedRecoverySourceHead, readSupervisedRecoveryMaintenance,
   prepareRuntimeSupervisedR7, readRuntimeSupervisedR7Packet, authenticateRuntimeSupervisedR7,
@@ -51,7 +52,9 @@ async function proveHeldLeaseExecutionsTerminal(lease, paths, reader) {
 
 // Uses the existing canonical mission record, not a second lease/fence database.
 export async function assertOriginalSourceAttemptNotFenced(missionId, options = {}) {
-  if (!/^critical-[1-9]\d*-elastic-goal$/.test(text(missionId))) return;
+  const identity = classifyElasticMissionIdentityV1(missionId);
+  if (identity.kind === 'NONCANONICAL_ELASTIC') fail('NONCANONICAL_ELASTIC_MISSION_IDENTITY');
+  if (identity.kind !== 'CANONICAL_ELASTIC') return;
   const { state } = await (options.readMissionRecord || readMissionRecord)(missionId, {
     env: options.env || process.env, ...options.missionStoreOptions,
   });
