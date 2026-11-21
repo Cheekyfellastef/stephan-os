@@ -1,3 +1,5 @@
+import { validateProtectedMergeCheckRows } from './protectedMergeCheckClassifierV1.mjs';
+
 const ALLOWED_OPERATIONS = new Set([
   'inspect',
   'create-worktree',
@@ -16,7 +18,7 @@ const MUTATING_OPERATIONS = new Set([
   'merge-pr',
 ]);
 
-const FORBIDDEN_PATH_PATTERN = /(^|\/)(apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
+const FORBIDDEN_PATH_PATTERN = /^(?:apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
 const LOWERCASE_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const MISSION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const BRANCH_PATTERN = /^openclaw\/[a-z0-9][a-z0-9._/-]{2,127}$/;
@@ -54,10 +56,14 @@ function sorted(values) {
 
 function scopeAllowsPath(scope, path) {
   const normalizedScope = normalizePath(scope);
-  if (normalizedScope === path) return true;
-  if (normalizedScope.endsWith('/**')) {
-    const base = normalizedScope.slice(0, -3);
-    return path === base || path.startsWith(`${base}/`);
+  const normalizedPath = normalizePath(path);
+  const scopeIdentity = normalizedScope.toLowerCase();
+  const pathIdentity = normalizedPath.toLowerCase();
+  if (scopeIdentity === '**') return !isForbiddenPath(normalizedPath);
+  if (scopeIdentity === pathIdentity) return true;
+  if (scopeIdentity.endsWith('/**')) {
+    const base = scopeIdentity.slice(0, -3);
+    return pathIdentity === base || pathIdentity.startsWith(`${base}/`);
   }
   return false;
 }
@@ -81,7 +87,7 @@ export function buildOpenClawGitHubOperation(input = {}) {
   const allowedFiles = unique(list(input.allowedFiles).map(normalizePath));
   const changedFiles = unique(list(input.changedFiles).map(normalizePath));
   const actualChangedFiles = unique(list(input.actualChangedFiles).map(normalizePath));
-  const checks = list(input.checks).map((value) => value.toLowerCase());
+  const checks = Array.isArray(input.checks) ? input.checks : [];
   const blockers = [];
 
   if (!ALLOWED_OPERATIONS.has(operation)) blockers.push('Unsupported GitHub operation.');
@@ -120,7 +126,7 @@ export function buildOpenClawGitHubOperation(input = {}) {
     if (!LOWERCASE_SHA_PATTERN.test(expectedHeadSha)) blockers.push('Exact lowercase pull request head SHA is required.');
     if (actualHeadSha !== expectedHeadSha) blockers.push('Pull request head SHA changed or could not be verified.');
     if (input.mergeable !== true) blockers.push('Pull request must be mergeable.');
-    if (!checks.length || checks.some((check) => check !== 'success')) blockers.push('Every required check must report success.');
+    if (!validateProtectedMergeCheckRows(checks)) blockers.push('Every required check must report success.');
     if (text(input.approvalToken) !== exactMergeApproval(prNumber, expectedHeadSha)) {
       blockers.push('Exact operator squash-merge approval token is required.');
     }

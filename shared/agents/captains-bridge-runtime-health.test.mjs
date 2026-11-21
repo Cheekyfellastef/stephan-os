@@ -18,3 +18,12 @@ test('G15 marks stale and failed runtime health with exact next action', () => {
   assert.equal(failed.overallTrafficLight, 'RED');
   assert.match(failed.exactNextAction, /Escalate backend proof/);
 });
+
+test('G15 preserves the original per-service observation timestamp, never the projection time', () => {
+  const observedAtUtc = '2026-07-07T23:58:00.000Z';
+  const p = projectCaptainsBridgeRuntimeHealth({ nowMs: now, healthRecords: [
+    { serviceId: 'backend', status: 'READY', checkedAtUtc: observedAtUtc },
+  ] });
+  assert.equal(p.services.find(s => s.serviceId === 'backend').observedAtUtc, observedAtUtc);
+  assert.equal(p.services.find(s => s.serviceId === 'mission-worker').observedAtUtc, '');
+});

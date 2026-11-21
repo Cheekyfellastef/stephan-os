@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.1",
+  "source_id": "official-meta-quest-link-air-link",
+  "title": "Meta Quest Link and Air Link",
+  "classification": [
+    "priority-pcvr-transport-source",
+    "official-vendor-operational-evidence",
+    "quest-3",
+    "wireless-pcvr",
+    "meta-openxr",
+    "primary-operator-route"
+  ],
+  "upstream": {
+    "vendor": "Meta Platforms",
+    "canonical_product": "Meta Horizon Link / Meta Quest Link",
+    "canonical_support": "https://www.meta.com/help/quest/pcvr/",
+    "canonical_developer_source": "https://developers.meta.com/horizon/",
+    "snapshot_date": "2026-08-02",
+    "snapshot_version": "not-assumed-capture-on-battle-bridge"
+  },
+  "operator_context": {
+    "headset": "Meta Quest 3",
+    "preferred_transport": "Air Link over Wi-Fi",
+    "pc": "Battle Bridge",
+    "programme_role": "Primary PCVR transport for Starfield VR and Stephanos VR runtime proof",
+    "available_transports": [
+      "Meta Air Link over Wi-Fi",
+      "Virtual Desktop when separately selected and proven"
+    ],
+    "unavailable_transports": [
+      "Wired Meta Link"
+    ],
+    "hard_constraint": "Do not plan, request, test or claim wired Meta Link as an available fallback unless the operator explicitly reports acquiring compatible wired-Link hardware in the future."
+  },
+  "licence": {
+    "class": "Commercial proprietary",
+    "reuse_verdict": "Public metadata, official documentation and authorised local operator evidence only",
+    "implementation_copying": "prohibited-without-explicit-permission"
+  },
+  "evidence_boundaries": {
+    "allowed": [
+      "official setup and support metadata",
+      "public developer documentation",
+      "authorised installed-version and configuration inventory",
+      "operator-owned network and headset telemetry",
+      "latency, frame pacing, bitrate and runtime observations",
+      "exact local process, service, executable and OpenXR runtime identity"
+    ],
+    "prohibited": [
+      "copying proprietary client or runtime implementation",
+      "redistributing Meta binaries",
+      "publishing credentials, account tokens or private diagnostic data",
+      "assuming installed version or compatibility without Battle Bridge proof",
+      "treating wired Meta Link as an available operator route"
+    ]
+  },
+  "knowledge_targets": [
+    "Air Link pairing and session readiness",
+    "Meta OpenXR runtime selection and verification",
+    "wireless PCVR encode-network-decode-display path",
+    "Wi-Fi topology, packet loss, jitter and congestion effects",
+    "refresh rate, render resolution, bitrate and frame pacing",
+    "Quest 3 controller and headset pose transport",
+    "Meta Dash and PC desktop presentation",
+    "failure recovery, re-pairing and rollback",
+    "comparison with Virtual Desktop",
+    "transport-neutral interfaces for sovereign replacement",
+    "explicit absence of wired Meta Link"
+  ],
+  "programme_links": [1591, 1593, 1595, 1596, 1597, 1643],
+  "refresh_policy": {
+    "owner_goal": 1596,
+    "installed_identity_owner": 1595,
+    "track_product_and_support_changes": true,
+    "capture_exact_local_version_before_claim": true,
+    "never_auto_promote_vendor_claims": true,
+    "preserve_operator_transport_availability": true
+  }
+}

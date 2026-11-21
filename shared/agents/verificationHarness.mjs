@@ -57,8 +57,6 @@ export const OPENCLAW_GATEWAY_VERDICTS = Object.freeze({
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
 const SAFE_TEXT_PATTERN = /^[a-z0-9][a-z0-9._:/# -]{0,240}$/i;
 const LOWERCASE_SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/i;
-const PR_NUMBER_PATTERN = /^[1-9][0-9]{0,8}$/;
 const FORBIDDEN_OUTPUT_PATTERN = /token|secret|password|credential|\.env|private key/i;
 
 function asText(value, fallback = '') {
@@ -233,6 +231,112 @@ export function aggregateVerificationResults(input = {}) {
   return aggregate;
 }
 
+
+function normalizeSha(value) {
+  const text = asText(value, '').toLowerCase();
+  return /^[a-f0-9]{7,40}$/.test(text) ? text : '';
+}
+
+function shaMatches(actual, expected) {
+  const normalizedActual = normalizeSha(actual);
+  const normalizedExpected = normalizeSha(expected);
+  if (!normalizedActual || !normalizedExpected) return false;
+  return normalizedActual === normalizedExpected || normalizedActual.startsWith(normalizedExpected) || normalizedExpected.startsWith(normalizedActual);
+}
+
+function normalizePrCommitList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => normalizeSha(typeof item === 'string' ? item : item?.oid || item?.sha || item?.commit?.oid)).filter(Boolean);
+}
+
+function optionalPublicationFieldMatches(record, key, matches) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  try {
+    const field = Object.getOwnPropertyDescriptor(record, key);
+    if (!field) return !(key in record);
+    return Object.hasOwn(field, 'value') && matches(field.value);
+  } catch {
+    return false;
+  }
+}
+
+function expectedPublicationPrMatches(value, prNumber) {
+  if (typeof value === 'string') {
+    if (!/^[1-9][0-9]*$/.test(value)) return false;
+    value = Number(value);
+  }
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value === prNumber;
+}
+
+export function createPRPublicationVerifierResult(packet = {}, options = {}) {
+  const prNumber = asInteger(packet.prNumber || packet.pullRequestNumber, null);
+  const headBranch = safeField(packet.headBranch || packet.branch, 'unknown');
+  const expectedCommit = normalizeSha(packet.expectedCommit || packet.expectedCommitSha || packet.expectedHead || packet.head);
+  const remotePrHeadSha = normalizeSha(packet.remotePrHeadSha || packet.prHeadRefOid || packet.headRefOid);
+  const fetchedOriginBranchSha = normalizeSha(packet.fetchedOriginBranchSha || packet.originBranchSha || packet.remoteBranchSha);
+  const localHeadSha = normalizeSha(packet.localHeadSha || packet.localHead || packet.head);
+  const testedHeadSha = normalizeSha(packet.testedHeadSha || packet.testedCodeSha || packet.testHead || localHeadSha);
+  const prCommits = normalizePrCommitList(packet.prCommits || packet.commits);
+  const expectedCommitPresent = !!expectedCommit && (shaMatches(remotePrHeadSha, expectedCommit) || prCommits.some((sha) => shaMatches(sha, expectedCommit)));
+  const prHeadMatchesExpected = !!expectedCommit && shaMatches(remotePrHeadSha, expectedCommit);
+  const fetchedBranchMatchesPr = shaMatches(fetchedOriginBranchSha, remotePrHeadSha);
+  const localHeadMatchesPr = shaMatches(localHeadSha, remotePrHeadSha);
+  const testedCodeMatchesPr = shaMatches(testedHeadSha, remotePrHeadSha);
+  const prNumberPresent = prNumber !== null && prNumber > 0;
+  const branchPresent = headBranch !== 'unknown';
+  const targetExistingPr = optionalPublicationFieldMatches(packet, 'targetExistingPr', (value) => value === true);
+  const publicationDisabled = ['publishAllowed', 'publish', 'createPr', 'merge']
+    .every((field) => optionalPublicationFieldMatches(packet, field, (value) => value === false));
+  const expectedPrMatches = [packet, options]
+    .every((record) => optionalPublicationFieldMatches(record, 'expectedPr', (value) => expectedPublicationPrMatches(value, prNumber)));
+  const expectedBranchMatches = [packet, options]
+    .every((record) => optionalPublicationFieldMatches(record, 'expectedBranch', (value) => typeof value === 'string' && value.length > 0 && value === headBranch));
+  const pass = prNumberPresent && branchPresent && expectedCommitPresent && prHeadMatchesExpected && fetchedBranchMatchesPr && localHeadMatchesPr && testedCodeMatchesPr
+    && targetExistingPr && publicationDisabled && expectedPrMatches && expectedBranchMatches;
+  const blockers = [];
+  if (!prNumberPresent) blockers.push('pr-number-missing');
+  if (!branchPresent) blockers.push('head-branch-missing');
+  if (!expectedCommitPresent) blockers.push('expected-commit-missing-from-pr');
+  if (!prHeadMatchesExpected) blockers.push('pr-head-does-not-match-expected-commit');
+  if (!fetchedBranchMatchesPr) blockers.push('origin-branch-stale-or-missing');
+  if (!localHeadMatchesPr) blockers.push('local-head-is-not-pr-head');
+  if (!testedCodeMatchesPr) blockers.push('tested-code-is-not-pr-code');
+  if (!targetExistingPr) blockers.push('target-existing-pr-required');
+  if (!publicationDisabled) blockers.push('publication-disabled');
+  if (!expectedPrMatches) blockers.push('pr-number-mismatch');
+  if (!expectedBranchMatches) blockers.push('branch-mismatch');
+  return createVerifierResult({
+    checkId: 'pr-publication-proof',
+    verifierType: 'PRPublicationVerifier',
+    status: pass ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.BLOCKED,
+    target: prNumberPresent ? `pr-${prNumber}` : 'github-pr-publication',
+    evidence: [
+      proofEvidence('prNumber', prNumber ?? 'unknown'),
+      proofEvidence('headBranch', headBranch),
+      proofEvidence('expectedCommit', expectedCommit || 'missing'),
+      proofEvidence('remotePrHeadSha', remotePrHeadSha || 'missing'),
+      proofEvidence('fetchedOriginBranchSha', fetchedOriginBranchSha || 'missing'),
+      proofEvidence('localHeadSha', localHeadSha || 'missing'),
+      proofEvidence('testedHeadSha', testedHeadSha || 'missing'),
+      proofEvidence('prCommitCount', prCommits.length),
+      proofEvidence('expectedCommitPresent', expectedCommitPresent),
+      proofEvidence('prHeadMatchesExpected', prHeadMatchesExpected),
+      proofEvidence('fetchedBranchMatchesPr', fetchedBranchMatchesPr),
+      proofEvidence('localHeadMatchesPr', localHeadMatchesPr),
+      proofEvidence('testedCodeMatchesPr', testedCodeMatchesPr),
+      proofEvidence('targetExistingPr', targetExistingPr),
+      proofEvidence('publicationDisabled', publicationDisabled),
+      proofEvidence('expectedPrMatches', expectedPrMatches),
+      proofEvidence('expectedBranchMatches', expectedBranchMatches),
+    ],
+    reason: pass ? '' : blockers.join(' '),
+    durationMs: options.durationMs ?? 0,
+    timestampUtc: options.timestampUtc || packet.timestampUtc || 'pending',
+    finalVerdict: pass ? 'PR_PUBLICATION_VERIFIER_PASS' : 'PR_PUBLICATION_VERIFIER_BLOCKED',
+    proofRefs: packet.proofRefs || [],
+  });
+}
+
 function packetVerifier({ verifierType, checkId, target, passField, evidenceFields, passVerdict, failVerdict }) {
   return (packet = {}, options = {}) => {
     const pass = packet[passField] === true || packet.status === 'pass' || packet.status === 'PASS';
@@ -350,47 +454,6 @@ export function createStaleCapabilityVerifierResult(packet = {}, options = {}) {
     timestampUtc: options.timestampUtc || record.timestampUtc || 'pending',
     finalVerdict: valid ? 'STALE_CAPABILITY_VERIFIER_PASS' : (validation.stale ? 'CAPABILITY_RECORD_STALE_OBSERVED' : 'STALE_CAPABILITY_VERIFIER_BLOCKED'),
     proofRefs: record.proofRefs || [],
-  });
-}
-
-
-export function createPRPublicationVerifierResult(packet = {}, options = {}) {
-  const prNumber = asText(packet.prNumber || packet.pr || packet.pullRequestNumber, '');
-  const branch = asText(packet.branch || packet.headRef || packet.sourceBranch, '');
-  const remoteHead = asText(packet.remoteHead || packet.headSha || packet.remoteHeadSha, '');
-  const expectedPr = asText(packet.expectedPr || options.expectedPr || '', '');
-  const expectedBranch = asText(packet.expectedBranch || options.expectedBranch || '', '');
-  const expectedRemoteHead = asText(packet.expectedRemoteHead || options.expectedRemoteHead || '', '');
-  const targetExistingPr = packet.targetExistingPr !== false;
-  const publishAllowed = packet.publishAllowed === true || packet.publish === true || packet.createPr === true || packet.merge === true;
-  const prMatches = PR_NUMBER_PATTERN.test(prNumber) && (!expectedPr || prNumber === expectedPr);
-  const branchMatches = !!branch && (!expectedBranch || branch === expectedBranch);
-  const remoteHeadMatches = GIT_SHA_PATTERN.test(remoteHead) && (!expectedRemoteHead || remoteHead.toLowerCase() === expectedRemoteHead.toLowerCase());
-  const valid = prMatches && branchMatches && remoteHeadMatches && targetExistingPr && !publishAllowed;
-  const blockers = [];
-  if (!prMatches) blockers.push('pr-number-mismatch');
-  if (!branchMatches) blockers.push('branch-mismatch');
-  if (!remoteHeadMatches) blockers.push('remote-head-mismatch');
-  if (!targetExistingPr) blockers.push('target-existing-pr-required');
-  if (publishAllowed) blockers.push('publication-disabled');
-
-  return createVerifierResult({
-    checkId: 'pr-publication-proof',
-    verifierType: 'PRPublicationVerifier',
-    status: valid ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.BLOCKED,
-    target: prNumber ? `pr-${prNumber}` : 'existing-pr',
-    evidence: [
-      `pr=${prNumber || 'unknown'}`,
-      `branch=${branch || 'unknown'}`,
-      `remoteHead=${remoteHead || 'unknown'}`,
-      `targetExistingPr=${targetExistingPr}`,
-      `publishAllowed=${publishAllowed}`,
-    ],
-    reason: valid ? '' : blockers.join(' ') || 'pr publication proof blocked',
-    durationMs: options.durationMs ?? 0,
-    timestampUtc: options.timestampUtc || packet.timestampUtc || 'pending',
-    finalVerdict: valid ? 'PR_PUBLICATION_VERIFIER_PASS' : 'PR_PUBLICATION_VERIFIER_BLOCKED',
-    proofRefs: packet.proofRefs || [],
   });
 }
 
@@ -520,6 +583,9 @@ export async function writeVerificationPacketToSharedWorkspace(root, aggregate, 
     timestampUtc,
     status: aggregate.status,
     summary: `${aggregateId} ${aggregate.overall}`,
+    correlationId: aggregate.correlationId || aggregateId,
+    relatedIssue: aggregate.relatedIssue || aggregate.relatedGoal || '#1287',
+    proofRefs: [`proof/${aggregateId}-verification.json`, ...(aggregate.proofRefs || [])],
     refs: aggregate.proofRefs || [],
   });
   const status = createSharedWorkspaceStatusRecord({

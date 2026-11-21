@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+// The existing PowerShell 5.1 CI entry also exercises real launcher functions.
+import './windows-ignition-browser-surfaces.test.mjs';
 
 const WINDOWS_LAUNCHER_PS1 = new URL('../windows/Launch-Stephanos-Local.ps1', import.meta.url);
 const WINDOWS_LAUNCHER_CMD = new URL('../windows/Launch-Stephanos-Local.cmd', import.meta.url);
@@ -86,7 +90,7 @@ test('launcher-root cockpit mode still resolves launcher and runtime browser sur
   );
   assert.match(
     script,
-    /'cockpit' \{ return @\(\$surfaceMap\.launcher, \$surfaceMap\.runtime\) \}/m,
+    /'cockpit' \{ return @\(\$surfaceMap\.launcher, \$surfaceMap\.runtime, \$surfaceMap\.openclaw\) \}/m,
     'cockpit mode must still open both launcher and runtime surfaces',
   );
 });
@@ -157,27 +161,30 @@ test('ignition button path selects splash/status browser UI before launcher-root
 
 test('ignition process output is minimized and redirected instead of primary PowerShell wall UI', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /Start-Process -FilePath 'powershell\.exe' -WorkingDirectory \$repoRoot -WindowStyle Minimized -RedirectStandardOutput \$stdoutLog -RedirectStandardError \$stderrLog/m, 'PowerShell process must be minimized and redirected to bounded logs');
+  assert.match(script, /Start-Process -FilePath 'powershell\.exe' -WorkingDirectory \$repoRoot -WindowStyle \$childWindowStyle -RedirectStandardOutput \$stdoutLog -RedirectStandardError \$stderrLog/m, 'PowerShell process must retain bounded log redirects with the adjudicated window style');
+  assert.match(script, /\$childWindowStyle = if \(\[bool\]\$Unattended\) \{ 'Hidden' \} else \{ 'Minimized' \}/m, 'unattended helpers are hidden while interactive behavior remains minimized');
   assert.doesNotMatch(script, /Start-Process -FilePath 'powershell\.exe'[\s\S]*?'-NoExit'/m, 'launcher must not keep a visible PowerShell wall open as the primary UI');
 });
 
-test('launcher-root starts and proves backend before UI restart waits can block', async () => {
+test('launcher-root delegates backend UI and runtime proof to Battle Bridge supervisor before browser waits', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(
     script,
-    /Ensure-ProcessRunning -StepLabel 'backend'[\s\S]*?Ensure-ProcessRunning -StepLabel 'launcher-root ui'/m,
-    'backend start must stay before launcher-root UI restart handoff',
+    /starting Battle Bridge supervisor through launcher-root approval helper[\s\S]*?Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor'[\s\S]*?Wait-ForBattleBridgeSupervisorReady[\s\S]*?waiting for launcher-root shell/m,
+    'launcher-root proof must be delegated to Battle Bridge supervisor final contract before browser waits',
   );
-  assert.match(
+  assert.doesNotMatch(
     script,
-    /Write-LiveLog 'waiting for backend'[\s\S]*?Wait-ForUrl -StepLabel 'backend health'[\s\S]*?Wait-ForUrl -StepLabel 'backend mission operations freshness route'[\s\S]*?Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint'/m,
-    'backend proof must remain independent and before launcher-root UI proof waits',
+    /Ensure-ProcessRunning -StepLabel 'launcher-root ui'/m,
+    'launcher-root must not keep an independent legacy UI readiness path',
   );
 });
 
 test('ignition records bounded status and log destinations in proof workspace', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /\$ignitionProofRoot = Join-Path \(\[System\.IO\.Path\]::GetTempPath\(\)\) 'stephanos-ignition-proof'/m, 'ignition proof workspace must be deterministic under tmp');
+  assert.match(script, /\$canonicalSharedWorkspaceRoot = if \(\$SharedWorkspace[\s\S]*?Join-Path \(\[Environment\]::GetFolderPath\('MyDocuments'\)\) 'Stephanos-openclaw-workspace'/m, 'ignition proof workspace must default to canonical Documents shared workspace');
+  assert.match(script, /\$ignitionProofRoot = \$canonicalSharedWorkspaceRoot/m, 'normal launcher proof root must be the canonical shared workspace');
+  assert.doesNotMatch(script, /GetTempPath\(\)[\s\S]*stephanos-ignition-proof/m, 'normal launcher mode must not use AppData Temp ignition proof paths');
   assert.match(script, /\$ignitionStatusPath = Join-Path \$ignitionProofRoot 'launcher-status\.json'/m, 'status destination must be recorded');
   assert.match(script, /logRoot = \(Join-Path \$ignitionProofRoot 'logs'\)/m, 'log root must be recorded in status payload');
   assert.match(script, /stdoutLog = \$stdoutLog; stderrLog = \$stderrLog/m, 'per-process stdout/stderr log destinations must be recorded');
@@ -185,9 +192,9 @@ test('ignition records bounded status and log destinations in proof workspace', 
 
 test('ignition failure status preserves exact blocker and next operator action', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /\$childBlocker = Get-LauncherChildBlocker[\s\S]*\$surfacedBlocker = if \(\$childBlocker -and \$childBlocker\.message\)/m, 'failure status must prefer child ignition blocker when available');
-  assert.match(script, /Write-IgnitionStatus -Phase 'blocked' -Message \$surfacedBlocker[\s\S]*parentFailure = \$Step[\s\S]*childIgnitionBlocker = \$childBlocker/m, 'failure status must preserve parent failure and child blocker payload');
-  assert.match(script, /Write-IgnitionSupportSnapshot -Verdict 'blocked'[\s\S]*childIgnitionBlocker = \$childBlocker/m, 'support snapshot must receive child blocker payload');
+  assert.match(script, /function Fail-Step[\s\S]*if \(-not \$Outcome\)[\s\S]*Get-IgnitionStatusProjection -Phase 'blocked' -Message \$Step[\s\S]*childIgnitionBlocker = \$childBlocker/m, 'current failure must remain primary and retain child evidence');
+  assert.match(script, /Publish-IgnitionTerminalOutcome -Outcome \$Outcome[\s\S]*\$surfacedBlocker = \$Outcome\.blocker/m, 'failure publication and presentation must consume the same adjudicated outcome');
+  assert.match(script, /function Publish-IgnitionTerminalOutcome[\s\S]*Write-IgnitionSupportSnapshot -Verdict \$verdict -Outcome \$Outcome/m, 'support snapshot must consume the same outcome and nested child evidence');
 });
 
 
@@ -211,8 +218,8 @@ test('ignition status preserves destination paths, blocker actions, and non-prim
   assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\); transcriptPath = \$ignitionTranscriptPath; supportSnapshotPath = \$ignitionSupportSnapshotPath \}/m, 'status payload must record status, splash, and log destinations');
   assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
   assert.match(script, /currentStage = 'blocked'/m, 'blocked status must preserve blocked currentStage');
-  assert.match(script, /nextOperatorAction = \$nextOperatorAction/m, 'blocked status must project computed next operator action');
-  assert.match(script, /blocker = \$surfacedBlocker/m, 'blocked status must project surfaced blocker');
+  assert.match(script, /nextOperatorAction = if \(\$Extra\.ContainsKey\('nextOperatorAction'\)\)/m, 'blocked status must preserve adjudicated operator action');
+  assert.match(script, /blocker = if \(\$Extra\.ContainsKey\('blocker'\)\)/m, 'blocked status must preserve adjudicated blocker');
   assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
   assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
 });
@@ -222,7 +229,7 @@ test('professional ignition emits support snapshot and proof transcript with exa
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /\$ignitionTranscriptPath = Join-Path \$ignitionProofRoot 'ignition-proof-transcript\.jsonl'/m, 'proof transcript path must be deterministic');
   assert.match(script, /\$ignitionSupportSnapshotPath = Join-Path \$ignitionProofRoot 'support-snapshot\.json'/m, 'support snapshot path must be deterministic');
-  assert.match(script, /function Write-IgnitionTranscript[\s\S]*Add-Content -LiteralPath \$ignitionTranscriptPath/m, 'launcher must append proof transcript events');
+  assert.match(script, /function Write-IgnitionTranscript[\s\S]*Add-IgnitionUtf8NoBomLine -Path \$ignitionTranscriptPath/m, 'launcher must append proof transcript events through the BOM-free ignition writer');
   assert.match(script, /function Write-IgnitionSupportSnapshot[\s\S]*schema = 'stephanos\.ignition\.support-snapshot\.v1'[\s\S]*runtimePort = 4173/m, 'launcher must emit support snapshot for local proof');
   assert.match(script, /exactHeadApprovalRequired = \$true[\s\S]*exactHeadApprovalStatus = 'required-before-merge-proof'/m, 'exact-head approval must remain required for merge proof');
 });
@@ -237,18 +244,19 @@ test('professional ignition splash refreshes real status and preserves safe auto
   assert.doesNotMatch(script, /Remove-Item[\s\S]*-Recurse[\s\S]*\$repoRoot|git reset --hard|git clean -fdx/, 'launcher must not delete source or reset the worktree');
 });
 
-test('launcher-root runtime-status wait observes child ignition repair packets', async () => {
+test('launcher-root supervisor wait observes child ignition repair packets', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /function Get-LauncherChildBlocker[\s\S]*source-update-status\|repair-packet[\s\S]*ConvertFrom-Json[\s\S]*ignitionStatus[\s\S]*BLOCKED/m, 'launcher must parse structured blocked ignition packets from child logs');
   assert.match(script, /blocked for safety: \$\{reason\}/m, 'child blocker message must preserve exact reason text');
   assert.match(script, /Wait-ForUrl\(\[string\]\$StepLabel, \[string\]\$Url, \[int\]\$TimeoutSeconds = 120, \[switch\]\$ObserveChildIgnitionBlocker\)/m, 'runtime wait must support child blocker observation');
-  assert.match(script, /Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint' -Url \$launcherRuntimeStatusUrl -ObserveChildIgnitionBlocker/m, 'launcher-root runtime-status wait must enable child blocker observation');
+  assert.match(script, /Wait-ForBattleBridgeSupervisorReady/m, 'launcher-root must wait on Battle Bridge supervisor instead of runtime-status final gate');
+  assert.doesNotMatch(script, /Wait-ForUrl -StepLabel 'launcher-root runtime-status endpoint'/m, 'launcher-root must not use runtime-status as final gate');
 });
 test('ready ignition status marks all launcher stages complete', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /\$ready = \$CurrentStageId -eq 'ready'/m, 'ready status must be explicitly detected');
   assert.match(script, /if \(\$ready\) \{\s*'complete'\s*\}/m, 'ready status must mark all stages complete');
-  assert.match(script, /Write-IgnitionStatus -Phase 'ready'[\s\S]*currentStage = 'ready'/m, 'final ready status must request ready stage projection');
+  assert.match(script, /function Complete-IgnitionLaunch[\s\S]*Get-IgnitionStatusProjection -Phase 'ready'[\s\S]*Complete-IgnitionLaunch -Extra @\{ currentStage = 'ready'/m, 'final completion must publish the adjudicated ready stage');
 });
 
 test('status page shows OpenClaw startup state from ignition child logs', async () => {
@@ -256,6 +264,13 @@ test('status page shows OpenClaw startup state from ignition child logs', async 
   assert.match(script, /openclaw-autostart-status/, 'launcher must observe OpenClaw autostart status packets from bounded ignition logs');
   assert.match(script, /aria-label="OpenClaw startup status"/, 'splash/status page must render OpenClaw startup state');
   assert.match(script, /openClawStartupState/, 'status payload must include OpenClaw startup state');
+});
+
+test('launcher final readiness does not require OpenClaw and presents it as optional degradation', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.doesNotMatch(script, /\$SupervisorRecord\.services\.openClaw18789\.ready -eq \$true -and/m, 'OpenClaw readiness must not gate the final Stephanos supervisor contract');
+  assert.match(script, /openClawStartupState = if \(\$SupervisorRecord\.services\.openClaw18789\.ready\) \{ 'ready' \} else \{ 'degraded' \}/m, 'missing OpenClaw must be projected as degraded rather than pending\/blocked');
+  assert.match(script, /OpenClaw startup \(optional\):/m, 'ignition UI must make the optional contract explicit');
 });
 
 
@@ -268,4 +283,119 @@ test('visual ignition cockpit contains traffic lights progress proof cards and n
   assert.match(script, /aria-label="Build verify pull restart serve proof cards"/, 'splash must render proof cards');
   assert.match(script, /Enter Stephanos locked until served proof passes/, 'splash must keep Enter Stephanos locked until proof passes');
   assert.doesNotMatch(script, /<script[\s>]/i, 'splash must not inject executable browser script');
+});
+
+test('ReadinessReportOnly is a guarded report path and leaves normal launch invocation unchanged', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\[switch\]\$ReadinessReportOnly/m, 'launcher must expose an explicit report-only switch');
+  assert.match(script, /if \(\$ReadinessReportOnly\.IsPresent\) \{[\s\S]*?node scripts\/launcher-readiness-live-facts\.mjs --report --json[\s\S]*?exit \$LASTEXITCODE[\s\S]*?\}/m, 'report-only path must delegate to the live facts collector/readiness report and exit before launch behavior');
+  assert.match(script, /Ensure-ProcessRunning -StepLabel 'backend'/m, 'normal launcher path must still contain backend startup after report-only guard');
+  assert.match(script, /Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command \$launcherRootCommand/m, 'normal launcher-root startup must delegate to Battle Bridge supervisor');
+});
+
+test('Windows launcher splash/status handoff reads Battle Bridge supervisor current record', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\$battleBridgeSupervisorCurrentPath = Join-Path \$canonicalSharedWorkspaceRoot 'status\/battle-bridge-ignition-supervisor-current\.json'[\s\S]*Get-BattleBridgeSupervisorCurrentRecord/m, 'launcher must read supervisor current record from canonical workspace');
+  assert.match(script, /Convert-SupervisorRecordToIgnitionStatus[\s\S]*battleBridgeSupervisor = \$SupervisorRecord/m, 'splash payload must project supervisor truth instead of a second independent splash truth');
+  assert.match(script, /function Resolve-IgnitionStatusProjection[\s\S]*Test-BattleBridgeSupervisorFinalContract[\s\S]*desktop-ignition-service-proof-unproven/m, 'desktop completion must consume the shared current-head service contract');
+});
+
+test('desktop ignition gives eligible control-plane failure one Sovereign Commander repair and one retry', async () => {
+  const helper = await readFile(WINDOWS_IGNITE_APPROVAL_PS1, 'utf8');
+  const launcher = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(helper, /Test-SovereignCommanderControlPlaneAutohealEligible/);
+  assert.match(helper, /CONTROL_PLANE_FIXED_INSTALLER_FAILED/);
+  assert.match(helper, /sovereign-commander-ignition-autoheal\.mjs/);
+  assert.match(helper, /retrying safe default ignition once after Sovereign Commander repair/);
+  assert.doesNotMatch(helper, /while\s*\([^)]*SovereignCommander/i);
+  assert.match(launcher, /ignitionHelperProcess.*Start-DevWindow[\s\S]*?-ReturnProcess/);
+  assert.match(
+    launcher,
+    /ignitionHelperProcess\.HasExited[\s\S]*?WaitForExit\(\)[\s\S]*?Refresh\(\)[\s\S]*?\$helperExitCode = \$script:ignitionHelperProcess\.ExitCode[\s\S]*?\$null -ne \$helperExitCode -and \[int\]\$helperExitCode -ne 0/,
+    'launcher must reap and refresh the helper before treating an observed non-zero exit code as failure',
+  );
+  assert.doesNotMatch(
+    launcher,
+    /ignitionHelperProcess\.HasExited\s+-and\s+\$script:ignitionHelperProcess\.ExitCode\s+-ne\s+0/,
+    'a transient null ExitCode must never be interpreted as helper failure',
+  );
+});
+
+
+test('Edge discovery tolerates missing ProgramFiles x86 in non-interactive launcher environments', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /foreach \(\$programRoot in @\(\$\{env:ProgramFiles\(x86\)\}, \$env:ProgramFiles, \$env:LOCALAPPDATA\)\)/);
+  assert.match(script, /if \(\$programRoot\) \{[\s\S]*?Join-Path \$programRoot 'Microsoft\\Edge\\Application\\msedge\.exe'/);
+  assert.doesNotMatch(script, /Join-Path \$\{env:ProgramFiles\(x86\)\}/);
+});
+
+
+test('Windows launcher parses cleanly before Ignition can expose a PowerShell wall', { skip: process.platform !== 'win32' }, () => {
+  const launcherPath = fileURLToPath(WINDOWS_LAUNCHER_PS1);
+  const escapedPath = launcherPath.replaceAll("'", "''");
+  const command = `$tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile('${escapedPath}', [ref]$tokens, [ref]$errors) | Out-Null; if ($errors.Count -gt 0) { $errors | ForEach-Object { $_.Message } | Write-Error; exit 1 }`;
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+    encoding: 'utf8',
+    windowsHide: true,
+    shell: false,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout || result.error?.message);
+});
+
+test('retained-custody preparation passes native arguments through a PowerShell-safe splat', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /\$prepareArgs = @\([\s\S]*?'prepare-retained-migration'[\s\S]*?'--expected-cycle'[\s\S]*?\[string\]\$inspection\.projectionReservationId[\s\S]*?'--expected-digest'[\s\S]*?\[string\]\$inspection\.projectionDigest[\s\S]*?'--expected-main'[\s\S]*?\$expectedMain[\s\S]*?'--expected-owner-digest'[\s\S]*?\[string\]\$inspection\.heldOwner\.digest[\s\S]*?'--operator-approved'[\s\S]*?\)/m);
+  assert.match(script, /\(& \$nodeExecutable \$recoveryScript @prepareArgs 2>\$null \| Out-String\)\.Trim\(\)/m);
+  assert.doesNotMatch(script, /\$prepareText = \(& \$nodeExecutable \$recoveryScript 'prepare-retained-migration'\s*\r?\n\s*'--expected-cycle'/m);
+});
+
+test('Ignition commissions only the exact missing Sovereign fixed runtime and then requires a normal restart', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Invoke-SovereignFixedRuntimeCommissioning/);
+  assert.match(script, /sovereign-fixed-runtime-install-current-v1\.mjs/);
+  assert.match(script, /Read-FixedRuntimeAdapter 'qualification'/);
+  assert.match(script, /\[string\]\$qualification\.Value\.state -eq 'RESTART_REQUIRED'/);
+  assert.match(script, /Read-FixedRuntimeAdapter 'status'/);
+  assert.match(script, /\[string\]\$status\.Value\.state -ne 'MISSING'/);
+  assert.match(script, /FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING/);
+  assert.match(script, /Read-FixedRuntimeAdapter 'prepare'/);
+  assert.match(script, /READY_FOR_OPERATOR_APPROVAL/);
+  assert.match(script, /payloadSha256/);
+  assert.match(script, /scriptSha256/);
+  assert.match(script, /Start-Process -FilePath \$powerShellExecutable[\s\S]*?-Verb RunAs[\s\S]*?-Wait -PassThru/);
+  assert.match(script, /'-EncodedCommand'/);
+  assert.match(script, /Use the normal Windows Restart command/);
+  assert.match(script, /Invoke-SovereignCommanderRetainedCustodyPreparation\) \{\s*exit 0\s*\}/);
+  assert.match(script, /if \(Invoke-SovereignFixedRuntimeCommissioning\) \{\s*Write-LiveLog 'Protected Sovereign fixed runtime remains separately held\. Continuing ordinary Stephanos startup in degraded mode\.'\s*\}/);
+  assert.match(script, /if \(Invoke-SovereignFixedRuntimeCommissioning\)[\s\S]*?Write-IgnitionStatus -Phase 'checking-workspace-dirt'/);
+  assert.doesNotMatch(script, /if \(Invoke-SovereignFixedRuntimeCommissioning\) \{\s*exit 0\s*\}/);
+  const fn = script.match(/function Invoke-SovereignFixedRuntimeCommissioning[\s\S]*?^}\r?$/m)?.[0] || '';
+  assert.ok(fn);
+  assert.doesNotMatch(fn, /Restart-Computer|shutdown\.exe|Stop-Computer|Invoke-Expression|cmd\.exe|git\s+reset|git\s+clean|git\s+push/i);
+  assert.match(fn, /\$candidateInvalid = [\s\S]*?powershellExecutable -cne \$powerShellExecutable[\s\S]*?pcRestartAuthority -ne \$false/);
+});
+
+test('Ignition offers exact retained-custody preparation without restart or release authority', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Invoke-SovereignCommanderRetainedCustodyPreparation/);
+  assert.match(script, /sovereign-maintenance-custody-recovery\.mjs/);
+  assert.match(script, /inspect-retained-migration/);
+  assert.match(script, /prepare-retained-migration/);
+  assert.match(script, /--expected-cycle/);
+  assert.match(script, /--expected-digest/);
+  assert.match(script, /--expected-main/);
+  assert.match(script, /--expected-owner-digest/);
+  assert.match(script, /--operator-approved/);
+  assert.match(script, /MessageBoxButtons\]::YesNo/);
+  assert.match(script, /MessageBoxDefaultButton\]::Button2/);
+  assert.match(script, /requiresLaterFullBoot -ne \$true/);
+  assert.match(script, /custodyReleased -ne \$false/);
+  assert.match(script, /pcRestartAllowed -ne \$false/);
+  assert.match(script, /Use the normal Windows Restart command/);
+  assert.match(script, /Invoke-SovereignCommanderRetainedCustodyPreparation\) \{\s*exit 0/);
+  const fn = script.match(/function Invoke-SovereignCommanderRetainedCustodyPreparation[\s\S]*?^}\r?$/m)?.[0] || '';
+  assert.ok(fn);
+  assert.doesNotMatch(fn, /Restart-Computer|shutdown\.exe|Stop-Computer|Start-Process\s+[^\n]*powershell/i);
+  assert.doesNotMatch(fn, /Invoke-Expression|cmd\.exe|git\s+reset|git\s+clean|git\s+push/i);
+  assert.doesNotMatch(fn, /^\s+-(?:or|and)\b/m, 'Windows PowerShell 5.1 must not depend on a binary operator at the start of a continuation line');
 });

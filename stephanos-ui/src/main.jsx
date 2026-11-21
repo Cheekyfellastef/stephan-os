@@ -4,6 +4,7 @@ import App from "./App";
 import { AIStoreProvider } from "./state/aiStore";
 import { buildApiUrl } from "./ai/apiConfig";
 import "./styles.css";
+import "../../shared/styles/stephanos-card-layout.css";
 import {
   STEPHANOS_UI_BOOT_LOG,
   STEPHANOS_UI_BUILD_METADATA,
@@ -43,13 +44,17 @@ async function logDevStartupHealthCheck() {
     startupFingerprint.runtimeRole === "mission-control-dist-runtime"
       ? canonicalUrls.runtimeIndexUrl
       : "http://127.0.0.1:5173/";
+  const port5173Probe =
+    startupFingerprint.runtimeRole === "mission-control-dev-runtime"
+      ? fetch("http://127.0.0.1:5173/", { method: "GET" })
+          .then((response) => response.ok)
+          .catch(() => false)
+      : Promise.resolve(false);
   const [port4173Running, port5173Running] = await Promise.all([
     fetch("http://127.0.0.1:4173/__stephanos/health", { method: "GET" })
       .then((response) => response.ok)
       .catch(() => false),
-    fetch("http://127.0.0.1:5173/", { method: "GET" })
-      .then((response) => response.ok)
-      .catch(() => false),
+    port5173Probe,
   ]);
 
   console.info(
