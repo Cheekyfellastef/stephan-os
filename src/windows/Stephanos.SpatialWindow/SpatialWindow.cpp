@@ -80,7 +80,9 @@ struct Surface : std::enable_shared_from_this<Surface> {
     Stop();DWORD current=0;GetWindowThreadProcessId(w,&current);
     if(!SelectableWindow(w)||current!=expected||IsIconic(w))throw std::runtime_error("Window is no longer available");
     const auto identity=ProcessBirth(current);
-    const auto prompt=L"Allow the Spatial Workspace to view and control this window?\n\n"+Title(w)+L"\n\nOnly your console pointer and keyboard actions are forwarded. Audio stays in the original app. Disconnect in the workspace to stop.";
+    const auto prompt=L"Allow the Spatial Workspace to view and control this window?\n\n"+Title(w)
+      +L"\n\nOnly your console pointer and keyboard actions are forwarded. Audio stays in the original app."
+      +L"\nDisconnect requests stopping workspace capture and input only. It does not stop ChatGPT Voice or other audio in the original app; stop Voice there separately.";
     if(MessageBoxW(nullptr,prompt.c_str(),L"Stephanos Spatial Console",MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2|MB_TOPMOST)!=IDYES)throw std::runtime_error("Operator declined");
     DWORD after=0;GetWindowThreadProcessId(w,&after);
     if(!RootWindow(w)||after!=expected||!identity||identity!=ProcessBirth(after))throw std::runtime_error("Window changed during consent");
