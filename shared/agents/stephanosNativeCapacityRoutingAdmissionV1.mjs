@@ -121,10 +121,27 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
     });
   }
 
+  // Keep the existing fail-closed reason codes and signed validator untouched,
+  // but distinguish which fixed, non-secret input could not be consumed.
+  // Never reveal the path, file contents, key material or raw OS error.
   let status;
-  let publicKeyPem;
   try {
     status = JSON.parse(await readFile(statusPath.path, 'utf8'));
+  } catch (error) {
+    return frozen({
+      schemaVersion: STEPHANOS_NATIVE_ROUTING_ADMISSION_SCHEMA,
+      ok: false,
+      reason: error?.code === 'ENOENT'
+        ? 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
+        : 'STEPHANOS_NATIVE_ROUTING_TRUTH_READ_FAILED',
+      truthInput: 'STATUS',
+      candidate: null,
+      mergeAuthority: false,
+      leaseSeizureAllowed: false,
+    });
+  }
+  let publicKeyPem;
+  try {
     publicKeyPem = await readFile(keyPath, 'utf8');
   } catch (error) {
     return frozen({
@@ -133,6 +150,40 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
       reason: error?.code === 'ENOENT'
         ? 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
         : 'STEPHANOS_NATIVE_ROUTING_TRUTH_READ_FAILED',
+      truthInput: 'PUBLIC_KEY',
+      candidate: null,
+      mergeAuthority: false,
+      leaseSeizureAllowed: false,
+    });
+  }
+
+  // A publisher CHECKING/BLOCKED/STOPPED observation occupies the same fixed
+  // status slot as a signed capacity record, but conveys NO native authority.
+  // Distinguish this known producer shape from a malformed *signed* receipt.
+  // Preserve verification for every record that does claim a capacityReceipt.
+  const phase = status?.diagnostic?.phase;
+  if (status?.schemaVersion === 'shared-agent-workspace-record.v1'
+    && status?.statusId === STEPHANOS_NATIVE_CAPACITY_STATUS_ID
+    && status?.participantId === 'stephanos-native-battle-bridge'
+    && ['CHECKING', 'BLOCKED', 'STOPPED'].includes(phase)
+    && status?.status === phase
+    && status?.diagnostic?.schemaVersion === 'stephanos.native-capacity-observation.v1'
+    && status?.diagnostic?.qualificationProven === false
+    && status?.sourceMutationAllowed === false
+    && status?.arbitraryCommandAllowed === false
+    && status?.mergeAuthority === false
+    && status?.leaseSeizureAllowed === false
+    && status?.duplicateDispatchAllowed === false
+    && !Object.hasOwn(status, 'capacityReceipt')
+    && !Object.hasOwn(status, 'sourceAuthority')
+    && !Object.hasOwn(status, 'publisherAttestation')) {
+    const rawReason = text(status.diagnostic.reason);
+    return frozen({
+      schemaVersion: STEPHANOS_NATIVE_ROUTING_ADMISSION_SCHEMA,
+      ok: false,
+      reason: 'STEPHANOS_NATIVE_PUBLISHER_DIAGNOSTIC_ONLY',
+      publisherPhase: phase,
+      publisherReason: /^[a-z][a-z0-9-]{2,100}$/.test(rawReason) ? rawReason : '',
       candidate: null,
       mergeAuthority: false,
       leaseSeizureAllowed: false,
@@ -252,6 +303,9 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
     queueDepth: payload.queueDepth,
     p95StartLatencySeconds: payload.p95StartLatencySeconds,
     capacityReceiptId: payload.receiptId,
+    // Directly from the independently verified Ed25519 receipt payload.
+    // Used to distinguish post-install publication from a cached old receipt.
+    capacityObservedAtUtc: text(receiptValidation.payload.observedAtUtc),
     authorityReceiptIds: frozen([expectedAuthorityId]),
     proofRefs: frozen([...proofRefs]),
     sourceMutationAllowed: true,
@@ -269,5 +323,51 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
     candidate,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
+  });
+}
+
+
+// A routing error alone is not proof of a stale signer. Verify the fixed
+// status through the same Ed25519 receipt + source authority validator
+// against the observed OLD source head before any bounded restart.
+export async function readVerifiedStephanosNativeStalePublisherHeadV1(options = {}) {
+  const requestedHead = text(options.sourceHead).toLowerCase();
+  const root = text(options.root);
+  const repoRoot = text(options.repoRoot);
+  const repository = text(options.repository);
+  if (!FULL_SHA.test(requestedHead) || !root || !repoRoot || !REPOSITORY.test(repository)) {
+    return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_IDENTITY_INVALID' });
+  }
+  const path = resolveSharedWorkspacePath({
+    root, repoRoot, segments: ['status', STEPHANOS_NATIVE_CAPACITY_STATUS_ID + '.json'],
+  });
+  if (!path.ok) return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_PATH_UNAVAILABLE' });
+  let status;
+  try {
+    status = JSON.parse(await readFile(path.path, 'utf8'));
+  } catch {
+    return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_STATUS_UNAVAILABLE' });
+  }
+  const oldHead = text(status?.capacityReceipt?.payload?.sourceHead).toLowerCase();
+  if (!FULL_SHA.test(oldHead) || oldHead === requestedHead) {
+    return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_NOT_DISTINCT' });
+  }
+  // No trust is transferred from the unverified first read. The second
+  // read authenticates signature, publisher attestation, authority, task
+  // capability and freshness for the precise signed previous head.
+  const verified = await readVerifiedStephanosNativeRoutingCandidate({
+    ...options, sourceHead: oldHead,
+  });
+  if (verified?.ok !== true || verified?.candidate?.sourceHead !== oldHead
+    || verified.candidate.repository !== repository
+    || verified.candidate.sourceMutationAllowed !== true
+    || verified.candidate.mergeAuthority !== false
+    || verified.candidate.leaseSeizureAllowed !== false) {
+    return frozen({ ok: false, reason: 'STEPHANOS_NATIVE_STALE_HEAD_SIGNED_PROOF_INVALID' });
+  }
+  return frozen({
+    ok: true, expectedHead: requestedHead, signedStaleHead: oldHead,
+    repository, capacityObservedAtUtc: verified.candidate.capacityObservedAtUtc,
+    verifiedSignedReceipt: true,
   });
 }
