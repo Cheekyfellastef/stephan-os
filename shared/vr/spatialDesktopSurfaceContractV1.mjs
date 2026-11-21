@@ -6,7 +6,10 @@ export function validateSpatialSurfaceInput(value) {
   const fields={click:['x','y'],scroll:['x','y','delta'],text:['text'],key:['key']};
   if(!Object.hasOwn(fields,value.kind))return false;
   const keys=[...common,...fields[value.kind]];
-  if(Object.keys(value).length!==keys.length||Object.keys(value).some(k=>!keys.includes(k)))return false;
+  // Optional frame serial keeps legacy test clients compatible while the live
+  // Spatial room always supplies the native picture it actually displayed.
+  if(!keys.every(k=>Object.hasOwn(value,k))||Object.keys(value).some(k=>!keys.includes(k)&&k!=='serial'))return false;
+  if(Object.hasOwn(value,'serial')&&(!Number.isSafeInteger(value.serial)||value.serial<1))return false;
   if(!Number.isSafeInteger(value.generation)||value.generation<1||!Number.isSafeInteger(value.sequence)||value.sequence<1)return false;
   if(value.kind==='click'||value.kind==='scroll') {
     if(![value.x,value.y].every(v=>Number.isFinite(v)&&v>=0&&v<=1))return false;

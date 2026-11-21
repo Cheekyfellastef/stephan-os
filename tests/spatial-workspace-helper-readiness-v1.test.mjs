@@ -14,7 +14,7 @@ function helper(data,{port='4173',ok=true,fail=false}={}){
   });
   return {client,requests};
 }
-const valid={schema:'stephanos.spatial-window-health.v1',buildId:'a'.repeat(64)};
+const valid={schema:'stephanos.spatial-window-health.v1',buildId:'a'.repeat(64),readinessOnly:false};
 
 test('an operational helper is a selection prerequisite, never an input grant',async()=>{
   const {client,requests}=helper(valid);

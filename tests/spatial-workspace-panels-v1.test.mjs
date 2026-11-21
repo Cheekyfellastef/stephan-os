@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createHolodeckScreen,SCREEN_CONTENT,screenImageRect} from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
+import {createHolodeckScreen,SCREEN_CONTENT,screenImageRect,screenCrop,SPATIAL_CONVERSATION_PRESENTATION_KEY,readSpatialConversationPresentation} from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
 import {HOLODECK_PANELS,PANEL_BUTTONS,panelAt} from '../apps/spatial-bridge/holodeck-panels-v1.mjs';
 import {createHolodeckComfort} from '../apps/spatial-bridge/holodeck-comfort-v1.mjs';
 import {createHolodeckFurniture} from '../apps/spatial-bridge/holodeck-furniture-v1.mjs';
@@ -10,8 +10,8 @@ import {HOLODECK_DISPLAY} from '../apps/spatial-bridge/holodeck-layout-v1.mjs';
 
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
 const center=id=>{const b=PANEL_BUTTONS.find(button=>button.id===id);assert.ok(b,id);return [b.x+b.w/2,b.y+b.h/2];};
-function fixture({status='live',audio,client:overrides={},onStatus=()=>{}}={}){
-  const contexts=[],inputs=[],calls=[],storage=new Map();
+function fixture({status='live',audio,client:overrides={},onStatus=()=>{},stored=new Map()}={}){
+  const contexts=[],inputs=[],calls=[],storage=stored;
   const store={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)};
   const comfort=createHolodeckComfort({storage:store}),furniture=createHolodeckFurniture({storage:store});
   let state={status,revision:0,message:'Synthetic source for tests only.',windows:[],inputStatus:''};
@@ -26,9 +26,22 @@ function fixture({status='live',audio,client:overrides={},onStatus=()=>{}}={}){
   const documentRef={createElement:()=>{const context={texts:[],images:[],clearRect(){this.texts=[];this.images=[];},fillRect(){},strokeRect(){},
     fillText(text,x,y){this.texts.push({text,x,y});},drawImage(...args){this.images.push(args);}};
     contexts.push(context);return {getContext:()=>context};}};
-  const screen=createHolodeckScreen({client,comfort,furniture,audio,documentRef,onStatus});
+  const screen=createHolodeckScreen({client,comfort,furniture,audio,documentRef,onStatus,storage:store});
   return {screen,client,comfort,furniture,frame,contexts,inputs,calls,storage,publish,press:id=>{screen.render();return screen.point(...center(id),true);}};
 }
+
+test('both room Disconnect controls stop local speaker tests without claiming Voice mute',async()=>{
+  const stops=[];
+  const audio={getState:()=>({microphoneActive:false,microphonePending:false}),
+    stopSpeakers:()=>{stops.push('speaker');return true;},
+    stopMicrophone:()=>stops.push('microphone')};
+  const h=fixture({audio});
+  await h.screen.action('stop');
+  await h.screen.action('disconnect-window');
+  assert.deepEqual(stops,['speaker','speaker']);
+  assert.deepEqual(h.calls,[['stop'],['stop']]);
+  assert.deepEqual(h.inputs,[],'neither disconnect may send native application input');
+});
 
 test('the three panels paint one actual app frame within its centre viewport, with no recursive entry-page capture',()=>{
   const h=fixture();const frame=h.screen.render();
@@ -39,6 +52,8 @@ test('the three panels paint one actual app frame within its centre viewport, wi
   assert.ok(x>=SCREEN_CONTENT.x&&x+w<=SCREEN_CONTENT.x+SCREEN_CONTENT.w);
   assert.ok(y>=SCREEN_CONTENT.y&&y+height<=SCREEN_CONTENT.y+SCREEN_CONTENT.h);
   assert.deepEqual(HOLODECK_PANELS.map(panel=>panel.id),['settings','chatgpt','tools']);
+  assert.ok(h.contexts[0].texts.some(entry=>entry.text.includes('WINDOW LIVE')));
+  assert.equal(h.contexts[0].texts.some(entry=>entry.text.includes('INTERACTIVE')),false,'capture alone is not accepted text input');
   for(const button of PANEL_BUTTONS)assert.equal(panelAt(...center(button.id))?.id,button.panel);
   assert.deepEqual(h.calls,[]);assert.deepEqual(h.inputs,[]);
 });
@@ -157,7 +172,7 @@ test('synchronous subscriber cancellation cannot dispatch a queued native discov
 
 test('audio page uses the canonical device selection and mic lifecycle, without any app input',async()=>{
   let permissions=0,stops=0;
-  const track={readyState:'live',stop(){stops++;this.readyState='ended';},addEventListener(){},removeEventListener(){}};
+  const track={readyState:'live',getSettings(){return {deviceId:'quest-mic'};},stop(){stops++;this.readyState='ended';},addEventListener(){},removeEventListener(){}};
   const audio=createHolodeckAudioControls({AudioContextCtor:null,navigatorRef:{mediaDevices:{
     enumerateDevices:async()=>[{kind:'audioinput',deviceId:'quest-mic',label:'Quest mic fixture'},{kind:'audiooutput',deviceId:'quest-out',label:'Quest speakers fixture'}],
     getUserMedia:async spec=>{permissions++;assert.deepEqual(spec,{audio:{deviceId:{exact:'quest-mic'}},video:false});return {getAudioTracks:()=>[track],getTracks:()=>[track]};},
@@ -238,4 +253,108 @@ test('connection panel follows waiting-to-live frame state without caching or du
   assert.equal(paneTexts()[0].text,'Current app has no fresh frame.');
   assert.ok(!paneTexts().some(text=>text.text.includes('Connected to the current app')));
   assert.equal(h.screen.getState().connectionMessage,'Local Spatial helper responds.');
+});
+
+test('dedicated Scroll arrows use visible conversation centre, not composer hover',()=>{
+  const h=fixture();h.screen.render();
+  const rect=screenImageRect(1920,1080);
+  const hover=[(rect.x+rect.w*.85)/SCREEN_CONTENT.width,(rect.y+rect.h*.85)/SCREEN_CONTENT.height];
+  assert.equal(h.screen.point(...hover,false),true);
+  h.screen.action('scroll-down');
+  assert.deepEqual(h.inputs.at(-1),{kind:'scroll',x:.5,y:.5,delta:-120},
+    'hover near composer cannot retarget the separate Scroll action');
+  h.screen.action('zoom-in');
+  const beforePaint=h.inputs.length;h.screen.action('scroll-up');
+  assert.equal(h.inputs.length,beforePaint,'unpainted view blocks input');
+  h.screen.render();
+  h.screen.action('pan-right');h.screen.action('pan-down');h.screen.render();
+  h.screen.point(...hover,false);
+  const {zoom,panX,panY}=h.screen.getState(),crop=screenCrop(1,1,zoom,panX,panY);
+  h.screen.action('scroll-up');
+  assert.deepEqual(h.inputs.at(-1),{kind:'scroll',x:crop.x+crop.w/2,y:crop.y+crop.h/2,delta:120});
+  const count=h.inputs.length;
+  h.screen.action('focus-tools');h.screen.action('scroll-down');
+  assert.equal(h.inputs.length,count,'local-panel focus still blocks native Scroll');
+});
+
+test('screen view and panel choices restore independently of Windows consent, drafts and Voice',()=>{
+  const shared=new Map(),first=fixture({stored:shared});
+  first.screen.render();
+  first.screen.action('zoom-in');first.screen.action('pan-right');first.screen.action('pan-up');
+  first.screen.action('left-settings');first.screen.action('furniture-table');
+  const saved=JSON.parse(shared.get(SPATIAL_CONVERSATION_PRESENTATION_KEY));
+  assert.deepEqual(Object.keys(saved).sort(),['furnitureTarget','focusedPanel','leftPage','panX','panY','version','zoom'].sort());
+  assert.deepEqual([saved.zoom,saved.panX,saved.panY,saved.focusedPanel,saved.leftPage,saved.furnitureTarget],
+    [1.5,.5,-.5,'settings','settings','table']);
+  const second=fixture({stored:shared}),state=second.screen.getState();
+  assert.deepEqual([state.zoom,state.panX,state.panY,state.focusedPanel,state.leftPage,state.furnitureTarget],
+    [1.5,.5,-.5,'settings','settings','table']);
+  second.screen.action('enter');assert.deepEqual(second.inputs,[],'restored non-app panel cannot type');
+  second.screen.action('focus-chatgpt');second.screen.action('key:z');
+  assert.deepEqual(second.inputs,[],'unpainted restored crop cannot type');
+  second.screen.render();second.screen.action('key:z');
+  assert.deepEqual(second.inputs,[{kind:'text',text:'z'}]);
+  assert.equal(shared.get(SPATIAL_CONVERSATION_PRESENTATION_KEY).includes('selectedWindow'),false);
+  assert.equal(shared.get(SPATIAL_CONVERSATION_PRESENTATION_KEY).includes('microphone'),false);
+});
+
+test('invalid, corrupt, oversized, untrusted and forbidden screen preferences fail closed',()=>{
+  const defaults={zoom:1,panX:0,panY:0,focusedPanel:'chatgpt',leftPage:'console',furnitureTarget:'keyboard'};
+  const load=value=>readSpatialConversationPresentation({getItem:()=>value});
+  for(const value of ['{','x'.repeat(2050),JSON.stringify({version:2,zoom:4}),
+    JSON.stringify({version:1,zoom:'3',panX:'0.5',panY:Infinity,focusedPanel:'unknown',leftPage:'unknown',furnitureTarget:'bad'})])
+    assert.deepEqual(load(value),defaults);
+  assert.deepEqual(load(JSON.stringify({version:1,zoom:8,panX:1,panY:-1})),defaults);
+  assert.deepEqual(load(JSON.stringify({version:1,zoom:2,panX:0.25,panY:-.5})),
+    {...defaults,zoom:2,panX:.25,panY:-.5});
+  assert.deepEqual(readSpatialConversationPresentation({getItem(){throw Error('blocked')}}),defaults);
+  const h=fixture();h.screen.render();
+  const settings={getItem(){throw Error('private storage')},setItem(){throw Error('quota')}};
+  const second=createHolodeckScreen({client:h.client,storage:settings,documentRef:{
+    createElement(){return {getContext(){return {fillRect(){},strokeRect(){},clearRect(){},fillText(){},drawImage(){}};}};}
+  }});
+  second.action('zoom-in');assert.equal(second.getState().zoom,1.5);
+});
+
+test('Disconnect releases room-local microphone testing without claiming to mute ChatGPT Voice',async()=>{
+  for(const [actionId,phase] of [['stop','microphonePending'],['disconnect-window','microphoneActive']]){
+    let local={microphonePending:phase==='microphonePending',microphoneActive:phase==='microphoneActive'};
+    let localStops=0;
+    const audio={
+      getState:()=>({...local,inputs:[],outputs:[],status:'Local browser audio test only.'}),
+      stopMicrophone:()=>{localStops++;local={microphonePending:false,microphoneActive:false};}
+    };
+    const h=fixture({audio});h.screen.render();
+    const stopped=h.screen.action(actionId);
+    assert.equal(localStops,1,'pending or live room-local capture must end synchronously on Disconnect');
+    assert.equal(h.calls.filter(call=>call[0]==='stop').length,1,'native window stop must still execute');
+    assert.equal(h.screen.getState().keyboardEnabled,false,'window input must be revoked immediately');
+    await stopped;
+    assert.equal(h.screen.getState().audio.microphonePending,false);
+    assert.equal(h.screen.getState().audio.microphoneActive,false);
+    assert.deepEqual(h.inputs,[],'Disconnect never sends an app key or ChatGPT message');
+    h.screen.render();
+    assert.ok(h.contexts[0].texts.some(entry=>entry.text.includes('Disconnect does not mute or end Voice')),
+      'local microphone release is never represented as ending original ChatGPT Voice');
+    await h.screen.action('stop');
+    assert.equal(localStops,1,'an already stopped local microphone must not be reactivated or stopped again');
+  }
+});
+
+// A transient Quest/native frame decoding error must never certify a frame
+// as painted or allow a pointer to act against an unpainted crop.
+test('failed centre frame paint retains the input fence and retries the same revision',()=>{
+  const h=fixture();h.screen.render();h.screen.action('zoom-in');
+  const ctx=h.contexts[0],draw=ctx.drawImage;let tries=0;
+  ctx.drawImage=function(...args){tries++;if(tries===1)throw Error('Transient native frame failure');return draw.apply(this,args);};
+  assert.throws(()=>h.screen.render(),/Transient native frame failure/);
+  assert.equal(h.screen.getState().keyboardEnabled,false,'unpainted crop cannot accept native input');
+  h.screen.point(.5,.5,true);
+  assert.deepEqual(h.inputs,[],'a failed paint cannot forward a pointer');
+  h.screen.render();
+  assert.equal(tries,2,'unchanged revision must still repaint after a draw failure');
+  assert.equal(h.screen.getState().keyboardEnabled,true,'only a completed frame releases the paint fence');
+  h.screen.point(.5,.5,true);
+  assert.equal(h.inputs.length,1);
+  assert.equal(h.inputs[0].kind,'click');
 });

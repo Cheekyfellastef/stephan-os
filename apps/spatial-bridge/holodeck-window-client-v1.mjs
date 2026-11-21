@@ -1,7 +1,7 @@
 // One explicit local desktop connection; images and keystrokes are never logged
 // or sent through Stephanos telemetry, GitHub, a relay, or an AI provider API.
 export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRef=globalThis.document,
-  locationRef=globalThis.location,navigatorRef=globalThis.navigator,onChange=()=>{},setTimer=setTimeout,clearTimer=clearTimeout,sessionStore=globalThis.sessionStorage}={}) {
+  locationRef=globalThis.location,navigatorRef=globalThis.navigator,onChange=()=>{},setTimer=setTimeout,clearTimer=clearTimeout,sessionStore=(()=>{try{return globalThis.sessionStorage;}catch{return null;}})()}={}) {
   const endpoint=`http://127.0.0.1:${locationRef?.port==='4174'?4184:4180}`;
   // Diagnostic only: this never starts a native service or binds a window.
   async function probeHelper(){
@@ -12,8 +12,10 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       const data=await response.json();
       if(data?.schema!=='stephanos.spatial-window-health.v1')
         return {ok:false,reason:'Unexpected local capture helper identity.'};
-      if(data.readinessOnly===true)
-        return {ok:false,reason:'The helper is running an installation check only. Launch the normal Spatial Workspace shortcut to connect a window.'};
+      if(data.readinessOnly!==false)
+        return {ok:false,reason:data.readinessOnly===true
+          ?'The helper is running an installation check only. Launch the normal Spatial Workspace shortcut to connect a window.'
+          :'The local helper has not affirmed an interactive native session. Use the reviewed Spatial Workspace shortcut.'};
       if(locationRef?.port!=='4174'&&(typeof data.buildId!=='string'||!/^[a-f0-9]{64}$/.test(data.buildId)))
         return {ok:false,reason:'The local helper has no valid installed build identity. Use the reviewed Spatial Workspace shortcut.'};
       return {ok:true,reason:'Local Spatial helper responds.'};
@@ -21,7 +23,14 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       '. Open Spatial Workspace using its Windows desktop shortcut.'};}
   }
   let image=null,epoch=0,refreshPromise=null;
-  let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false;
+  let token=null,active=false,disposed=false,generation=0,serial=0,sequence=0,timer=null,queue=[],busy=false,inputClickPending=false,pendingNativeSession=false;
+  // Keep an unverified native release in memory even if sessionStorage is blocked.
+  // Losing this identity would permit a second session before the old one stopped.
+  let unverifiedNativeReleaseToken=null;
+  // A delayed or replayed native frame must never restore input against an older picture.
+  let lastFrameGeneration=0,lastFrameSerial=-1;
+  // Room-local acknowledgement, not native keyboard focus. Never infer an editor from a bind or frame.
+  let editorClickConfirmed=false;
   // One owner spans picker, native revocation, playback and the accepted view.
   // Late promises retain this record only; they can never close a newer owner.
   let capture=null;
@@ -77,10 +86,17 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     }
   }
   async function revokeNativeToken(old){
-    if(old)try{
+    if(!old)return true;
+    try{
       const response=await fetchRef(endpoint+'/stop',{method:'POST',headers:{'Content-Type':'application/json','X-Spatial-Session':old},body:'{}',keepalive:true,signal:AbortSignal.timeout(10000)});
-      if(response.ok||response.status===403)try{if(sessionStore?.getItem(storageKey)===old)sessionStore.removeItem(storageKey);}catch{}
-    }catch{}
+      if(!response.ok)return false; // 403 and timeouts cannot prove native capture was released.
+      // A 200 response alone cannot establish that the exact helper revoked this
+      // session. Require its fixed terminal acknowledgement before reconnecting.
+      const receipt=await response.json();
+      if(receipt?.status!=='stopped')return false;
+      try{if(sessionStore?.getItem(storageKey)===old)sessionStore.removeItem(storageKey);}catch{}
+      return true;
+    }catch{return false;}
   }
   function beginDisconnect(keepCapture=null){
     // Bind the transition before cleanup or publication can reenter this client.
@@ -88,15 +104,30 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
     const current=++epoch,previousCapture=capture;
     capture=keepCapture;
     if(keepCapture)keepCapture.epoch=current;
-    let old=token;
+    let old=unverifiedNativeReleaseToken||token;
     if(!old)try{old=sessionStore?.getItem(storageKey);}catch{}
-    token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;busy=false;
+    if(old)unverifiedNativeReleaseToken=old;
+    token=null;active=false;image=null;refreshPromise=null;queue=[];generation=0;serial=0;
+    lastFrameGeneration=0;lastFrameSerial=-1;busy=false;inputClickPending=false;editorClickConfirmed=false;
     const oldTimer=timer;timer=null;
     if(previousCapture!==keepCapture)closeCapture(previousCapture);
     clearTimer(oldTimer);
     if(current===epoch&&capture===keepCapture)
-      publish({status:'idle',windows:[],title:'',inputStatus:'',message:'Window disconnected.'});
-    return Object.freeze({epoch:current,stopped:revokeNativeToken(old)});
+      publish({status:'idle',windows:[],title:'',inputStatus:'',
+        message:old?'Window disconnected locally; verifying native capture release.':'Window disconnected.'});
+    // Preserve the original one-hop, token-free disconnect timing: a room
+    // with no native session must not delay an explicitly requested discovery.
+    const stopped=old?revokeNativeToken(old).then(released=>{
+      if(released&&unverifiedNativeReleaseToken===old)unverifiedNativeReleaseToken=null;
+      // A late revocation must never overwrite a newer native bind or view.
+      if(old&&currentEpoch(current)&&capture===keepCapture&&state.status==='idle'){
+        publish({status:released?'idle':'unavailable',
+          message:released?'Window disconnected.':'Local input was revoked, but the Windows helper did not confirm capture release. Verify the native session before reconnecting.',
+          inputStatus:released?'':'Native capture release unverified. Do not assume the original app is no longer shared.'});
+      }
+      return released;
+    }):Promise.resolve(true);
+    return Object.freeze({epoch:current,stopped});
   }
   // Local browser capture remains an explicit view-only alternative. A display
   // grant never enables native input, audio capture or a remote stream.
@@ -145,6 +176,9 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       if(!ownsCapture(owner))return false;
       const stopped=await Promise.race([transition.stopped,owner.cancelled]);
       if(stopped===captureCancelled||!ownsCapture(owner))return false;
+      if(stopped!==true)return finishCapture(owner,{status:'unavailable',
+        message:'Native window release unverified. Browser sharing was not adopted.',
+        inputStatus:'Verify the Windows helper stopped the previous capture before trying again.'});
       owner.phase='playback';
       try{
         const video=documentRef.createElement('video');owner.video=video;
@@ -189,27 +223,45 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   }
   function stop(){return beginDisconnect().stopped;}
   async function discover() {
-    if(disposed)return;
-    const transition=beginDisconnect(),current=transition.epoch;await transition.stopped;
-    if(!publishCurrent(current,{status:'connecting',message:'Looking for open desktop windows.'}))return;
+    if(disposed)return false;
+    // A late native /session may have allocated an owner after Stop. Do not
+    // allocate another until that older grant is resolved and release checked.
+    if(pendingNativeSession){
+      publish({inputStatus:'A previous native session request is still pending. No second session was requested.'});
+      return false;
+    }
+    const transition=beginDisconnect(),current=transition.epoch;
+    if(!await transition.stopped)return false; // Do not allocate a new native session after an unverified stop.
+    if(pendingNativeSession)return false;
+    pendingNativeSession=true;
     try {
+      if(!publishCurrent(current,{status:'connecting',message:'Looking for open desktop windows.'}))return false;
       const session=await request('/session');
       if(disposed||current!==epoch){
-        // A delayed session grant still needs revoking after this surface closes.
-        if(/^[a-f0-9]{64}$/.test(session.token??''))void fetchRef(endpoint+'/stop',{method:'POST',headers:{'Content-Type':'application/json','X-Spatial-Session':session.token},body:'{}',keepalive:true}).catch(()=>{});
-        return;
+        // A late grant belongs to the cancelled request, not the next view.
+        // Preserve its token across failed /stop responses, including when
+        // browser sessionStorage is unavailable. No automatic reconnect.
+        if(/^[a-f0-9]{64}$/.test(session.token??'')){
+          unverifiedNativeReleaseToken=session.token;
+          try{sessionStore?.setItem(storageKey,session.token);}catch{}
+          const released=await revokeNativeToken(session.token);
+          if(released&&unverifiedNativeReleaseToken===session.token)unverifiedNativeReleaseToken=null;
+        }
+        return false;
       }
       if(!/^[a-f0-9]{64}$/.test(session.token??''))throw new Error('Invalid session');
       token=session.token;
       try{sessionStore?.setItem(storageKey,token);}catch{}
       const result=await request('/windows');
-      if(current!==epoch)return;
-      if(!showWindows(current,result.windows))return;
+      if(current!==epoch)return false;
+      if(!showWindows(current,result.windows))return false;
       // Keep the unbound selection alive while the person reads the window list.
       scheduleDiscovery(current);
+      return true;
     }catch(error){if(current===epoch)publish({status:'unavailable',message:error.message==='another-surface-active'
       ?'Another workspace has the connection. Disconnect it first, or wait for it to close.'
-      :'The local window connection is unavailable. Start Spatial Workspace from its desktop button.'});}
+      :'The local window connection is unavailable. Start Spatial Workspace from its desktop button.'});return false;}
+    finally{pendingNativeSession=false;}
   }
   async function connect(id) {
     let selected=state.windows.find(w=>w.id===id);if(!selected||busy||state.status!=='selecting')return false;
@@ -229,7 +281,7 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
       }
       if(current!==epoch||disposed)return false;
       const result=await request('/bind',{id});if(current!==epoch)return false;if(result.status!=='connected')throw new Error('bind');
-      active=true;sequence=0;queue=[];
+      active=true;sequence=0;queue=[];editorClickConfirmed=false;lastFrameGeneration=0;lastFrameSerial=-1;
       if(!publishCurrent(current,{status:'waiting',windows:[],title:selected.title,message:'Waiting for the selected app to draw.'})||!active)return false;
       timer=setTimer(()=>poll(current),0);return true;
     }catch{if(current===epoch)publish({status:'unavailable',message:'Could not connect that window. Restore it on your desktop and choose it again.'});return false;}
@@ -237,31 +289,119 @@ export function createHolodeckWindowClient({fetchRef=globalThis.fetch,documentRe
   }
   async function poll(current) {
     if(!active||!currentEpoch(current))return;
+    // A failed response cannot prove whether the selected app applied its input.
+    // Keep this uncertainty visible rather than inviting a duplicate Send/key.
+    let inputAttempted=false;
     try{
       const input=queue.shift();
       if(input){
         // Serialize capture and input; each operator action is sent once only.
+        inputAttempted=true;
+        if(input.kind==='click')inputClickPending=true;
         const result=await request('/input',{...input,sequence:++sequence});
         if(current!==epoch)return;
-        if(!publishCurrent(current,{inputStatus:result.status==='input-posted'?'Input sent to the selected app.':'That input was not accepted. Select a text field or wait for a fresh picture.'}))return;
+        if(input.kind==='click')inputClickPending=false;
+        // Do not allow a stale click or a failed native editor binding to license later non-text keys.
+        if(input.kind==='click'){
+          editorClickConfirmed=result.status==='editor-accessibility-selected';
+          // A legacy pointer or failed click may have focused an unknown app
+          // control. Do not send text queued while that click was unresolved.
+          if(!editorClickConfirmed)queue=[];
+        }
+        else if(['editor-not-selected','editor-reselect-required','editor-unsupported','editor-key-focus-unverified'].includes(result.status))
+          editorClickConfirmed=false;
+        // The app may have applied a mutation before returning an uncertain
+        // outcome. Never deliver a previously queued Enter/Send afterwards.
+        // App controls and non-text keys can also change the current focus.
+        // Retain editor-key eligibility only after an explicitly confirmed
+        // text outcome. Unknown or newly introduced helper replies must not
+        // flush a previously queued Enter against a possibly changed draft.
+        if(result.status==='surface-frame-stale'){queue=[];editorClickConfirmed=false;}
+        if(input.kind==='key'||(input.kind==='text'&&
+          !['editor-value-readback','editor-value-unchanged'].includes(result.status))||
+          ['app-control-invoked','app-control-outcome-unverified','input-rejected'].includes(result.status)){
+          editorClickConfirmed=false;queue=[];
+        }
+        if(!publishCurrent(current,{inputStatus:({
+          'editor-accessibility-selected':'Editable field located in the selected window. Type a virtual key to test it.',
+          'editor-value-readback':'Windows accessibility read back the updated editor text. Confirm the actual app reflects it before Send.',
+          'editor-not-selected':'No editable field selected. Click the app composer on the holographic image first.',
+          'editor-reselect-required':'The selected editor changed. Click its current location again.',
+          'editor-unsupported':'The selected application does not expose a writable editor here.',
+          'editor-update-refused':'The editor did not confirm the change. Inspect the draft before retrying.',
+          'editor-update-not-started':'No editor value update was attempted. The application was not changed by this request.',
+          'editor-update-unverified':'The editor did not confirm the requested value. Check its draft; do not retry Send automatically.',
+          'editor-length-refused':'This editor exceeds the allowed text length. No input was applied.',
+          'editor-value-unchanged':'Editor was already empty; no character was removed.',
+          'app-control-invoked':'The selected app control was invoked. Check its actual result.',
+          'app-control-outcome-unverified':'The app control may have acted already. Inspect it before any retry; no second click was sent.',
+          'editor-key-focus-unverified':'The selected editor has not established keyboard focus. Use the app’s explicit button rather than Enter.',
+          'input-posted':'Windows queued the pointer/key event, but the app has not confirmed it.',
+          'surface-frame-stale':'The original app changed after this holographic picture. Input was refused; wait for its updated image.',
+          'input-rejected':'That input was not accepted. The selected app did not confirm that input.'
+        }[result.status]??'The selected app did not confirm that input. Click a valid target or wait for a fresh picture.')}))return;
       }
       const frame=await request('/frame');
       if(!active||current!==epoch)return;
-      if(frame.status==='frame'&&Number.isSafeInteger(frame.serial)&&Number.isSafeInteger(frame.generation)&&typeof frame.jpeg==='string') {
-        if(frame.serial!==serial||frame.generation!==generation||state.status!=='live'){
+      if(frame.status==='frame'&&Number.isSafeInteger(frame.serial)&&frame.serial>=0&&
+        Number.isSafeInteger(frame.generation)&&frame.generation>=1&&typeof frame.jpeg==='string') {
+        const replay=frame.generation<lastFrameGeneration||
+          (frame.generation===lastFrameGeneration&&(frame.serial<lastFrameSerial||
+            (generation===0&&frame.serial===lastFrameSerial)));
+        if(replay){
+          // Keep the old picture inert. Waiting must not be cleared by the same
+          // stale revision; require a newly advanced native serial/generation.
+          generation=0;queue=[];editorClickConfirmed=false;
+          publish({status:'waiting',inputStatus:'Input paused. Native picture freshness is unverified.',
+            message:'Waiting for a new frame from the selected app.'});
+        }else if(frame.serial!==serial||frame.generation!==generation||state.status!=='live'){
           const next=documentRef.createElement('img');next.src='data:image/jpeg;base64,'+frame.jpeg;await next.decode();
           if(!active||current!==epoch)return;
-          if(generation!==frame.generation)queue=[];
-          image=next;generation=frame.generation;serial=frame.serial;publish({status:'live',...(state.status!=='live'?{inputStatus:''}:{}),message:'Connected to your original app. Point at its controls to interact.'});
+          if(generation!==frame.generation){queue=[];editorClickConfirmed=false;}
+          image=next;generation=frame.generation;serial=frame.serial;
+          lastFrameGeneration=frame.generation;lastFrameSerial=frame.serial;
+          publish({status:'live',...(state.status!=='live'?{inputStatus:''}:{}),message:'Connected to your original app. Point at its controls to interact.'});
         }
-      }else{generation=0;queue=[];publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
+      }else{generation=0;queue=[];editorClickConfirmed=false;publish({status:'waiting',inputStatus:'Input paused. Wait for a live picture of your app.',message:'Waiting for your app. Restore a minimized window or reconnect if it closed.'});}
       if(active&&currentEpoch(current))timer=setTimer(()=>poll(current),queue.length?0:67);
-    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;publish({status:'unavailable',inputStatus:'Input paused. Reconnect the selected app.',message:'Window connection lost. Your conversation remains in the original app.'});}}
+    }catch{if(current===epoch){active=false;generation=0;queue=[];image=null;inputClickPending=false;editorClickConfirmed=false;publish({status:'unavailable',
+      inputStatus:inputAttempted
+        ?'The last input may already have changed the selected app. Inspect its draft before reconnecting; do not resend automatically.'
+        :'Input paused. Reconnect the selected app.',
+      message:'Window connection lost. Your conversation remains in the original app.'});}}
   }
   function input(value){
     if(capture?.phase==='live'){publish({inputStatus:'View-only capture: connect the native Windows helper to type or click.'});return false;}
     if(!active||!generation||state.status!=='live'||queue.length>=16){publish({inputStatus:'Input paused. Wait for a live connection.'});return false;}
-    queue.push({...value,generation});publish({inputStatus:'Sending input to the selected app.'});return true;
+    // Never serialize malformed 3D pointer or wheel geometry into the native
+    // consented-window helper. A rejected retarget also discards queued text
+    // or Send: it cannot leave an older editor destination actionable.
+    if((value?.kind==='click'||value?.kind==='scroll')&&
+      (![value.x,value.y].every(point=>Number.isFinite(point)&&point>=0&&point<=1)||
+        (value.kind==='scroll'&&(!Number.isFinite(value.delta)||Math.abs(value.delta)>120)))){
+      queue=[];editorClickConfirmed=false;
+      publish({inputStatus:'Input paused. Invalid pointer or scroll geometry; no native action was sent.'});
+      return false;
+    }
+    // A native bind and picture do not select the app composer. Text can wait
+    // behind an explicit click, but poll forwards it only after a real editor
+    // selection acknowledgement. Never send unsolicited drafts to an app.
+    if(value?.kind==='text'&&!editorClickConfirmed&&!inputClickPending&&!queue.some(item=>item.kind==='click')){
+      publish({inputStatus:'Select the intended editor on the hologram first. No draft text was sent.'});return false;
+    }
+    if(value?.kind==='key'&&!editorClickConfirmed){
+      publish({inputStatus:'Select the editor in the original app on the holographic image first. No key was sent.'});return false;
+    }
+    // A new pointer action invalidates the last editor acknowledgement immediately, before queuing.
+    if(value?.kind==='click'){
+      // New deliberate target supersedes unsent text/keys for an older click.
+      // Never replay an already attempted native input; only clear the queue.
+      queue=[];
+      editorClickConfirmed=false;
+    }
+    // Bind every operator action to the exact native picture shown on the hologram.
+    // The native helper rejects it if the app has repainted since this frame.
+    queue.push({...value,generation,serial});publish({inputStatus:'Sending input to the selected app.'});return true;
   }
   return {discover,connect,shareScreen,stop,input,probeHelper,getState:()=>({...state}),
     getFrame:()=>capture?.phase==='live'&&capture.frame?.naturalWidth>0&&capture.frame?.naturalHeight>0?capture.frame:state.status==='live'?image:null,

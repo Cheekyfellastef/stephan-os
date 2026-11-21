@@ -198,6 +198,7 @@ try {
       if (requested.pathname === '/bind') {
         report.binds.push(payload);
         fixture.boundId = fixture.windows.some(window => window.id === payload.id) ? payload.id : null;
+        fixture.editorSelected = false;
         response = { status: fixture.boundId === null ? 'window-unavailable' : 'connected' };
       }
       if (['/frame', '/input'].includes(requested.pathname) && fixture.boundId === null) {
@@ -209,10 +210,21 @@ try {
       }
       if (requested.pathname === '/input') {
         report.inputs.push(payload);
-        response = { status: fixture.rejectNextInput ? 'input-rejected' : 'input-posted' };
-        fixture.rejectNextInput = false;
+        // The synthetic composer is an explicitly chosen *editable* target.
+        // A legacy "input-posted" click cannot grant editor consent or typing.
+        const composer=report.frame.composer;
+        if(payload.kind==='click')fixture.editorSelected=
+          Math.abs(payload.x-composer.x)<0.02 && Math.abs(payload.y-composer.y)<0.02;
+        const status=payload.kind==='click'
+          ?(fixture.editorSelected?'editor-accessibility-selected':'input-posted')
+          :payload.kind==='text'
+            ?(fixture.editorSelected?'editor-value-readback':'editor-not-selected')
+            :'input-posted';
+        response={status:fixture.rejectNextInput?'input-rejected':status};
+        if(fixture.rejectNextInput)fixture.editorSelected=false;
+        fixture.rejectNextInput=false;
       }
-      if (requested.pathname === '/stop') { fixture.boundId = null; response = { status: 'stopped' }; }
+      if (requested.pathname === '/stop') { fixture.boundId = null; fixture.editorSelected=false; response = { status: 'stopped' }; }
       return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify(response) });
     }
     if (requested.origin === origin || requested.protocol === 'data:') return route.continue();
@@ -476,10 +488,10 @@ try {
     assert.deepEqual(layout.clippedLabels, [], 'Every console keyboard label must fit its button.');
     const scroll = await viewport.evaluate(element => ({ width: element.clientWidth, contentWidth: element.scrollWidth }));
     assert.ok(scroll.contentWidth > scroll.width, 'Only the keyboard should scroll horizontally on a phone.');
-    for (const name of ['Reset profile', 'Send / Enter']) {
+    for (const name of ['Reset profile', 'Enter (app)']) {
       const button = keyboard.getByRole('button', { name, exact: true });
-      if(name==='Send / Enter'){
-        assert.equal(await button.isDisabled(),true,'No native connection must leave Send disabled.');
+      if(name==='Enter (app)'){
+        assert.equal(await button.isDisabled(),true,'No native connection must leave Enter disabled.');
         await button.scrollIntoViewIfNeeded();
       }else await button.focus();
       const bounds = await button.boundingBox(), visible = await viewport.boundingBox();
@@ -630,7 +642,9 @@ try {
     let tolerance;
     const posted = await postedInput(async () => { tolerance = await clickFixturePoint(point, painted); });
     assert.equal(posted.payload.kind, 'click');
-    assert.equal(posted.response.status, 'input-posted');
+    const composer=fixtureReport.frame.composer;
+    const expectedEditor=Math.abs(point.x-composer.x)<0.02 && Math.abs(point.y-composer.y)<0.02;
+    assert.equal(posted.response.status,expectedEditor?'editor-accessibility-selected':'input-posted');
     assert.ok(Math.abs(posted.payload.x - point.x) <= tolerance.x, JSON.stringify(posted.payload));
     assert.ok(Math.abs(posted.payload.y - point.y) <= tolerance.y, JSON.stringify(posted.payload));
     return { expected: point, posted: posted.payload, tolerance };
@@ -657,7 +671,7 @@ try {
   async function blockedInputs(painted, reason) {
     const before = fixtureReport.inputs.length;
     await clickFixturePoint(fixtureReport.frame.composer, painted);
-    for (const name of ['Type a', 'Send / Enter', 'Backspace', 'Scroll ↓']) {
+    for (const name of ['Type a', 'Enter (app)', 'Backspace', 'Scroll ↓']) {
       const button=key(name);assert.equal(await button.isDisabled(),true,name+' must be visibly disabled under an app overlay.');
       await button.scrollIntoViewIfNeeded();const bounds=await button.boundingBox();assert.ok(bounds);
       // A real pointer gesture on a disabled DOM control must have no effect.
@@ -709,15 +723,32 @@ try {
       assert.equal(fixtureReport.requestsByPath['/session'], 1, 'Heartbeat discovery must not require another session.');
       assert.ok(fixtureReport.requestsByPath['/windows'] >= 5);
       await focusPanel('chatgpt');
-      const appClick=await provePoint(fixtureReport.frame.composer,await drawing([0,0,1920,1080]));
+      const fittedView=await drawing([0,0,1920,1080]);
+      const beforeEditor=fixtureReport.inputs.length;
+      await key('Type a').click();
+      assert.equal(fixtureReport.inputs.length,beforeEditor,'A live frame alone cannot choose a writable ChatGPT editor.');
+      assert.match(await page.locator('#window-input-status').innerText(),/Select the intended editor/);
+      await key('Enter (app)').click();
+      assert.equal(fixtureReport.inputs.length,beforeEditor,'Enter before an acknowledged composer selection cannot reach native input.');
+      const appClick=await provePoint(fixtureReport.frame.composer,fittedView);
       const typed=await postedInput(()=>key('Type a').click());assert.equal(typed.payload.kind,'text');assert.equal(typed.payload.text,'a');
       const scrolledDown=await postedInput(()=>panelAction('scroll-down'));
       assert.equal(scrolledDown.payload.kind,'scroll');assert.equal(scrolledDown.payload.delta,-120);
       const scrolledUp=await postedInput(()=>panelAction('scroll-up'));
       assert.equal(scrolledUp.payload.kind,'scroll');assert.equal(scrolledUp.payload.delta,120);
+      // The dedicated arrows scroll at the centre of the CURRENT visible app crop,
+      // not at the previous hover/click over the composer. An unchanged hovered
+      // point would send a real scroll to the wrong portion of ChatGPT.
+      const scrollCentre={
+        x:(fittedView.crop[0]+fittedView.crop[2]/2)/fittedView.sourceWidth,
+        y:(fittedView.crop[1]+fittedView.crop[3]/2)/fittedView.sourceHeight,
+      };
       for(const scroll of [scrolledDown,scrolledUp]){
-        assert.equal(scroll.payload.x,appClick.posted.x);assert.equal(scroll.payload.y,appClick.posted.y);
+        assert.equal(scroll.payload.x,scrollCentre.x);
+        assert.equal(scroll.payload.y,scrollCentre.y);
       }
+      assert.notDeepEqual(scrollCentre,{x:appClick.posted.x,y:appClick.posted.y},
+        'Dedicated Scroll controls must not inherit the last composer hover.');
       return { synthetic: true, nativeWindowConnected:false,physicalHeadsetVerified:false,
         selectionPath:'left holographic canvas only; no desktop select control',selectedId: 44, selectedPid: 55, binds: fixtureReport.binds,
         windowResponses: fixtureReport.requestsByPath['/windows'], emptyImage, selectedImage,pagedImage,appClick,typed,
@@ -736,7 +767,7 @@ try {
       await panelAction('height-up');
       assert.equal(Number(await page.locator('#comfort-height').inputValue()),height+1);
       assert.equal(await page.locator('#focus-settings').getAttribute('aria-pressed'),'true');
-      assert.equal(await key('Type a').isDisabled(),true);assert.equal(await key('Send / Enter').isDisabled(),true);
+      assert.equal(await key('Type a').isDisabled(),true);assert.equal(await key('Enter (app)').isDisabled(),true);
       await panelAction('height-down');
       const beforeTable=await page.evaluate(()=>JSON.parse(localStorage.getItem('stephanos.spatial.furniture.v1'))?.offsets?.table??[0,0,0]);
       await panelAction('furniture-table');await panelAction('furniture-right');
@@ -762,7 +793,7 @@ try {
       assert.ok(audioTexts.includes('SYNTHETIC Quest microphone'));assert.ok(audioTexts.includes('SYNTHETIC Quest speakers'));
       await page.locator('#audio-microphone').selectOption('');await freshPaints();
       assert.ok(await page.evaluate(()=>window.__spatialSyntheticDrawCapture.screen.texts.some(text=>text.text==='System microphone')));
-      assert.equal(await key('Send / Enter').isDisabled(),true);
+      assert.equal(await key('Enter (app)').isDisabled(),true);
       const audioImage=await capturedCanvas('synthetic-three-panels-audio');
 
       await panelAction('left-console');const healthBefore=result.syntheticHelperHealth.requests;
@@ -776,7 +807,7 @@ try {
       assert.equal((checkedConnectionPane.match(/Local Spatial helper responds\./g)||[]).length,1);
       const connectionImage=await capturedCanvas('synthetic-three-panels-connection');
       await focusPanel('chatgpt');assert.equal(await key('Type a').isDisabled(),false);
-      assert.equal(await key('Send / Enter').isDisabled(),false);
+      assert.equal(await key('Enter (app)').isDisabled(),false);
       assert.equal(fixtureReport.inputs.length,before,'Local pages and focus headers must never forward an app gesture.');
       assert.equal(await page.evaluate(()=>window.__spatialSyntheticDrawCapture.mediaRequests),0);
       return {synthetic:true,panels:HOLODECK_PANELS.map(panel=>panel.id),settingsSharedWithLauncher:true,
@@ -819,7 +850,7 @@ try {
       for (const label of ['!', '?']) {
         const input = await postedInput(() => key('Type ' + label).click());
         assert.equal(input.payload.kind, 'text'); assert.equal(input.payload.text, label);
-        assert.equal(input.response.status, 'input-posted'); sent.push(input.payload);
+        assert.equal(input.response.status, 'editor-value-readback'); sent.push(input.payload);
       }
       const image = await capturedCanvas('synthetic-shifted-vr-keyboard', 'keyboard');
       await key('Shift').click(); assert.equal(await key('Shift').getAttribute('aria-pressed'), 'false');
@@ -831,7 +862,7 @@ try {
       const rejected = await postedInput(() => key('Type a').click());
       assert.equal(rejected.response.status, 'input-rejected');
       await freshPaints();
-      const notice = await paintedNotice(/That input was not accepted/);
+      const notice = await paintedNotice(/The selected app did not confirm that input/);
       return { synthetic: true, rejected: rejected.payload, notice,
         image: await capturedCanvas('synthetic-input-rejected-screen') };
     });

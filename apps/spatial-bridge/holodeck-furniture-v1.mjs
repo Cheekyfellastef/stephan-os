@@ -65,12 +65,16 @@ export function furnitureObstacles(state) {
   });
 }
 
-export function createHolodeckFurniture({storage=globalThis.localStorage,comfort=null,onChange=()=>{},onStatus=()=>{}}={}) {
+export function createHolodeckFurniture({storage,comfort=null,onChange=()=>{},onStatus=()=>{}}={}) {
+  // Privacy-restricted browsers may throw on access to localStorage itself.
+  // Furniture stays usable in memory; no grant or session state is persisted.
+  let preferenceStorage;
+  try{preferenceStorage=storage===undefined?globalThis.localStorage:storage;}catch{}
   let offsets=initial(),dirty=false;
   let restoreMotions=[];
   const motionObservers=new Set();
   try {
-    const value=storage?.getItem(SPATIAL_FURNITURE_STORAGE_KEY);
+    const value=preferenceStorage?.getItem(SPATIAL_FURNITURE_STORAGE_KEY);
     if(value) {
       const decoded=JSON.parse(value);
       if(decoded?.version===1 && decoded.offsets && typeof decoded.offsets==='object') {
@@ -85,6 +89,7 @@ export function createHolodeckFurniture({storage=globalThis.localStorage,comfort
       }
     }
   }catch{onStatus('Furniture positions are session-only on this browser.');}
+  if(!preferenceStorage)onStatus('Furniture positions are session-only on this browser.');
   const getState=()=>({table:[...offsets.table],keyboard:[...offsets.keyboard]});
   const getOffset=id=>targets.includes(id)?[...offsets[id]]:[0,0,0];
   const getRestoreMotions=()=>restoreMotions.map(({id,from,to})=>({id,from:[...from],to:[...to]}));
@@ -148,7 +153,7 @@ export function createHolodeckFurniture({storage=globalThis.localStorage,comfort
   function flush() {
     if(!dirty)return true;
     try {
-      storage.setItem(SPATIAL_FURNITURE_STORAGE_KEY,JSON.stringify({version:1,offsets}));
+      preferenceStorage.setItem(SPATIAL_FURNITURE_STORAGE_KEY,JSON.stringify({version:1,offsets}));
       dirty=false;
       for(const observer of motionObservers)observer.flushed?.();
       restoreMotions=[];

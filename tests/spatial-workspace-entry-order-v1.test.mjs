@@ -75,6 +75,70 @@ function frame(session) {
   } }) };
 }
 
+test('immersive entry revokes local audio tests and blocks new tests without touching ChatGPT Voice', () => {
+  const start = html.indexOf('    const workspaceEntry = createHolodeckEntryLifecycle({');
+  const end = html.indexOf("    enterButton.addEventListener('click'", start);
+  assert.ok(start >= 0 && end > start);
+  const nodes = new Map();
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { disabled: false, textContent: '' });
+    return nodes.get(id);
+  };
+  let onState, micStops = 0, speakerStops = 0, audioRefreshes = 0;
+  const page = vm.createContext({
+    createHolodeckEntryLifecycle: options => {
+      onState = options.onState;
+      return { isBusy: () => false };
+    },
+    enterHolodeckBaseline() {}, createSpatialWorkspaceTelemetryRecorderV1() {},
+    enterButton: node('enter-holodeck'), sessionReason: node('session-reason'),
+    stopMicTest() { micStops += 1; },
+    audio: {
+      stopSpeakers() { speakerStops += 1; },
+      getState() { return { microphoneActive: false, microphonePending: false }; },
+    },
+    refreshAudioUI() { audioRefreshes += 1; },
+    previewFrame: 19, previewRenderer: { dispose() {} },
+    immersiveActive: false, cancelAnimationFrame() {},
+    document: { getElementById: node },
+  });
+  vm.runInContext(html.slice(start, end), page);
+  onState({ state: 'requesting' });
+  assert.equal(page.immersiveActive, true);
+  assert.equal(micStops, 1, 'a pending or active local mic test must be revoked');
+  assert.equal(speakerStops, 1, 'a pending or active local speaker tone must be revoked');
+  assert.equal(audioRefreshes, 1, 'audio test controls must be refreshed under VR state');
+
+  const controlsStart = html.indexOf("    document.getElementById('audio-test-microphone').addEventListener");
+  const controlsEnd = html.indexOf("    document.getElementById('audio-voice-help').addEventListener", controlsStart);
+  assert.ok(controlsStart >= 0 && controlsEnd > controlsStart);
+  let micStarts = 0, speakerStarts = 0, stopCalls = 0;
+  const handlers = new Map();
+  const controls = vm.createContext({
+    immersiveActive: true,
+    document: { getElementById: id => ({
+      addEventListener: (_kind, handler) => handlers.set(id, handler),
+    }) },
+    audio: {
+      testMicrophone() { micStarts += 1; },
+      testSpeakers() { speakerStarts += 1; },
+    },
+    stopMicTest() { stopCalls += 1; },
+  });
+  vm.runInContext(html.slice(controlsStart, controlsEnd), controls);
+  handlers.get('audio-test-microphone')();
+  handlers.get('audio-test-speakers')();
+  assert.equal(micStarts, 0);
+  assert.equal(speakerStarts, 0);
+  handlers.get('audio-stop-microphone')();
+  assert.equal(stopCalls, 1, 'Stop remains usable in VR');
+  controls.immersiveActive = false;
+  handlers.get('audio-test-microphone')();
+  handlers.get('audio-test-speakers')();
+  assert.equal(micStarts, 1, 'the explicit local test is available again after exit');
+  assert.equal(speakerStarts, 1);
+});
+
 test('the actual Enter handler requests XR in the click before any telemetry work; stalled telemetry cannot hold entry', { timeout: 1000 }, async () => {
   const telemetry = deferred(), startGate = deferred(), recorder = recorderFixture({ startGate });
   let activated = false, click;
@@ -138,15 +202,18 @@ test('actual pagehide invalidates a pending request and closes a late grant with
   const grant = deferred();
   const h = fixture({ request: () => grant.promise });
   const result = h.entry.enter();
-  let pagehide;
+  let pagehide, microphoneStops = 0, speakerStops = 0;
   const source = html.split('\n').find(line => line.includes("window.addEventListener('pagehide'"));
   assert.ok(source);
   vm.runInNewContext(source, {
     workspaceEntry: h.entry, comfort: { flush() {} }, furniture: { flush() {} },
-    stopMicTest() {}, cubeScene: { stop() {} }, client: { pagehide() {} },
+    stopMicTest() { microphoneStops++; }, audio: { stopSpeakers() { speakerStops++; } },
+    cubeScene: { stop() {} }, client: { pagehide() {} },
     window: { addEventListener: (_name, callback) => { pagehide = callback; } },
   });
   pagehide({ persisted: true });
+  assert.equal(microphoneStops, 1, 'pagehide synchronously revokes any local microphone test');
+  assert.equal(speakerStops, 1, 'pagehide synchronously revokes any pending or active speaker test');
   assert.equal(h.entry.isBusy(), true);
   assert.equal((await h.entry.enter()).busy, true);
   grant.resolve(h.session);
@@ -339,4 +406,64 @@ test('stopping inside a frame callback disposes only that room and never rearms 
   oldFrame(16, frame(h.session));
   assert.equal(h.renderers[0].draws, 1);
   assert.equal(recorder.frames, 1);
+});
+
+test('WebGL context loss makes flat preview fail closed and rebuilds its renderer on restoration', () => {
+  // Execute the original page's preview lifecycle with synthetic GPU state,
+  // without a real microphone, XR grant, remote app input or user conversation.
+  const start = html.indexOf('    let inspectCube = false;');
+  const end = html.indexOf("    window.addEventListener('resize', drawPreview);", start);
+  assert.ok(start >= 0 && end > start, 'original flat preview lifecycle present');
+
+  const gl = { lost: false, isContextLost() { return this.lost; } };
+  const canvas = new EventTarget();
+  Object.assign(canvas, { width: 840, height: 420, clientWidth: 840, clientHeight: 420,
+    getContext() { return gl; } });
+  const status = { textContent: '' };
+  let rendererCreates = 0, draws = 0, resumes = 0;
+  const page = vm.createContext({
+    canvas, previewReady: true, immersiveActive: false, previewRenderer: null,
+    inspectKeyboard: false, window: { devicePixelRatio: 1 },
+    document: { hidden: false, getElementById(id) {
+      assert.equal(id, 'preview-status');
+      return status;
+    } },
+    screen: { render() {} },
+    cubeScene: { getStates: () => [{ position: [0, 1, 0] }, { position: [0, 1, 0] }] },
+    comfort: { getState: () => ({ heightOffset: 0 }) },
+    furniture: {},
+    createHolodeckRoomRenderer() {
+      rendererCreates += 1;
+      return { drawPreview() { draws += 1; } };
+    },
+    playPreview() { resumes += 1; },
+  });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.previewDraw = drawPreview;', page);
+
+  assert.equal(page.previewDraw(), true);
+  assert.equal(rendererCreates, 1);
+  assert.equal(draws, 1);
+
+  gl.lost = true;
+  const loss = new Event('webglcontextlost', { cancelable: true });
+  assert.equal(canvas.dispatchEvent(loss), false, 'request browser restoration');
+  assert.equal(loss.defaultPrevented, true);
+  assert.match(status.textContent, /preview paused: graphics context lost/i);
+  assert.equal(page.previewDraw(), false, 'lost GPU context never counts as visible room');
+  assert.equal(draws, 1, 'do not draw with stale GPU objects');
+
+  gl.lost = false;
+  canvas.dispatchEvent(new Event('webglcontextrestored'));
+  assert.equal(resumes, 1, 'resumes only after genuine restoration');
+  assert.equal(page.previewDraw(), true);
+  assert.equal(rendererCreates, 2, 'old renderer is not reused after context restoration');
+  assert.equal(draws, 2);
+
+  gl.lost = true;
+  canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+  page.immersiveActive = true;
+  gl.lost = false;
+  canvas.dispatchEvent(new Event('webglcontextrestored'));
+  assert.equal(resumes, 1, 'do not restart flat preview over immersive Quest session');
+  assert.equal(page.previewDraw(), false);
 });

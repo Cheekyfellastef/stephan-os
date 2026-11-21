@@ -1,21 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHolodeckAudioControls } from '../apps/spatial-bridge/holodeck-audio-v1.mjs';
+import { createHolodeckAudioControls,readSpatialAudioPreferences } from '../apps/spatial-bridge/holodeck-audio-v1.mjs';
 
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 const drain=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
-function mediaStream(){
-  const listeners=new Set();
-  const track={readyState:'live',stops:0,stop(){this.stops++;this.readyState='ended';},
-    addEventListener(event,listener){assert.equal(event,'ended');listeners.add(listener);},
-    removeEventListener(event,listener){assert.equal(event,'ended');listeners.delete(listener);},
-    end(){this.readyState='ended';for(const listener of [...listeners])listener();}};
+function mediaStream(deviceId='headset'){
+  const listeners={ended:new Set(),mute:new Set()};
+  const track={readyState:'live',muted:false,stops:0,getSettings(){return {deviceId};},stop(){this.stops++;this.readyState='ended';},
+    addEventListener(event,listener){assert.ok(event in listeners);listeners[event].add(listener);},
+    removeEventListener(event,listener){assert.ok(event in listeners);listeners[event].delete(listener);},
+    end(){this.readyState='ended';for(const listener of [...listeners.ended])listener();},
+    mute(){this.muted=true;for(const listener of [...listeners.mute])listener();}};
   return {track,getTracks:()=>[track],getAudioTracks:()=>[track]};
 }
 function microphoneHarness(options={}){
   const requests=[],changes=[],statuses=[];
   const audio=createHolodeckAudioControls({AudioContextCtor:null,
-    navigatorRef:{mediaDevices:{getUserMedia(spec){const request=deferred();requests.push({...request,spec});return request.promise;}}},
+    navigatorRef:{mediaDevices:{
+      async enumerateDevices(){return ['headset','old-microphone','new-microphone'].map(id=>({kind:'audioinput',deviceId:id,label:id}));},
+      getUserMedia(spec){const request=deferred();requests.push({...request,spec});return request.promise;},
+    }},
     onChange:state=>changes.push(state),onStatus:message=>statuses.push(message),...options});
   return {audio,requests,changes,statuses};
 }
@@ -48,7 +52,8 @@ test('one audio state projects device selections to both presentations without r
 });
 
 test('microphone test uses the shared selection and owns exactly one pending or live grant',async()=>{
-  const h=microphoneHarness();h.audio.setInput('headset');
+  const h=microphoneHarness();await h.audio.listDevices();
+  assert.equal(h.audio.setInput('headset'),true,'explicit selection follows live device discovery');
   const opening=h.audio.testMicrophone();
   assert.equal(h.requests.length,1,'permission is requested directly from the explicit test call');
   assert.deepEqual(h.requests[0].spec,{audio:{deviceId:{exact:'headset'}},video:false});
@@ -64,6 +69,25 @@ test('microphone test uses the shared selection and owns exactly one pending or 
   h.audio.dispose();
 });
 
+test('an explicit Quest microphone grant must read back the selected physical device',async()=>{
+  for(const mode of ['wrong-device','missing-settings','unreadable-settings']){
+    const h=microphoneHarness();await h.audio.listDevices();
+    assert.equal(h.audio.setInput('headset'),true);
+    const opening=h.audio.testMicrophone(),stream=mediaStream('other-headset');
+    if(mode==='missing-settings')delete stream.track.getSettings;
+    if(mode==='unreadable-settings')stream.track.getSettings=()=>{throw Error('device unavailable');};
+    h.requests[0].resolve(stream);
+    const result=await opening;
+    assert.equal(result.ok,false,mode+' must never be treated as the selected headset');
+    assert.match(result.reason,/microphone identity could not be verified/i);
+    assert.equal(stream.track.stops,1,'unverified microphone grant must release its track once');
+    assert.equal(h.audio.getState().microphoneActive,false);
+    assert.equal(h.audio.getState().microphonePending,false);
+    assert.equal(h.audio.getState().inputId,'headset','no automatic device switching');
+    h.audio.dispose();assert.equal(stream.track.stops,1);
+  }
+});
+
 test('Stop and dispose settle pending microphone tests and close a later permission grant',async()=>{
   for(const operation of ['stopMicrophone','dispose']){
     const h=microphoneHarness(),opening=h.audio.testMicrophone();let result;
@@ -77,8 +101,10 @@ test('Stop and dispose settle pending microphone tests and close a later permiss
 });
 
 test('an old permission rejection cannot overwrite a fresh explicitly started microphone test',async()=>{
-  const h=microphoneHarness();const old=h.audio.testMicrophone();h.audio.stopMicrophone();
-  const fresh=h.audio.testMicrophone('new-microphone'),stream=mediaStream();h.requests[1].resolve(stream);
+  const h=microphoneHarness();await h.audio.listDevices();
+  const old=h.audio.testMicrophone();h.audio.stopMicrophone();
+  assert.equal(h.audio.setInput('new-microphone'),true,'new test needs a fresh discovered selection');
+  const fresh=h.audio.testMicrophone(),stream=mediaStream('new-microphone');h.requests[1].resolve(stream);
   assert.equal((await fresh).ok,true);const accepted=h.audio.getState();
   h.requests[0].reject(Object.assign(new Error('old denied grant'),{name:'NotAllowedError'}));
   assert.equal((await old).cancelled,true);await drain();
@@ -88,9 +114,12 @@ test('an old permission rejection cannot overwrite a fresh explicitly started mi
 
 test('changing the selected microphone revokes the old test without opening the new device',async()=>{
   for(const phase of ['pending','active']){
-    const h=microphoneHarness(),opening=h.audio.testMicrophone('old-microphone'),stream=mediaStream();
+    const h=microphoneHarness();await h.audio.listDevices();
+    assert.equal(h.audio.setInput('old-microphone'),true);
+    const opening=h.audio.testMicrophone(),stream=mediaStream('old-microphone');
     if(phase==='active'){h.requests[0].resolve(stream);assert.equal((await opening).ok,true);}
-    h.audio.setInput('new-microphone');const selected=h.audio.getState();
+    assert.equal(h.audio.setInput('new-microphone'),true);
+    const selected=h.audio.getState();
     assert.equal(selected.inputId,'new-microphone');assert.equal(selected.microphoneActive,false);assert.equal(selected.microphonePending,false);
     assert.equal(h.requests.length,1,'selection cannot itself request microphone permission');
     if(phase==='pending'){assert.equal((await opening).cancelled,true);h.requests[0].resolve(stream);await drain();}
@@ -121,7 +150,7 @@ function audioContextHarness({sink=null,resume=null,failAnalyser=false}={}){
   class FakeContext {
     constructor(){this.state=resume?'suspended':'running';this.currentTime=0;this.destination={speaker:true};this.closes=0;this.starts=0;this.connections=[];contexts.push(this);}
     close(){this.closes++;this.state='closed';return Promise.resolve();}
-    setSinkId(id){this.sink=id;return sink?.promise??Promise.resolve();}
+    setSinkId(id){this.sink=id;this.sinkId=id;return sink?.promise??Promise.resolve();}
     resume(){return resume?.promise??Promise.resolve();}
     createMediaStreamSource(){return {connect:node=>this.connections.push(node),disconnect(){}};}
     createAnalyser(){if(failAnalyser)throw Error('analysis unavailable');return {fftSize:0,getByteTimeDomainData:values=>values.fill(192),disconnect(){}};}
@@ -131,6 +160,69 @@ function audioContextHarness({sink=null,resume=null,failAnalyser=false}={}){
   }
   return {AudioContextCtor:FakeContext,contexts};
 }
+
+test('local audio tests cannot bypass explicitly selected headset routes',async()=>{
+  const h=microphoneHarness();await h.audio.listDevices();
+  assert.equal(h.audio.setInput('old-microphone'),true);
+  for(const unwanted of ['new-microphone','']){
+    const refused=await h.audio.testMicrophone(unwanted);
+    assert.equal(refused.ok,false);assert.match(refused.reason,/select the intended microphone/i);
+    assert.equal(h.requests.length,0,'unselected microphone must not request browser permission');
+    assert.equal(h.audio.getState().inputId,'old-microphone');
+  }
+  const permitted=h.audio.testMicrophone();
+  assert.equal(h.requests.length,1);assert.deepEqual(h.requests[0].spec,
+    {audio:{deviceId:{exact:'old-microphone'}},video:false});
+  const stream=mediaStream('old-microphone');h.requests[0].resolve(stream);
+  assert.equal((await permitted).ok,true);h.audio.stopMicrophone();
+  assert.equal(stream.track.stops,1);h.audio.dispose();
+
+  const context=audioContextHarness();
+  const audio=createHolodeckAudioControls({...context,navigatorRef:{mediaDevices:{
+    enumerateDevices:async()=>[
+      {kind:'audiooutput',deviceId:'quest-a',label:'Quest A'},
+      {kind:'audiooutput',deviceId:'quest-b',label:'Quest B'},
+    ],
+  }}});
+  await audio.listDevices();
+  assert.equal((await audio.testSpeakers('quest-b')).ok,false,
+    'discovering a device does not give a test permission to select it');
+  assert.equal(audio.setOutput('quest-a'),true);
+  for(const unwanted of ['quest-b','']){
+    const refused=await audio.testSpeakers(unwanted);
+    assert.equal(refused.ok,false);assert.match(refused.reason,/select the intended output/i);
+    assert.equal(context.contexts.length,0,'unselected speakers must not create an AudioContext');
+    assert.equal(audio.getState().outputId,'quest-a');
+  }
+  assert.equal((await audio.testSpeakers()).ok,true);
+  assert.equal(context.contexts.length,1);assert.equal(context.contexts[0].sink,'quest-a');
+  assert.equal(context.contexts[0].starts,1);
+  audio.stopSpeakers();assert.equal(context.contexts[0].closes,1);audio.dispose();
+});
+
+test('a resolved sink request must verify the intended Quest speaker before sounding a tone',async()=>{
+  for(const reportedSink of ['different-output',undefined]){
+    let closes=0,starts=0;
+    class UnverifiedSinkContext {
+      constructor(){this.state='running';this.currentTime=0;this.destination={};this.sinkId=reportedSink;}
+      setSinkId(){return Promise.resolve();}
+      createOscillator(){starts++;throw Error('Unverified speaker must not play.');}
+      close(){closes++;return Promise.resolve();}
+    }
+    const audio=createHolodeckAudioControls({AudioContextCtor:UnverifiedSinkContext,
+      navigatorRef:{mediaDevices:{enumerateDevices:async()=>[
+        {kind:'audiooutput',deviceId:'quest-output',label:'Quest headset'},
+      ]}}});
+    await audio.listDevices();assert.equal(audio.setOutput('quest-output'),true);
+    const refused=await audio.testSpeakers();
+    assert.equal(refused.ok,false,'setSinkId resolving cannot substitute for verified output identity');
+    assert.match(refused.reason,/route could not be verified/i);
+    assert.equal(starts,0,'never play a tone on a different or unknown audio route');
+    assert.equal(closes,1,'release the uncertain audio context');
+    assert.equal(audio.getState().outputId,'quest-output','do not silently select a different output');
+    audio.dispose();assert.equal(closes,1);
+  }
+});
 
 test('live microphone meter stays local and device loss closes its owned audio resources',async()=>{
   const context=audioContextHarness(),h=microphoneHarness(context),opening=h.audio.testMicrophone(),stream=mediaStream();
@@ -154,17 +246,49 @@ test('microphone setup failure and Stop during suspended audio release the grant
   }
 });
 
+test('failed live Quest microphone analyser revokes the one local grant and stops stale meter polling',async()=>{
+  const context=audioContextHarness(),h=microphoneHarness(context),stream=mediaStream();
+  const opening=h.audio.testMicrophone();h.requests[0].resolve(stream);
+  assert.equal((await opening).ok,true);
+  assert.equal(h.audio.microphoneLevel(),0.5);
+  const analyser=context.contexts[0].connections[0];
+  analyser.getByteTimeDomainData=()=>{throw Error('Quest audio analyser detached');};
+  assert.equal(h.audio.microphoneLevel(),null,'a detached headset cannot throw into the meter timer');
+  assert.equal(stream.track.stops,1,'the owned microphone is immediately released');
+  assert.equal(context.contexts[0].closes,1,'its analyser context is closed');
+  assert.equal(h.audio.getState().microphoneActive,false);
+  assert.equal(h.audio.getState().microphonePending,false);
+  assert.match(h.audio.getState().status,/Microphone level analyser failed/);
+  assert.equal(h.audio.microphoneLevel(),null,'a later tick cannot restart capture');
+  assert.equal(stream.track.stops,1,'no double stop and no automatic reopen');
+  h.audio.dispose();
+});
+
 test('speaker tests use the shared output selection and never begin after disposal',async()=>{
   const sink=deferred(),context=audioContextHarness({sink});
-  const audio=createHolodeckAudioControls({...context,navigatorRef:{}});audio.setOutput('headset-output');
+  const navigatorRef={mediaDevices:{enumerateDevices:async()=>[
+    {kind:'audiooutput',deviceId:'headset-output',label:'Headset'},
+    {kind:'audiooutput',deviceId:'selected-output',label:'Selected'},
+  ]}};
+  const audio=createHolodeckAudioControls({...context,navigatorRef});
+  await audio.listDevices();assert.equal(audio.setOutput('headset-output'),true);
   const playing=audio.testSpeakers();assert.equal(context.contexts[0].sink,'headset-output');
   audio.dispose();assert.equal((await playing).cancelled,true);const closed=audio.getState();
   sink.resolve();await drain();assert.equal(context.contexts[0].starts,0);assert.equal(context.contexts[0].closes,1);
   assert.deepEqual(audio.getState(),closed);
-  const normal=audioContextHarness(),live=createHolodeckAudioControls({...normal,navigatorRef:{}});
-  live.setOutput('selected-output');assert.equal((await live.testSpeakers()).ok,true);
+  const normal=audioContextHarness(),live=createHolodeckAudioControls({...normal,navigatorRef});
+  await live.listDevices();assert.equal(live.setOutput('selected-output'),true);
+  const playback=await live.testSpeakers();
+  assert.equal(playback.ok,true);
+  assert.match(playback.reason,/tone started.*listen/i,'starting a tone cannot claim it was heard');
+  assert.doesNotMatch(playback.reason,/ChatGPT Voice (started|enabled|verified)/i);
   assert.equal(normal.contexts[0].sink,'selected-output');assert.equal(normal.contexts[0].starts,1);
-  normal.contexts[0].oscillator.onended();assert.equal(normal.contexts[0].closes,1);live.dispose();
+  assert.match(live.getState().status,/tone started.*listen/i);
+  normal.contexts[0].oscillator.onended();
+  assert.equal(normal.contexts[0].closes,1);
+  assert.match(live.getState().status,/test completed.*not verified/i,
+    'native tone completion is not proof of headset audibility or ChatGPT Voice');
+  live.dispose();
 });
 
 test('superseded device discovery cannot replace a newer list or publish after disposal',async()=>{
@@ -176,4 +300,220 @@ test('superseded device discovery cannot replace a newer list or publish after d
   assert.deepEqual(audio.getState(),current);
   const pending=audio.listDevices();audio.dispose();const closed=audio.getState();
   lists[2].resolve([]);assert.equal((await pending).cancelled,true);assert.deepEqual(audio.getState(),closed);
+});
+
+test('failed audio discovery revokes stale microphone and speaker selections without clearing inert preferences',async()=>{
+  let denied=false,micRequests=0,speakerContexts=0;
+  const saved=new Map(),storage={getItem:k=>saved.get(k)??null,setItem:(k,v)=>saved.set(k,v)};
+  const navigatorRef={mediaDevices:{
+    async enumerateDevices(){
+      if(denied)throw Object.assign(Error('permission denied'),{name:'NotAllowedError'});
+      return [{kind:'audioinput',deviceId:'quest-mic',label:'Quest Mic'},
+        {kind:'audiooutput',deviceId:'quest-speaker',label:'Quest Speaker'}];
+    },
+    getUserMedia(){micRequests++;throw Error('stale mic opened');},
+  }};
+  class SpeakerContext{constructor(){speakerContexts++;}}
+  const audio=createHolodeckAudioControls({navigatorRef,AudioContextCtor:SpeakerContext,storageRef:storage});
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.setInput('quest-mic'),true);assert.equal(audio.setOutput('quest-speaker'),true);
+  denied=true;
+  const failed=await audio.listDevices();assert.equal(failed.ok,false);
+  assert.match(failed.reason,/Refresh devices/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['','']);
+  assert.deepEqual([audio.getState().inputs,audio.getState().outputs],[[],[]]);
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.equal(micRequests,0);assert.equal(speakerContexts,0);
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'quest-mic',outputId:'quest-speaker'});
+  denied=false;const recovered=await audio.listDevices();assert.equal(recovered.ok,true);
+  assert.match(recovered.reason,/Audio device discovery previously failed/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['',''],
+    'a successful retry must not silently reauthorize remembered device IDs');
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.deepEqual([micRequests,speakerContexts],[0,0]);
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'quest-mic',outputId:'quest-speaker'});
+  assert.equal(audio.setInput('quest-mic'),true);
+  assert.equal(audio.setOutput('quest-speaker'),true);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['quest-mic','quest-speaker']);
+  assert.deepEqual([micRequests,speakerContexts],[0,0],
+    'explicit route reselection must not start a local test or ChatGPT Voice');
+  audio.dispose();
+});
+
+test('failed audio discovery cancels pending microphone permission and stops a late grant',async()=>{
+  let denied=false,resolveGrant,stops=0;
+  const audio=createHolodeckAudioControls({AudioContextCtor:null,navigatorRef:{mediaDevices:{
+    async enumerateDevices(){
+      if(denied)throw Object.assign(Error('denied'),{name:'NotAllowedError'});
+      return [{kind:'audioinput',deviceId:'mic',label:'Mic'}];
+    },
+    getUserMedia(){return new Promise(resolve=>{resolveGrant=resolve;});},
+  }}});
+  await audio.listDevices();assert.equal(audio.setInput('mic'),true);
+  const pending=audio.testMicrophone();assert.equal(audio.getState().microphonePending,true);
+  denied=true;assert.equal((await audio.listDevices()).ok,false);
+  assert.equal((await pending).cancelled,true);
+  assert.equal(audio.getState().microphonePending,false);
+  resolveGrant({getTracks:()=>[{readyState:'live',stop(){stops++;}}]});
+  await drain();assert.equal(stops,1);
+  assert.equal((await audio.testMicrophone()).ok,false);
+  audio.dispose();
+});
+
+test('audio hot-plug revokes pending microphone grant and stale discovery without silently changing devices',async()=>{
+  const listeners=new Set(),grant=deferred(),olderList=deferred(),saved=new Map();
+  const storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)};
+  let slowList=false,requests=0,removed=0;
+  const discovered=[{kind:'audioinput',deviceId:'quest-mic',label:'Quest microphone'}];
+  const mediaDevices={
+    addEventListener(name,listener){assert.equal(name,'devicechange');listeners.add(listener);},
+    removeEventListener(name,listener){assert.equal(name,'devicechange');removed++;listeners.delete(listener);},
+    enumerateDevices(){return slowList?olderList.promise:Promise.resolve(discovered);},
+    getUserMedia(){requests++;return grant.promise;},
+  };
+  const audio=createHolodeckAudioControls({AudioContextCtor:null,navigatorRef:{mediaDevices},storageRef:storage});
+  assert.equal(listeners.size,1);
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.setInput('quest-mic'),true);
+  const pending=audio.testMicrophone();
+  assert.equal(audio.getState().microphonePending,true);
+  assert.equal(requests,1);
+  slowList=true;
+  const stale=audio.listDevices();
+  for(const listener of listeners)listener();
+  assert.equal((await pending).cancelled,true);
+  const invalidated=audio.getState();
+  assert.deepEqual([invalidated.inputs,invalidated.outputs],[[],[]]);
+  assert.equal(invalidated.microphonePending,false);
+  assert.match(invalidated.status,/Audio devices changed/);
+  olderList.resolve(discovered);
+  assert.equal((await stale).cancelled,true);
+  assert.deepEqual(audio.getState(),invalidated,'old device enumeration cannot revive a detached headset');
+  const stream=mediaStream();
+  grant.resolve(stream);await drain();
+  assert.equal(stream.track.stops,1,'late browser microphone grant is immediately revoked');
+  assert.equal((await audio.testMicrophone()).ok,false);
+  assert.equal(requests,1,'hot-plug never silently reopens a microphone');
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'quest-mic',outputId:''});
+  slowList=false;discovered.length=0;
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.getState().inputId,'');
+  assert.equal((await audio.testMicrophone()).ok,false,'a missing remembered mic cannot fall back to default');
+  audio.dispose();
+  assert.equal(removed,1);assert.equal(listeners.size,0,'disposed room unregisters the device observer');
+});
+
+test('hot-plug cannot silently reuse the same physical route just because device IDs returned',async()=>{
+  const listeners=new Set(),saved=new Map();
+  const storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)};
+  let micRequests=0,speakerContexts=0;
+  const mediaDevices={
+    addEventListener(event,fn){assert.equal(event,'devicechange');listeners.add(fn);},
+    removeEventListener(event,fn){assert.equal(event,'devicechange');listeners.delete(fn);},
+    async enumerateDevices(){return [
+      {kind:'audioinput',deviceId:'quest-mic',label:'Quest microphone'},
+      {kind:'audiooutput',deviceId:'quest-speaker',label:'Quest speakers'},
+    ];},
+    getUserMedia(){micRequests++;throw Error('no automatic microphone request allowed');},
+  };
+  class SpeakerContext{constructor(){speakerContexts++;}}
+  const audio=createHolodeckAudioControls({navigatorRef:{mediaDevices},storageRef:storage,AudioContextCtor:SpeakerContext});
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.setInput('quest-mic'),true);
+  assert.equal(audio.setOutput('quest-speaker'),true);
+  const savedHints=readSpatialAudioPreferences(storage);
+  assert.deepEqual(savedHints,{inputId:'quest-mic',outputId:'quest-speaker'});
+  for(const listener of listeners)listener();
+  const listed=await audio.listDevices();
+  assert.equal(listed.ok,true);
+  assert.match(listed.reason,/Re-select the intended microphone and speaker/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['',''],
+    'device enumeration may not reauthorize saved IDs after hot-plug');
+  assert.deepEqual(readSpatialAudioPreferences(storage),savedHints,'inert saved hints remain available for later sessions');
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testMicrophone('')).ok,false,'default microphone is not silently substituted');
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.deepEqual([micRequests,speakerContexts],[0,0]);
+  assert.equal(audio.setInput('quest-mic'),true,'fresh explicit selection restores local microphone choice');
+  assert.equal(audio.setOutput('quest-speaker'),true,'fresh explicit selection restores local speaker choice');
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['quest-mic','quest-speaker']);
+  assert.deepEqual([micRequests,speakerContexts],[0,0],'selection alone is not a media grant');
+  audio.dispose();assert.equal(listeners.size,0);
+});
+
+test('duplicate Quest audio IDs revoke both routes and cannot silently restore saved device hints',async()=>{
+  let duplicates=false,micRequests=0,speakerContexts=0;
+  const saved=new Map(),storage={getItem:k=>saved.get(k)??null,setItem:(k,v)=>saved.set(k,v)};
+  const mediaDevices={
+    async enumerateDevices(){
+      const devices=[{kind:'audioinput',deviceId:'quest-mic',label:'Quest Mic'},
+        {kind:'audiooutput',deviceId:'quest-speaker',label:'Quest Speakers'}];
+      if(duplicates)devices.push(
+        {kind:'audioinput',deviceId:'quest-mic',label:'Second Mic'},
+        {kind:'audiooutput',deviceId:'quest-speaker',label:'Second Output'});
+      return devices;
+    },
+    getUserMedia(){micRequests++;throw Error('ambiguous microphone must never request permission');},
+  };
+  class SpeakerContext{constructor(){speakerContexts++;}}
+  const audio=createHolodeckAudioControls({navigatorRef:{mediaDevices},AudioContextCtor:SpeakerContext,storageRef:storage});
+  assert.equal((await audio.listDevices()).ok,true);
+  assert.equal(audio.setInput('quest-mic'),true);
+  assert.equal(audio.setOutput('quest-speaker'),true);
+  const savedHints=readSpatialAudioPreferences(storage);
+  assert.deepEqual(savedHints,{inputId:'quest-mic',outputId:'quest-speaker'});
+
+  duplicates=true;
+  const ambiguous=await audio.listDevices();
+  assert.equal(ambiguous.ok,true,'a successful enumeration may still contain untrustworthy duplicate IDs');
+  assert.match(ambiguous.reason,/Ambiguous audio device identity/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['','']);
+  assert.equal(audio.setInput('quest-mic'),false,'even explicit selection cannot distinguish duplicate microphone IDs');
+  assert.equal(audio.setOutput('quest-speaker'),false,'even explicit selection cannot distinguish duplicate output IDs');
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.deepEqual([micRequests,speakerContexts],[0,0],'duplicate identity cannot acquire mic or sound a tone');
+  assert.deepEqual(readSpatialAudioPreferences(storage),savedHints,'saved hints stay inert');
+
+  duplicates=false;
+  const recovered=await audio.listDevices();
+  assert.equal(recovered.ok,true);
+  assert.match(recovered.reason,/Ambiguous audio device identity was observed/);
+  assert.deepEqual([audio.getState().inputId,audio.getState().outputId],['',''],
+    'a later unique enumeration alone cannot re-authorize previously ambiguous routes');
+  assert.equal((await audio.testMicrophone('quest-mic')).ok,false);
+  assert.equal((await audio.testSpeakers('quest-speaker')).ok,false);
+  assert.equal(audio.setInput('quest-mic'),true,'only fresh explicit selection can restore the microphone hint');
+  assert.equal(audio.setOutput('quest-speaker'),true,'only fresh explicit selection can restore the speaker hint');
+  assert.deepEqual([micRequests,speakerContexts],[0,0],'selection is never a media grant or ChatGPT Voice session');
+  audio.dispose();
+});
+
+test('Quest microphone mute revokes the owned local test without automatic regrant',async()=>{
+  const h=microphoneHarness();await h.audio.listDevices();assert.equal(h.audio.setInput('headset'),true);
+  const opening=h.audio.testMicrophone(),stream=mediaStream();h.requests[0].resolve(stream);
+  assert.equal((await opening).ok,true);assert.equal(h.audio.getState().microphoneActive,true);
+  stream.track.mute();
+  assert.equal(stream.track.stops,1,'a muted Quest route must release its owned track');
+  assert.equal(h.audio.getState().microphoneActive,false);
+  assert.equal(h.audio.getState().microphonePending,false);
+  assert.match(h.audio.getState().status,/muted or interrupted.*stopped/i);
+  assert.equal(h.requests.length,1,'mute must never retry permission or start ChatGPT Voice');
+  stream.track.muted=false;await drain();
+  assert.equal(h.audio.getState().microphoneActive,false,'later unmute cannot regrant local capture');
+  h.audio.dispose();assert.equal(stream.track.stops,1);
+});
+
+test('already-muted Quest grant cannot report a live microphone',async()=>{
+  const h=microphoneHarness();await h.audio.listDevices();assert.equal(h.audio.setInput('headset'),true);
+  const opening=h.audio.testMicrophone(),stream=mediaStream();
+  stream.track.muted=true;h.requests[0].resolve(stream);
+  assert.equal((await opening).ok,false);
+  assert.equal(stream.track.stops,1);
+  assert.equal(h.audio.getState().microphoneActive,false);
+  assert.equal(h.audio.getState().microphonePending,false);
+  assert.match(h.audio.getState().status,/muted or interrupted/i);
+  h.audio.dispose();assert.equal(stream.track.stops,1);
 });

@@ -14,7 +14,7 @@ import {
   createHolodeckFurniture, createHolodeckFurnitureInteraction, FURNITURE_MATERIALS,
   SPATIAL_FURNITURE_STORAGE_KEY, furnitureFollow, furnitureGrabTarget,
 } from '../apps/spatial-bridge/holodeck-furniture-v1.mjs';
-import { createHolodeckAudioControls } from '../apps/spatial-bridge/holodeck-audio-v1.mjs';
+import { createHolodeckAudioControls, readSpatialAudioPreferences, SPATIAL_AUDIO_PREFERENCE_KEY } from '../apps/spatial-bridge/holodeck-audio-v1.mjs';
 
 const close = (actual, expected, tolerance=1e-5) =>
   assert.ok(Math.abs(actual-expected) < tolerance, `${actual} ≠ ${expected}`);
@@ -24,6 +24,23 @@ const store = () => {
   return {writes, getItem:key=>entries.get(key)??null,
     setItem(key,value){writes.push({key,value});entries.set(key,value);}};
 };
+test('denied default localStorage getter leaves the Spatial furniture room usable in memory', () => {
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+  const statuses=[];
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,get(){throw new Error('Storage unavailable');}});
+  try{
+    const furniture=createHolodeckFurniture({onStatus:message=>statuses.push(message)});
+    vec(furniture.getOffset('table'),[0,0,0]);
+    furniture.nudge('table',0,0.1);
+    close(furniture.getOffset('table')[0],0.1);
+    assert.equal(furniture.flush(),false,'unavailable storage must never report durable persistence');
+    assert.match(statuses.join(' '),/session-only/);
+  }finally{
+    if(previous)Object.defineProperty(globalThis,'localStorage',previous);
+    else Reflect.deleteProperty(globalThis,'localStorage');
+  }
+});
+
 const tracked = (point) => ({transform:{
   position:{x:point[0],y:point[1],z:point[2]},
   orientation:{x:0,y:0,z:0,w:1},
@@ -131,7 +148,7 @@ test('Quest grip moves furniture with inertia and release saves instead of snapp
 
 test('audio devices are real browser-local tests and do not acquire mic without user action', async () => {
   const calls=[],events=[];
-  const track={stop(){calls.push('stop');}};
+  const track={getSettings(){return {deviceId:'mic1'};},stop(){calls.push('stop');}};
   const devices={
     async enumerateDevices(){calls.push('enumerate');return [
       {kind:'audioinput',deviceId:'mic1',label:'Headset mic'},
@@ -144,6 +161,8 @@ test('audio devices are real browser-local tests and do not acquire mic without 
   assert.deepEqual(found.inputs,[{id:'mic1',label:'Headset mic'}]);
   assert.deepEqual(found.outputs,[{id:'out1',label:'Headset speakers'}]);
   assert.deepEqual(calls,['enumerate']);
+  assert.equal(audio.setInput('mic1'),true,'a local test requires an explicit chosen microphone');
+  assert.equal(audio.setOutput('out1'),true,'a local test requires an explicit chosen speaker');
   const opened=await audio.testMicrophone('mic1');
   assert.equal(opened.ok,true);
   assert.equal(calls[1][1].audio.deviceId.exact,'mic1');
@@ -154,6 +173,32 @@ test('audio devices are real browser-local tests and do not acquire mic without 
   assert.ok(events.some(t=>t.includes('ChatGPT')));
 });
 
+test('local speaker Stop cancels a pending Quest sink selection without later playback or touching ChatGPT Voice',async()=>{
+  let finishSink;const sink=new Promise(resolve=>{finishSink=resolve;});
+  const events=[];let oscillatorStarts=0,contextCloses=0;
+  class TestAudioContext{
+    constructor(){this.state='running';this.currentTime=0;this.destination={};}
+    setSinkId(){return sink;}
+    createOscillator(){oscillatorStarts++;return {frequency:{value:0},connect(){},start(){},stop(){},disconnect(){}};}
+    createGain(){return {gain:{value:0},connect(){},disconnect(){}};}
+    close(){contextCloses++;return Promise.resolve();}
+  }
+  const audio=createHolodeckAudioControls({AudioContextCtor:TestAudioContext,onStatus:text=>events.push(text),
+    navigatorRef:{mediaDevices:{enumerateDevices:async()=>[
+      {kind:'audiooutput',deviceId:'quest-speakers',label:'Quest speakers'},
+    ]}}});
+  await audio.listDevices();assert.equal(audio.setOutput('quest-speakers'),true);
+  const pending=audio.testSpeakers();
+  assert.equal(audio.stopSpeakers(),true,'an in-flight sink selection must be cancellable');
+  assert.equal(audio.stopSpeakers(),false,'repeated Stop must be inert');
+  finishSink();
+  assert.deepEqual(await pending,{ok:false,cancelled:true,reason:'Speaker test was stopped.'});
+  assert.equal(oscillatorStarts,0,'late sink selection must never start the oscillator');
+  assert.equal(contextCloses,1,'stopped test must close its owned audio context');
+  assert.ok(events.at(-1).includes('ChatGPT Voice remains controlled in the original app'));
+  audio.dispose();
+});
+
 test('launcher exposes persistent furniture and real device testing without inventing direct Voice control', () => {
   const page=readFileSync(new URL('../apps/spatial-bridge/quest-entry.html',import.meta.url),'utf8');
   const worker=readFileSync(new URL('../apps/spatial-bridge/service-worker.js',import.meta.url),'utf8');
@@ -161,5 +206,119 @@ test('launcher exposes persistent furniture and real device testing without inve
     'audio-test-microphone','audio-test-speakers','audio-voice-help','probe-capture'])assert.ok(page.includes(marker),marker);
   assert.match(worker,/holodeck-furniture-v1\.mjs/);
   assert.match(worker,/holodeck-audio-v1\.mjs/);
-  assert.match(worker,/stephanos-spatial-workspace-v1-furniture-physics-v9/);
+  assert.match(worker,/stephanos-spatial-workspace-v1-consented-editor-v10/);
+});
+
+test('explicitly selected device hints survive room reopen only after exact live enumeration, without audio grants',async()=>{
+  const storage=store();
+  let listed=[
+    {kind:'audioinput',deviceId:'quest-mic',label:'Quest microphone'},
+    {kind:'audiooutput',deviceId:'quest-out',label:'Quest speakers'},
+  ];
+  let mediaRequests=0;
+  const navigatorRef={mediaDevices:{
+    enumerateDevices:async()=>listed,
+    getUserMedia(){mediaRequests++;throw Error('A preference must never open the microphone');},
+  }};
+  const make=()=>createHolodeckAudioControls({storageRef:storage,navigatorRef,AudioContextCtor:null});
+  const first=make();
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'',outputId:''});
+  await first.listDevices();
+  assert.equal(storage.writes.length,0,'enumeration alone must not persist a device or consent');
+  assert.equal(first.setInput('quest-mic'),true);
+  assert.equal(first.setOutput('quest-out'),true);
+  assert.deepEqual(JSON.parse(storage.getItem(SPATIAL_AUDIO_PREFERENCE_KEY)),
+    {version:1,inputId:'quest-mic',outputId:'quest-out'});
+  first.dispose();
+  const reopened=make();
+  assert.deepEqual([reopened.getState().inputId,reopened.getState().outputId],['',''],
+    'stored hints are untrusted until they match newly enumerated devices');
+  await reopened.listDevices();
+  assert.deepEqual([reopened.getState().inputId,reopened.getState().outputId],
+    ['quest-mic','quest-out']);
+  assert.equal(reopened.getState().microphoneActive,false);
+  assert.equal(reopened.getState().microphonePending,false);
+  assert.equal(mediaRequests,0,'restored hints must never trigger capture');
+  listed=[
+    {kind:'audioinput',deviceId:'replacement-mic',label:'Other microphone'},
+    {kind:'audiooutput',deviceId:'replacement-out',label:'Other speakers'},
+  ];
+  await reopened.listDevices();
+  assert.deepEqual([reopened.getState().inputId,reopened.getState().outputId],['',''],
+    'missing devices must not silently select a replacement');
+  assert.match(reopened.getState().status,/Previous microphone and speaker unavailable/);
+  assert.equal(mediaRequests,0);
+  reopened.setInput('replacement-mic');
+  reopened.setOutput('replacement-out');
+  assert.deepEqual(readSpatialAudioPreferences(storage),
+    {inputId:'replacement-mic',outputId:'replacement-out'});
+  reopened.setInput('');
+  assert.equal(readSpatialAudioPreferences(storage).inputId,'',
+    'explicitly returning to default clears the remembered microphone');
+  reopened.dispose();
+});
+test('vanished remembered Quest audio devices cannot silently fall back on local Test',async()=>{
+  const storage=store();
+  let found=[
+    {kind:'audioinput',deviceId:'quest-mic',label:'Quest microphone'},
+    {kind:'audiooutput',deviceId:'quest-out',label:'Quest speakers'},
+  ];
+  let mediaRequests=0,speakerContexts=0;
+  const navigatorRef={mediaDevices:{
+    enumerateDevices:async()=>found,
+    getUserMedia(){mediaRequests++;throw Error('Unintended microphone request');},
+  }};
+  class SpeakerContext{constructor(){speakerContexts++;}}
+  const make=()=>createHolodeckAudioControls({storageRef:storage,navigatorRef,AudioContextCtor:SpeakerContext});
+  const before=make();
+  await before.listDevices();
+  assert.equal(before.setInput('quest-mic'),true);
+  assert.equal(before.setOutput('quest-out'),true);
+  before.dispose();
+  found=[
+    {kind:'audioinput',deviceId:'other-mic',label:'Other microphone'},
+    {kind:'audiooutput',deviceId:'other-out',label:'Other speakers'},
+  ];
+  const reopened=make();
+  await reopened.listDevices();
+  assert.deepEqual([reopened.getState().inputId,reopened.getState().outputId],['','']);
+  assert.equal((await reopened.testMicrophone()).ok,false,'missing remembered input may not trigger default capture');
+  assert.equal((await reopened.testMicrophone('other-mic')).ok,false,'explicit device argument is not a user selection');
+  assert.equal((await reopened.testSpeakers()).ok,false,'missing remembered output may not play on default speakers');
+  assert.equal((await reopened.testSpeakers('other-out')).ok,false);
+  assert.equal(mediaRequests,0);assert.equal(speakerContexts,0);
+  assert.equal(reopened.setInput('unlisted-mic'),false);
+  assert.equal(reopened.setOutput('unlisted-out'),false);
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'quest-mic',outputId:'quest-out'});
+  assert.equal(reopened.setInput(''),true,'explicit system-default choice clears a stale hint even with empty current selection');
+  assert.equal(reopened.setOutput(''),true);
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'',outputId:''});
+  assert.equal(mediaRequests,0,'choosing a default never opens the microphone');
+  reopened.dispose();
+});
+
+test('malformed or blocked audio preference storage is inert and cannot persist microphone state',async()=>{
+  const storageValues=[
+    '{', 'x'.repeat(1025), JSON.stringify({version:2,inputId:'old'}),
+    JSON.stringify({version:1,inputId:'bad\u0000mic',outputId:123}),
+    JSON.stringify({version:1,inputId:'x'.repeat(257),outputId:'speaker'}),
+  ];
+  for(const raw of storageValues){
+    const hints=readSpatialAudioPreferences({getItem:()=>raw});
+    assert.equal(hints.inputId,'');
+    assert.ok(['','speaker'].includes(hints.outputId));
+    assert.equal(Object.hasOwn(hints,'microphoneActive'),false);
+    assert.equal(Object.hasOwn(hints,'voiceEnabled'),false);
+  }
+  const storage={getItem(){throw Error('Storage blocked');},setItem(){throw Error('Storage full');}};
+  assert.deepEqual(readSpatialAudioPreferences(storage),{inputId:'',outputId:''});
+  const audio=createHolodeckAudioControls({storageRef:storage,AudioContextCtor:null,
+    navigatorRef:{mediaDevices:{enumerateDevices:async()=>[
+      {kind:'audioinput',deviceId:'available-mic',label:'Microphone'},
+    ]}}});
+  await audio.listDevices();
+  assert.equal(audio.setInput('available-mic'),true);
+  assert.equal(audio.getState().inputId,'available-mic');
+  assert.equal(audio.getState().microphoneActive,false);
+  audio.dispose();
 });

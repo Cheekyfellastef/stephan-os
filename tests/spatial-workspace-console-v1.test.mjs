@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {request} from 'node:http';
+import {readFileSync} from 'node:fs';
 import {createSpatialWindowHost} from '../scripts/spatial-window-host.mjs';
 import {validateSpatialSurfaceInput as valid} from '../shared/vr/spatialDesktopSurfaceContractV1.mjs';
 import {screenPointToSource,SCREEN_CONTENT,SCREEN_BUTTONS} from '../apps/spatial-bridge/holodeck-screen-v1.mjs';
@@ -17,6 +18,10 @@ test('surface input is bounded operator input, rejecting commands, control bytes
     {kind:'key',key:'Alt+F4'},{kind:'click',x:NaN,y:0},{kind:'click',x:1.1,y:0},{kind:'scroll',x:0,y:0,delta:999},
     {kind:'text',text:'x',windowId:44}])assert.equal(valid({...base,...input}),false);
   assert.equal(valid({kind:'text',text:'x',generation:1,sequence:0}),false);
+  assert.equal(valid({...base,kind:'click',x:.5,y:.5,serial:7}),true);
+  for(const serial of [-1,0,1.5,NaN,'7'])
+    assert.equal(valid({...base,kind:'click',x:.5,y:.5,serial}),false);
+  assert.equal(valid({...base,kind:'click',x:.5,y:.5,serial:7,command:'x'}),false);
 });
 
 test('display hit coordinates preserve source aspect and reject letterbox areas at any zoom',()=>{
@@ -81,7 +86,71 @@ test('local desktop host rejects other origins, forged windows, replay and expir
     assert.equal((await send('/input',input,token)).body.status,'input-posted');
     assert.equal((await send('/input',input,token)).code,400);
     assert.equal(calls.filter(c=>c.op==='input').length,1);
+    const painted={kind:'scroll',x:.5,y:.5,delta:120,sequence:2,generation:1,serial:9};
+    assert.equal((await send('/input',painted,token)).body.status,'input-posted');
+    assert.equal(calls.filter(c=>c.op==='input').at(-1).serial,9,
+      'local host passes the pictured-frame serial through without upgrading authority');
     time+=90001;assert.equal((await send('/frame',{},token)).code,403);
     await send('/session');assert.ok(stops>=2);
   }finally{await new Promise(resolve=>server.close(resolve));}
+});
+
+
+test('native popup capture changes preserve editor keyboard-focus uncertainty',()=>{
+  const source=readFileSync(new URL('../src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',import.meta.url),'utf8');
+  const captureSwitch=source.match(/void StartTarget\(HWND w\)\{([\s\S]*?)\n  \}\n  void Capture\(/);
+  assert.ok(captureSwitch,'capture target switch source is present');
+  assert.match(captureSwitch[1],/selectedEditor=nullptr/,'popup clears stale editor pointer');
+  assert.doesNotMatch(captureSwitch[1],/editorKeyboardFocusUnverified\s*=\s*false/,
+    'popup switching cannot erase uncertain keyboard focus');
+  assert.match(source,/if\(next!=target\)StartTarget\(next\)/,
+    'both entering and leaving an owned popup use the same guarded capture switch');
+  assert.match(source,/void Stop\(\)\{[^\n]*editorKeyboardFocusUnverified=false;/,
+    'explicit stop is the only native session reset');
+  assert.match(source,/void Bind\(HWND w,DWORD expected\)\{\s*Stop\(\)/,
+    'a newly consented bind resets the prior session before capture');
+  assert.match(source,/editorKeyboardFocusUnverified=true;/,
+    'UIA editor selection establishes an uncertain-focus fence');
+  assert.match(source,/if\(editorKeyboardFocusUnverified\)return Reply\(L"editor-key-focus-unverified"\)/,
+    'non-text keys cannot fall through to another focused composer');
+});
+
+test('native editable-target source refuses readonly documents, uncertain replay and unfocused Enter',()=>{
+  const source=readFileSync(new URL('../src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',import.meta.url),'utf8');
+  assert.match(source,/get_CurrentIsKeyboardFocusable/);
+  assert.match(source,/get_CurrentIsReadOnly\(&readOnly\)/);
+  assert.match(source,/if\(!pattern\|\|FAILED\(pattern->get_CurrentIsReadOnly\(&readOnly\)\)\|\|readOnly\)/);
+  assert.match(source,/STATE_SYSTEM_READONLY\|STATE_SYSTEM_PROTECTED\|STATE_SYSTEM_UNAVAILABLE/);
+  assert.match(source,/GetAttributeValue\(UIA_IsReadOnlyAttributeId,&attribute\)/);
+  assert.match(source,/if\(!editable\)return false/);
+  assert.match(source,/put_AutoSetFocus\(FALSE\)/);
+  assert.match(source,/FAILED\(accessibility->put_ConnectionTimeout\(1500\)\)/);
+  assert.match(source,/FAILED\(accessibility->put_TransactionTimeout\(1500\)\)/);
+  assert.match(source,/return Reply\(SUCCEEDED\(result\)\?L"app-control-invoked":L"app-control-outcome-unverified"\)/);
+  assert.match(source,/if\(editorKeyboardFocusUnverified\)return Reply\(L"editor-key-focus-unverified"\)/);
+  assert.match(source,/command\.HasKey\(L"serial"\).*command\.GetNamedNumber\(L"serial",-1\)/,
+    'native input must compare the client painted serial before any mutation');
+  assert.match(source,/editorKeyboardFocusUnverified=true/);
+  assert.match(source,/if\(!attempted\)return Reply\(L"editor-update-not-started"\)/);
+  assert.doesNotMatch(source,/if\(FAILED\(changed\)\)return Reply\(L"editor-update-refused"\)/);
+  assert.doesNotMatch(source,/\bSendInput\s*\(/,'no global synthetic input on the VR browser desktop');
+});
+
+test('desktop Disconnect and hidden/page-exit routes release room-local audio with the in-room owner',()=>{
+  const entry=readFileSync(new URL('../apps/spatial-bridge/quest-entry.html',import.meta.url),'utf8');
+  const screenSource=readFileSync(new URL('../apps/spatial-bridge/holodeck-screen-v1.mjs',import.meta.url),'utf8');
+  assert.match(entry,/getElementById\('disconnect-window'\)\.addEventListener\('click',\(\)=>screen\.action\('disconnect-window'\)\)/,
+    'desktop Disconnect must use the same revoking screen owner as the VR wall');
+  assert.doesNotMatch(entry,/getElementById\('disconnect-window'\)\.addEventListener\('click',\(\)=>client\.stop\(\)\)/,
+    'direct desktop client.stop would leave pending local microphone and speaker grants alive');
+  assert.match(screenSource,/if\(id==='disconnect-window'\)\{[\s\S]{0,130}return stopConnection\(\)/,
+    'screen Disconnect must call its synchronous session revocation');
+  assert.match(screenSource,/function stopConnection\(\)\{[\s\S]{0,1100}audio\?\.stopSpeakers\?\.\(\)/,
+    'the canonical owner must stop pending and active speaker tests');
+  assert.match(entry,/if \(document\.hidden\) \{[^}]*stopMicTest\(\);audio\.stopSpeakers\(\);cubeScene\.stop\(\)/,
+    'backgrounding must release the local audio test independently of ChatGPT Voice');
+  assert.match(entry,/window\.addEventListener\('pagehide', event => \{[^}]*stopMicTest\(\);audio\.stopSpeakers\(\);cubeScene\.stop\(\);void client\.pagehide\(event\)/,
+    'page exit must revoke local audio even with an in-flight speaker selection');
+  assert.match(entry,/onReload:async\(\)=>\{[\s\S]{0,240}stopMicTest\(\);audio\.stopSpeakers\(\);await client\.stop\(\);location\.reload\(\)/,
+    'room reload must synchronously stop local tests before awaiting native connection cleanup');
 });
