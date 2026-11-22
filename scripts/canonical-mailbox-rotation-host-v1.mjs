@@ -117,12 +117,24 @@ export async function executeMailboxRotationOnHost(command, {
       actionsQuiescent = mailboxActionsExecutionQuiescent(state.mailboxRotationActions, {
         now: now(), mainHead: sourceHead, activationHead: state.mailboxRotation.cutoverHead,
       });
-    } catch {
-      // Preserve the hold. Never certify a drain from an ambiguous Actions read,
-      // and never copy provider exceptions or credentials into public receipts.
+    } catch (error) {
+      // Expose only fixed, enumerated non-secret evidence stage codes; a raw
+      // GitHub provider exception may contain credentials or local paths.
+      const typed = new Set([
+        'MAILBOX_ACTION_BATCH_DEADLINE','MAILBOX_ACTION_BATCH_READ_TIMEOUT',
+        'MAILBOX_ACTION_BATCH_READ_FAILED','MAILBOX_ACTION_BATCH_RUN_DRIFT',
+        'MAILBOX_ACTION_BATCH_CHILD_FAILED','MAILBOX_ACTION_BATCH_RESULT_INVALID',
+        'MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE',
+        'MAILBOX_ROTATION_ACTIONS_INVENTORY_INVALID',
+        'MAILBOX_ACTION_COLLECTION_STALE','MAILBOX_ACTION_MAIN_MOVED',
+        'MAILBOX_ACTION_NONADMISSION_SOURCE_UNPROVEN',
+        'MAILBOX_ACTION_REVOCATION_SOURCE_UNPROVEN',
+      ]);
+      const blocker = typed.has(error?.message) ? error.message
+        : 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED';
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
       persist(state);
-      return held('MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED');
+      return held(blocker);
     }
     if (!actionsQuiescent) {
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
