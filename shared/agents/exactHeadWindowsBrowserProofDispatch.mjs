@@ -26,6 +26,17 @@ export const WINDOWS_BROWSER_PROOF_TARGETS = Object.freeze({
 });
 
 const SCENARIO_PROMPTS = Object.freeze({
+  MUSIC_CARDS_ARTWORK_EXACT_LINKS: [
+    'Run the fixed native Music card proof in Microsoft Edge on this Windows Battle Bridge.',
+    'Require the approved exact head, clean checkout and served source/dist fingerprints.',
+    'Read existing Listening Deck cards only; never seed fixtures or replace provider responses.',
+    'Check loaded identity-bound Spotify artwork, exact stored song destinations, honest unresolved cards,',
+    'suppression of redundant searches, same iframe DOM nodes during enrichment, reload persistence and browser errors.',
+    'If the browser context has no real stored cards, stop with MUSIC_REAL_CARDS_UNAVAILABLE_OR_OUT_OF_BOUNDS.',
+    'An isolated empty browser context must not be promoted to proof of the operator profile.',
+    'Do not access arbitrary browser profiles, credentials, URLs, or change ratings or start playback.',
+    'Return bounded typed evidence without song identities, storage contents, paths or raw console text.',
+  ].join(' '),
   MUSIC_RATING_PRESERVES_PLAYBACK: [
     'Run the Music Tile in Microsoft Edge on this Windows Battle Bridge.',
     'First prove git HEAD exactly matches the requested proof target head; otherwise stop with EXPECTED_HEAD_MISMATCH.',
@@ -475,7 +486,9 @@ export async function dispatchExactHeadWindowsBrowserProof(command, {
   // Production is deterministic-native first. An explicitly injected Codex integration is retained
   // only for backwards-compatible callers/tests, and quota/capacity failure immediately reroutes
   // to the same local proof without retrying Codex.
-  if (integration) {
+  // Music-card observation has one deterministic native implementation; an
+  // injected legacy provider must not substitute model narration for it.
+  if (integration && command.proofScenario !== 'MUSIC_CARDS_ARTWORK_EXACT_LINKS') {
     const legacy = legacyCodexDispatch(packet, integration, timestampUtc);
     const dispatchReceipt = legacy.dispatcher?.dispatchReceipt || null;
     const codexOk = legacy.dispatcher?.finalVerdict === 'CODEX_JOB_DISPATCHED';
