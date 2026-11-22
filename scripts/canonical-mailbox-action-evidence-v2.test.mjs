@@ -164,9 +164,10 @@ test('malformed later-page run identities, paths and statuses stay held',()=>{
  }
 });
 
-test('a later-page read failure propagates without yielding a partial quiet result',()=>{
+test('a later-page read failure stays blocked with a fixed non-secret stage code',()=>{
  const f=pagedFixture(300);
- assert.throws(()=>f.collect(path=>{if(path.endsWith('&page=2'))throw Error('READ_UNAVAILABLE');return f.api(path);}),/READ_UNAVAILABLE/);
+ assert.throws(()=>f.collect(path=>{if(path.endsWith('&page=2'))throw Error('READ_UNAVAILABLE');return f.api(path);}),
+  error=>error.message==='MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_QUEUED_READ');
 });
 
 test('V1 publication names have no aliases and current V2 publishers remain callable',()=>{
