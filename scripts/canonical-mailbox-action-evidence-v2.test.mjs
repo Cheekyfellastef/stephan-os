@@ -51,6 +51,29 @@ function pagedFixture(total,{protectedIndexes=[]}={}){
  return{runs,reads,api,collect:read=>inventoryMailboxRotationExecution({read:read||api,activationHead:target,now:()=>now})};
 }
 
+test('native collector exposes fixed stage-specific failures but no GitHub error details',()=>{
+ const secondPage='actions/runs?status=queued&per_page=100&page=2';
+ const cases=[
+  {name:'READ',mutate:(response,path)=>{if(path===secondPage)throw Error('private-token-hypothetical');return response;}},
+  {name:'RESPONSE',mutate:(response,path)=>path===secondPage?null:response},
+  {name:'TOTAL_DRIFT',mutate:(response,path)=>{if(path===secondPage)response.total_count=299;return response;}},
+  {name:'PAGE_LENGTH',mutate:(response,path)=>{if(path===secondPage)response.workflow_runs=[];return response;}},
+ ];
+ for(const {name,mutate} of cases){
+  const f=pagedFixture(300);
+  assert.throws(()=>f.collect(path=>{
+   const response=f.api(path);
+   return mutate(response,path);
+  }),error=>error.message===`MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_QUEUED_${name}`);
+ }
+ const f=pagedFixture(300);
+ assert.throws(()=>f.collect(path=>{
+  const response=f.api(path);
+  if(path==='actions/runs?status=in_progress&per_page=100')return {total_count:1,workflow_runs:[]};
+  return response;
+ }),error=>error.message==='MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_IN_PROGRESS_PAGE_LENGTH');
+});
+
 test('all 300 queued runs are read and protected runs on later pages remain blocking',()=>{
  const f=pagedFixture(300,{protectedIndexes:[149,299]}),r=f.collect();
  assert.deepEqual(f.reads.filter(p=>p.startsWith('actions/runs?status=queued')),[
@@ -141,9 +164,10 @@ test('malformed later-page run identities, paths and statuses stay held',()=>{
  }
 });
 
-test('a later-page read failure propagates without yielding a partial quiet result',()=>{
+test('a later-page read failure stays blocked with a fixed non-secret stage code',()=>{
  const f=pagedFixture(300);
- assert.throws(()=>f.collect(path=>{if(path.endsWith('&page=2'))throw Error('READ_UNAVAILABLE');return f.api(path);}),/READ_UNAVAILABLE/);
+ assert.throws(()=>f.collect(path=>{if(path.endsWith('&page=2'))throw Error('READ_UNAVAILABLE');return f.api(path);}),
+  error=>error.message==='MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_QUEUED_READ');
 });
 
 test('V1 publication names have no aliases and current V2 publishers remain callable',()=>{
@@ -490,4 +514,42 @@ test('invalid or backward collection clocks fail before yielding refreshed evide
    read:path=>{const value=f.api(path);if(invalidAfterRead==='backward')clock--;else invalid=true;return value;},
   }),/MAILBOX_ACTION_COLLECTION_CLOCK_INVALID/);
  }
+});
+
+test('smaller effective API page size still requires complete unique records across all pages',()=>{
+ const f=pagedFixture(300,{protectedIndexes:[149,299]}),paths=[];
+ const read=path=>{
+  paths.push(path);
+  const match=path.match(/^actions\/runs\?status=queued&per_page=100(?:&page=([1-9][0-9]*))?$/);
+  if(match){
+   const page=Number(match[1]||1);
+   return{total_count:300,workflow_runs:structuredClone(f.runs.slice((page-1)*30,page*30))};
+  }
+  return f.api(path);
+ };
+ const result=f.collect(read);
+ assert.deepEqual(result.pendingRuns.map(p=>p.id),[10149,10299]);
+ assert.deepEqual(result.blockingRuns.map(p=>p.id),[10149,10299]);
+ assert.equal(paths.filter(p=>p.startsWith('actions/runs?status=queued&')).length,10);
+ assert.equal(mailboxActionsExecutionQuiescent(result),false);
+});
+
+test('short-page transport may not skip a page, change effective size, or exceed the ten-page bound',()=>{
+ for(const brokenPage of [2,7,10]){
+  const f=pagedFixture(300),reads=()=>{};
+  assert.throws(()=>f.collect(path=>{
+   const match=path.match(/^actions\/runs\?status=queued&per_page=100(?:&page=([1-9][0-9]*))?$/);
+   if(!match)return f.api(path);
+   const page=Number(match[1]||1);
+   const slice=f.runs.slice((page-1)*30,page*30);
+   if(page===brokenPage)slice.pop();
+   return{total_count:300,workflow_runs:structuredClone(slice)};
+  }),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE/);
+ }
+ const f=pagedFixture(301);
+ assert.throws(()=>f.collect(path=>{
+  const match=path.match(/^actions\/runs\?status=queued&per_page=100(?:&page=([1-9][0-9]*))?$/);
+  if(!match)return f.api(path);
+  return{total_count:301,workflow_runs:structuredClone(f.runs.slice(0,30))};
+ }),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE/);
 });

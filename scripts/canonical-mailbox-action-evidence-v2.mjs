@@ -285,24 +285,59 @@ function collectMailboxWorkflowNonadmissionSource(read,mainHead,activationHead){
 
 // Fixed public GET evidence only. The production caller supplies its existing
 // authenticated GitHub reader; no caller controls endpoints or proof results.
+// Fixed, non-secret stage codes make native pagination failures diagnosable.
+// Each failure still rejects the entire snapshot; never infer missing runs.
+function incompleteMailboxActionPage(status,reason){
+ if(!['queued','in_progress','waiting','requested','pending'].includes(status)
+   ||!['READ','RESPONSE','TOTAL_DRIFT','PAGE_LENGTH','PAGE_LIMIT'].includes(reason))
+  throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
+ throw Error(`MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_${status.toUpperCase()}_${reason}`);
+}
 function readMailboxActionRuns(read,status){
- const runs=[],seen=new Set();let total;
+ const runs=[],seen=new Set();let total,effectivePageSize;
  for(let page=1;page<=MAILBOX_ROTATION_ACTIONS_MAX_PAGES;page++){
-  const response=read(`actions/runs?status=${status}&per_page=${MAILBOX_ROTATION_ACTIONS_PAGE_SIZE}${page===1?'':`&page=${page}`}`);
+  let response;
+  try{
+   response=read(`actions/runs?status=${status}&per_page=${MAILBOX_ROTATION_ACTIONS_PAGE_SIZE}${page===1?'':`&page=${page}`}`);
+  }catch(error){
+   // Our own freshness/clock guards are stronger than provider-read errors.
+   // Keep their exact typed blockers; redact only raw provider exceptions.
+   // The owner's bounded transcript adapter throws a private per-read probe;
+   // its WeakMap identity check must see the ORIGINAL exception to continue.
+   // Re-throwing it grants no execution or evidence: an unregistered exception
+   // is still denied by the owner reader's identity guard.
+   if(error?.message==='next fixed read'
+     ||error?.message==='MAILBOX_ACTION_COLLECTION_STALE'
+     ||error?.message==='MAILBOX_ACTION_COLLECTION_CLOCK_INVALID')throw error;
+   incompleteMailboxActionPage(status,'READ');
+  }
   if(!response||!Number.isSafeInteger(response.total_count)||response.total_count<0
     ||response.total_count>MAILBOX_ROTATION_ACTIONS_PAGE_SIZE*MAILBOX_ROTATION_ACTIONS_MAX_PAGES
-    ||!Array.isArray(response.workflow_runs)||(total!==undefined&&response.total_count!==total))
-   throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
+    ||!Array.isArray(response.workflow_runs))
+   incompleteMailboxActionPage(status,'RESPONSE');
+  if(total!==undefined&&response.total_count!==total)
+   incompleteMailboxActionPage(status,'TOTAL_DRIFT');
   total=response.total_count;
-  if(response.workflow_runs.length!==Math.min(MAILBOX_ROTATION_ACTIONS_PAGE_SIZE,total-runs.length))
-   throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
+  // Some authenticated API transports return a smaller effective page size
+  // than requested. A short first page is not proof of completion: retain the
+  // provider's total, require every subsequent full page to match its size,
+  // and deny the snapshot if all records cannot fit within the fixed bound.
+  if(page===1){
+   effectivePageSize=response.workflow_runs.length;
+   if((total>0&&effectivePageSize===0)||effectivePageSize>MAILBOX_ROTATION_ACTIONS_PAGE_SIZE)
+    incompleteMailboxActionPage(status,'PAGE_LENGTH');
+   if(total>effectivePageSize*MAILBOX_ROTATION_ACTIONS_MAX_PAGES)
+    incompleteMailboxActionPage(status,'PAGE_LIMIT');
+  }
+  if(response.workflow_runs.length!==Math.min(effectivePageSize,total-runs.length))
+   incompleteMailboxActionPage(status,'PAGE_LENGTH');
   for(const run of response.workflow_runs){
    if(!Number.isSafeInteger(run?.id)||run.id<=0||seen.has(run.id))throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INVALID');
    seen.add(run.id);runs.push(run);
   }
   if(runs.length===total)return{total_count:total,workflow_runs:runs};
  }
- throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
+ incompleteMailboxActionPage(status,'PAGE_LIMIT');
 }
 
 export function inventoryMailboxRotationExecution({read,activationHead,now=()=>new Date().toISOString(),local=localMailboxPublicationRevocations,collectProofs}={}){
