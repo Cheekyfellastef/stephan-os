@@ -299,7 +299,11 @@ function readMailboxActionRuns(read,status){
   let response;
   try{
    response=read(`actions/runs?status=${status}&per_page=${MAILBOX_ROTATION_ACTIONS_PAGE_SIZE}${page===1?'':`&page=${page}`}`);
-  }catch{
+  }catch(error){
+   // Our own freshness/clock guards are stronger than provider-read errors.
+   // Keep their exact typed blockers; redact only raw provider exceptions.
+   if(error?.message==='MAILBOX_ACTION_COLLECTION_STALE'
+     ||error?.message==='MAILBOX_ACTION_COLLECTION_CLOCK_INVALID')throw error;
    incompleteMailboxActionPage(status,'READ');
   }
   if(!response||!Number.isSafeInteger(response.total_count)||response.total_count<0
