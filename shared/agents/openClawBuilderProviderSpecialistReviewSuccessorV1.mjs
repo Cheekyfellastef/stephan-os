@@ -959,8 +959,38 @@ return Object.freeze({
 export const OPENCLAW_OC2_SUCCESSOR_SPECIALIST_PATHS_V1 = OPENCLAW_OC2_SUCCESSOR_PROFILE_V1.paths;
 
 
+function sharedConversationRequireLiterals(findings, source, path, rules) {
+  const uncommented = stripComments(source);
+  for (const [literal, code] of rules) {
+    if (!uncommented.includes(literal)) findings.push(finding(code, path));
+  }
+}
+
+function sharedConversationRequireExecutablePatterns(findings, source, path, rules) {
+  const executable = executableOnly(source);
+  for (const [pattern, code] of rules) {
+    if (!pattern.test(executable)) findings.push(finding(code, path));
+  }
+}
+
+function sharedConversationForbidExecutablePatterns(findings, source, path, rules) {
+  const executable = executableOnly(source);
+  for (const [pattern, code] of rules) {
+    if (pattern.test(executable)) findings.push(finding(code, path));
+  }
+}
+
+function sharedConversationHasGatewayAlias(source) {
+  const uncommented = stripComments(source);
+  return /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*api\.registerGatewayMethod\b/.test(uncommented)
+    || /\bapi\.registerGatewayMethod\s*\.\s*bind\b/.test(uncommented)
+    || /\{\s*registerGatewayMethod\s*(?::|,|\})/.test(uncommented)
+    || /\bapi\s*\[\s*['"]registerGatewayMethod['"]\s*\]/.test(uncommented)
+    || /\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\]]+\])\s*=\s*api\.registerGatewayMethod\b/.test(uncommented);
+}
+
 function reviewSharedConversationIndex(source, path, findings) {
-  requireLiterals(findings, source, path, [
+  sharedConversationRequireLiterals(findings, source, path, [
     ["const SHARED_CONVERSATION_METHOD = 'stephanos-builder-provider.sharedConversation';", 'shared-conversation-method-not-fixed'],
     ["const SHARED_CONVERSATION_SCHEMA = 'stephanos.openclaw-shared-conversation-gateway.v1';", 'shared-conversation-schema-not-fixed'],
     ['const SHARED_CONVERSATION_KEYS = Object.freeze([', 'shared-conversation-request-keys-not-closed'],
@@ -971,40 +1001,31 @@ function reviewSharedConversationIndex(source, path, findings) {
     ['expiry - issued > 30 * 60_000', 'shared-conversation-expiry-bound-missing'],
     ["context.pluginId !== 'stephanos-builder-provider'", 'shared-conversation-plugin-context-gate-missing'],
     ['context.method !== SHARED_CONVERSATION_METHOD', 'shared-conversation-method-context-gate-missing'],
+    ["!/^openclaw-gateway:[1-9][0-9]*$/.test(context.providerInstance || '')", 'shared-conversation-instance-gate-missing'],
     ["executionSurface: 'openclaw-gateway-plugin'", 'shared-conversation-execution-surface-missing'],
     ["replyText: 'OpenClaw Gateway received the shared conversation turn. Native assistant reasoning is not yet qualified by this handshake.'", 'shared-conversation-fixed-ack-missing'],
     ['sourceHeadProven: false, modelResponseProven: false', 'shared-conversation-model-source-denial-missing'],
   ]);
-  requireExecutablePatterns(findings, source, path, [
+  sharedConversationRequireExecutablePatterns(findings, source, path, [
     [/context\.executingInsideOpenClawGateway\s*!==\s*true/, 'shared-conversation-native-context-gate-missing'],
     [/Object\.keys\(params\)\.sort\(\)\.join\(['"],['"]\)\s*!==\s*\[\.\.\.SHARED_CONVERSATION_KEYS\]\.sort\(\)\.join\(['"],['"]\)/, 'shared-conversation-envelope-closure-missing'],
   ]);
-  requireLiterals(findings, source, path, [
-    ["!/^openclaw-gateway:[1-9][0-9]*$/.test(context.providerInstance || '')", 'shared-conversation-instance-gate-missing'],
-  ]);
 
-  const code = executableOnly(source);
-  if (countMatches(code, /\bapi\.registerGatewayMethod\s*\(/g) !== 3 || hasGatewayAlias(source)) {
+  const uncommented = stripComments(source);
+  const registrationCount = (uncommented.match(/\bapi\.registerGatewayMethod\s*\(/g) || []).length;
+  if (registrationCount !== 3 || sharedConversationHasGatewayAlias(source)) {
     findings.push(finding('shared-conversation-gateway-registration-set-not-closed', path));
   }
-  const sharedCall = /api\.registerGatewayMethod\s*\(\s*SHARED_CONVERSATION_METHOD\s*,/.exec(code);
-  if (!sharedCall) {
-    findings.push(finding('shared-conversation-registration-missing', path));
-  } else {
-    const open = code.indexOf('(', sharedCall.index);
-    const close = matchBalanced(code, open, '(', ')');
-    const call = close >= 0 ? code.slice(open + 1, close) : '';
-    if (!/receiveOpenClawSharedConversationTurn\s*\(\s*params\s*,\s*gatewayContext\(SHARED_CONVERSATION_METHOD\)\s*\)/.test(call)
-      || !/\{\s*scope:\s*['"]operator\.read['"]\s*\}/.test(call)
-      || /operator\.write/.test(call)) {
-      findings.push(finding('shared-conversation-registration-binding-incomplete', path));
-    }
+  const sharedRegistration = /api\.registerGatewayMethod\s*\(\s*SHARED_CONVERSATION_METHOD\s*,\s*async\s*\(params\)\s*=>\s*receiveOpenClawSharedConversationTurn\s*\(\s*params\s*,\s*gatewayContext\(SHARED_CONVERSATION_METHOD\)\s*\)\s*,\s*\{\s*scope:\s*['"]operator\.read['"]\s*\}\s*,?\s*\)/s;
+  if (!sharedRegistration.test(uncommented)) {
+    findings.push(finding('shared-conversation-registration-binding-incomplete', path));
   }
 
-  if (countMatches(code, /arbitraryShellAllowed:\s*false,\s*sourceMutationAllowed:\s*false,\s*mergeAuthority:\s*false/g) < 2) {
+  const authorityDenials = (uncommented.match(/arbitraryShellAllowed:\s*false,\s*sourceMutationAllowed:\s*false,\s*mergeAuthority:\s*false/g) || []).length;
+  if (authorityDenials < 2) {
     findings.push(finding('shared-conversation-authority-denials-incomplete', path));
   }
-  forbidExecutablePatterns(findings, source, path, [
+  sharedConversationForbidExecutablePatterns(findings, source, path, [
     [/\b(?:exec|execSync|execFile|spawn|spawnSync|fork)\s*\(/, 'shared-conversation-process-authority-forbidden'],
     [/\bshell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'shared-conversation-dynamic-code-forbidden'],
     [/\b(?:fetch|writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|unlink|unlinkSync|rename|renameSync|createWriteStream)\s*\(/, 'shared-conversation-network-filesystem-authority-forbidden'],
