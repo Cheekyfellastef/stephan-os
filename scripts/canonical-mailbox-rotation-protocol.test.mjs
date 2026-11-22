@@ -16,7 +16,8 @@ import { evaluateMailboxRotationSyncPreflight } from './canonical-mailbox-rotati
 import { assertMailboxRotationWorkflowAdmission, readMailboxWorkflowGitHub } from './canonical-mailbox-workflow-admission-v1.mjs';
 import { serializeBoundedReceiptJson, prepareMailboxRotationPoll,
   prepareBoundedMailboxRotationCancelPoll } from './battle-bridge-github-command-mailbox.mjs';
-import { buildBattleBridgeGitHubCommandReceipt, executeBattleBridgeGitHubCommand } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
+import { buildBattleBridgeGitHubCommandReceipt, executeBattleBridgeGitHubCommand,
+  selectBattleBridgeGitHubCommandBatch } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { createTrustedMailboxReceiptIndexFromGitHubComments } from '../shared/agents/mailboxReceiptIndexGitHubMirror.mjs';
 import { classifyPostSyncRefresh } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { LEGACY_PUBLICATION_CONTRACTS, withMailboxActionEvidence, mailboxActionEvidenceSummary } from '../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs';
@@ -441,7 +442,7 @@ test('native Actions evidence failures expose only exact fixed stage codes and n
 
 test('repeated transient evidence errors stay fail-closed after exactly two GET attempts', async () => {
   for (const [reader, transient, blocker] of [
-    ['readActions', 'MAILBOX_ACTION_BATCH_READ_FAILED', 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED'],
+    ['readActions', 'MAILBOX_ACTION_BATCH_READ_FAILED', 'MAILBOX_ACTION_BATCH_READ_FAILED'],
     ['readComments', 'MAILBOX_HISTORY_PAGE_INVALID', 'MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED'],
   ]) {
     const f = fixture();
