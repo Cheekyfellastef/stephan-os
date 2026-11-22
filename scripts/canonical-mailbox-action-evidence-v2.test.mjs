@@ -51,6 +51,69 @@ function pagedFixture(total,{protectedIndexes=[]}={}){
  return{runs,reads,api,collect:read=>inventoryMailboxRotationExecution({read:read||api,activationHead:target,now:()=>now})};
 }
 
+test('native collector exposes fixed stage-specific failures but no GitHub error details',()=>{
+ const secondPage='actions/runs?status=queued&per_page=100&page=2';
+ const cases=[
+  {name:'READ',mutate:(response,path)=>{if(path===secondPage)throw Error('private-token-hypothetical');return response;}},
+  {name:'RESPONSE',mutate:(response,path)=>path===secondPage?null:response},
+  {name:'TOTAL_DRIFT',mutate:(response,path)=>{if(path===secondPage)response.total_count=299;return response;}},
+  {name:'PAGE_LENGTH',mutate:(response,path)=>{if(path===secondPage)response.workflow_runs=[];return response;}},
+ ];
+ for(const {name,mutate} of cases){
+  const f=pagedFixture(300);
+  assert.throws(()=>f.collect(path=>{
+   const response=f.api(path);
+   return mutate(response,path);
+  }),error=>error.message===`MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_QUEUED_${name}`);
+ }
+ const f=pagedFixture(300);
+ assert.throws(()=>f.collect(path=>{
+  const response=f.api(path);
+  if(path==='actions/runs?status=in_progress&per_page=100')return {total_count:1,workflow_runs:[]};
+  return response;
+ }),error=>error.message==='MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_IN_PROGRESS_PAGE_LENGTH');
+});
+
+test('transient page-shape or total drift re-observes the whole status once without mixing pages',()=>{
+ for(const mode of ['PAGE_LENGTH','TOTAL_DRIFT']){
+  const f=pagedFixture(300),queuedReads=[];let faulted=false;
+  const r=f.collect(path=>{
+   const response=f.api(path);
+   if(path.startsWith('actions/runs?status=queued'))queuedReads.push(path);
+   if(!faulted&&path.endsWith('status=queued&per_page=100&page=2')){
+    faulted=true;
+    if(mode==='PAGE_LENGTH')response.workflow_runs=response.workflow_runs.slice(0,99);
+    else response.total_count=299;
+   }
+   return response;
+  });
+  assert.equal(r.complete,true);
+  assert.deepEqual(queuedReads,[
+   'actions/runs?status=queued&per_page=100',
+   'actions/runs?status=queued&per_page=100&page=2',
+   'actions/runs?status=queued&per_page=100',
+   'actions/runs?status=queued&per_page=100&page=2',
+   'actions/runs?status=queued&per_page=100&page=3',
+  ]);
+ }
+});
+
+test('persistent queued page-shape drift remains blocked after one bounded whole-status re-observation',()=>{
+ const f=pagedFixture(300),queuedReads=[];
+ assert.throws(()=>f.collect(path=>{
+  const response=f.api(path);
+  if(path.startsWith('actions/runs?status=queued'))queuedReads.push(path);
+  if(path.endsWith('status=queued&per_page=100&page=2'))response.workflow_runs=response.workflow_runs.slice(0,99);
+  return response;
+ }),error=>error.message==='MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_QUEUED_PAGE_LENGTH');
+ assert.deepEqual(queuedReads,[
+  'actions/runs?status=queued&per_page=100',
+  'actions/runs?status=queued&per_page=100&page=2',
+  'actions/runs?status=queued&per_page=100',
+  'actions/runs?status=queued&per_page=100&page=2',
+ ]);
+});
+
 test('all 300 queued runs are read and protected runs on later pages remain blocking',()=>{
  const f=pagedFixture(300,{protectedIndexes:[149,299]}),r=f.collect();
  assert.deepEqual(f.reads.filter(p=>p.startsWith('actions/runs?status=queued')),[
@@ -141,9 +204,10 @@ test('malformed later-page run identities, paths and statuses stay held',()=>{
  }
 });
 
-test('a later-page read failure propagates without yielding a partial quiet result',()=>{
+test('a later-page read failure stays blocked with a fixed non-secret stage code',()=>{
  const f=pagedFixture(300);
- assert.throws(()=>f.collect(path=>{if(path.endsWith('&page=2'))throw Error('READ_UNAVAILABLE');return f.api(path);}),/READ_UNAVAILABLE/);
+ assert.throws(()=>f.collect(path=>{if(path.endsWith('&page=2'))throw Error('READ_UNAVAILABLE');return f.api(path);}),
+  error=>error.message==='MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_QUEUED_READ');
 });
 
 test('V1 publication names have no aliases and current V2 publishers remain callable',()=>{
