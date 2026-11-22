@@ -650,7 +650,7 @@ function countMatches(source, pattern) {
 function activeTestHas(source, title, assertionPattern) {
   const uncommented = stripComments(source);
   if (/\b(?:test|it|describe)\.(?:skip|todo|only)\s*\(/.test(uncommented)) return false;
-  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\export function analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(input = {}) {');');
+  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const opener = new RegExp(`\\btest\\s*\\(\\s*(['\"])${escapedTitle}\\1\\s*,`);
   const match = opener.exec(uncommented);
   if (!match) return false;
