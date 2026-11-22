@@ -51,6 +51,29 @@ function pagedFixture(total,{protectedIndexes=[]}={}){
  return{runs,reads,api,collect:read=>inventoryMailboxRotationExecution({read:read||api,activationHead:target,now:()=>now})};
 }
 
+test('native collector exposes fixed stage-specific failures but no GitHub error details',()=>{
+ const secondPage='actions/runs?status=queued&per_page=100&page=2';
+ const cases=[
+  {name:'READ',mutate:(_response,path)=>{if(path===secondPage)throw Error('private-token-hypothetical');}},
+  {name:'RESPONSE',mutate:(response,path)=>path===secondPage?null:response},
+  {name:'TOTAL_DRIFT',mutate:(response,path)=>{if(path===secondPage)response.total_count=299;return response;}},
+  {name:'PAGE_LENGTH',mutate:(response,path)=>{if(path===secondPage)response.workflow_runs=[];return response;}},
+ ];
+ for(const {name,mutate} of cases){
+  const f=pagedFixture(300);
+  assert.throws(()=>f.collect(path=>{
+   const response=f.api(path);
+   return mutate(response,path);
+  }),error=>error.message===`MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_QUEUED_${name}`);
+ }
+ const f=pagedFixture(300);
+ assert.throws(()=>f.collect(path=>{
+  const response=f.api(path);
+  if(path==='actions/runs?status=in_progress&per_page=100')return {total_count:1,workflow_runs:[]};
+  return response;
+ }),error=>error.message==='MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_IN_PROGRESS_PAGE_LENGTH');
+});
+
 test('all 300 queued runs are read and protected runs on later pages remain blocking',()=>{
  const f=pagedFixture(300,{protectedIndexes:[149,299]}),r=f.collect();
  assert.deepEqual(f.reads.filter(p=>p.startsWith('actions/runs?status=queued')),[
