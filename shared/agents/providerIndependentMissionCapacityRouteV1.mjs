@@ -35,6 +35,10 @@ function freeze(value) {
   return Object.freeze(value);
 }
 
+// Mission-worker source execution is authorized by the qualified provider receipt
+// plus the exact task-scoped grant below. The legacy openClawLocalAdapter
+// design/status projection is not an execution authority for this route.
+// Missing/stale provider qualification still fails closed in the pool router.
 function routeWithTrustedOpenClawSourceCapacity(input) {
   const base = routeMissionControllerCapacity(input);
   // The qualified pool may fill capacity, never override a canonical veto. In
