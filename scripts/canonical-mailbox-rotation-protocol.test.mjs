@@ -15,7 +15,7 @@ import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledg
 import { evaluateMailboxRotationSyncPreflight } from './canonical-mailbox-rotation-sync-preflight-v1.mjs';
 import { assertMailboxRotationWorkflowAdmission, readMailboxWorkflowGitHub } from './canonical-mailbox-workflow-admission-v1.mjs';
 import { serializeBoundedReceiptJson, prepareMailboxRotationPoll } from './battle-bridge-github-command-mailbox.mjs';
-import { buildBattleBridgeGitHubCommandReceipt } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
+import { buildBattleBridgeGitHubCommandReceipt, executeBattleBridgeGitHubCommand } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { createTrustedMailboxReceiptIndexFromGitHubComments } from '../shared/agents/mailboxReceiptIndexGitHubMirror.mjs';
 import { classifyPostSyncRefresh } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { LEGACY_PUBLICATION_CONTRACTS, withMailboxActionEvidence, mailboxActionEvidenceSummary } from '../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs';
@@ -318,4 +318,85 @@ test('merge-queue public fence evidence needs no expanded permission; main remai
   await assert.rejects(readMailboxWorkflowGitHub('/issues/999/comments'),/PATH_DENIED/);
   globalThis.fetch=async()=>({status:403,text:async()=>''});
   await assert.rejects(readMailboxWorkflowGitHub('/issues/comments/100'),/FRESH_READ_FAILED/);
+});
+
+
+test('rotation executor exception reports mailbox-rotation failure, never native publisher failure', async () => {
+  const request = command();
+  let invoked = 0;
+  const result = await executeBattleBridgeGitHubCommand(request, {
+    now: new Date('2026-10-25T23:41:00.000Z'),
+    executeMailboxRotationFn: async () => {
+      invoked += 1;
+      throw new Error('SENSITIVE_INTERNAL_EXCEPTION_MUST_NOT_LEAK');
+    },
+  });
+  assert.equal(invoked, 1, 'qualified rotation must reach its own handler');
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAILBOX_ROTATION_EXECUTION_FAILED');
+  assert.equal(result.operation, operation);
+  assert.equal(result.requestId, request.requestId);
+  assert.equal(JSON.stringify(result).includes('SENSITIVE_INTERNAL_EXCEPTION_MUST_NOT_LEAK'), false);
+  assert.equal(JSON.stringify(result).includes('STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED'), false);
+});
+
+test('native FREEZE evidence read exceptions preserve DRAINING with a specific bounded blocker', async () => {
+  for (const [reader, blocker] of [
+    ['readActions', 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED'],
+    ['readComments', 'MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED'],
+  ]) {
+    const f = fixture();
+    f[reader] = async () => { throw new Error('PRIVATE_GITHUB_TOKEN_MUST_NEVER_LEAK'); };
+    const result = await executeMailboxRotationOnHost(command(), f);
+    assert.equal(result.ok, false, reader);
+    assert.equal(result.blocker, blocker, reader);
+    assert.equal(f.state.mailboxRotation.phase, 'DRAINING', reader);
+    assert.equal(f.state.mailboxRotation.drained, false, reader);
+    assert.equal(f.state.mailboxRotation.globalFencePublished, true, reader);
+    assert.equal(f.events[0].type, 'persist', reader);
+    assert.equal(f.events[1].type, 'fence', reader);
+    assert.equal(JSON.stringify(result).includes('PRIVATE_GITHUB_TOKEN_MUST_NEVER_LEAK'), false);
+    assert.equal(JSON.stringify(result).includes('STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED'), false);
+  }
+});
+
+test('FREEZE retries only recognised transient evidence reads, never side effects', async () => {
+  for (const [reader, transient] of [
+    ['readActions', 'MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE'],
+    ['readComments', 'MAILBOX_HISTORY_PAGE_INVALID'],
+  ]) {
+    const f = fixture();
+    const originalRead = f[reader];
+    let calls = 0;
+    f[reader] = async (...args) => {
+      calls += 1;
+      if (calls === 1) throw new Error(transient);
+      return originalRead(...args);
+    };
+    const result = await executeMailboxRotationOnHost(command(), f);
+    assert.equal(result.ok, true, reader);
+    assert.equal(result.finalVerdict, 'MAILBOX_ROTATION_DRAINING', reader);
+    assert.equal(calls, 2, reader);
+    assert.equal(f.events.filter(e => e.type === 'fence').length, 1, reader);
+    assert.equal(f.state.mailboxRotation.phase, 'DRAINING', reader);
+    assert.equal(f.state.mailboxRotation.drained, false, reader);
+  }
+});
+
+test('repeated transient evidence errors stay fail-closed after exactly two GET attempts', async () => {
+  for (const [reader, transient, blocker] of [
+    ['readActions', 'MAILBOX_ACTION_BATCH_READ_FAILED', 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED'],
+    ['readComments', 'MAILBOX_HISTORY_PAGE_INVALID', 'MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED'],
+  ]) {
+    const f = fixture();
+    let calls = 0;
+    f[reader] = async () => { calls += 1; throw new Error(transient); };
+    const result = await executeMailboxRotationOnHost(command(), f);
+    assert.equal(calls, 2, reader);
+    assert.equal(result.ok, false, reader);
+    assert.equal(result.blocker, blocker, reader);
+    assert.equal(f.state.mailboxRotation.phase, 'DRAINING', reader);
+    assert.equal(f.state.mailboxRotation.drained, false, reader);
+    assert.equal(f.events.filter(e => e.type === 'fence').length, 1, reader);
+  }
 });
