@@ -54,7 +54,7 @@ function pagedFixture(total,{protectedIndexes=[]}={}){
 test('native collector exposes fixed stage-specific failures but no GitHub error details',()=>{
  const secondPage='actions/runs?status=queued&per_page=100&page=2';
  const cases=[
-  {name:'READ',mutate:(_response,path)=>{if(path===secondPage)throw Error('private-token-hypothetical');}},
+  {name:'READ',mutate:(response,path)=>{if(path===secondPage)throw Error('private-token-hypothetical');return response;}},
   {name:'RESPONSE',mutate:(response,path)=>path===secondPage?null:response},
   {name:'TOTAL_DRIFT',mutate:(response,path)=>{if(path===secondPage)response.total_count=299;return response;}},
   {name:'PAGE_LENGTH',mutate:(response,path)=>{if(path===secondPage)response.workflow_runs=[];return response;}},
