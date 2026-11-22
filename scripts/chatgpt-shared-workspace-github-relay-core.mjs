@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
+import { resolveOpenClawGatewayWindowsExecutable } from '../shared/agents/openClawGatewayStartup.mjs';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -53,6 +54,8 @@ import {
 } from '../shared/agents/recurringMultiAgentCapabilityCalibrationV1.mjs';
 import {
   decodeStephanosSharedConversationTurnRecord,
+  createStephanosSharedConversationTurnRecord,
+  STEPHANOS_SHARED_CONVERSATION_OPENCLAW_PARTICIPANTS,
 } from '../shared/agents/stephanosSharedConversationThreadV1.mjs';
 import {
   persistStephanosConversationCanvasFromPersistedQaV1,
@@ -238,6 +241,69 @@ function staleQaReplayEligible(record = {}, nowMs = Date.now()) {
     && Array.isArray(decoded.errors)
     && decoded.errors.length === 1
     && decoded.errors[0] === 'workspace:stale-record';
+}
+
+
+const OPENCLAW_CONVERSATION_RPC_METHOD = 'stephanos-builder-provider.sharedConversation';
+const OPENCLAW_CONVERSATION_RPC_SCHEMA = 'stephanos.openclaw-shared-conversation-gateway.v1';
+
+// Fixed Gateway method only. No arbitrary process, file, shell or source-write request.
+export function callOpenClawSharedConversationGateway(params, {
+  spawnSyncFn = spawnSync, env = process.env, platform = process.platform,
+  existsSyncFn,
+} = {}) {
+  const gatewayArgs = [
+    'gateway', 'call', OPENCLAW_CONVERSATION_RPC_METHOD,
+    '--params', JSON.stringify(params), '--timeout', '15000', '--json',
+  ];
+  let command = env.STEPHANOS_OPENCLAW_EXECUTABLE || 'openclaw';
+  let args = gatewayArgs;
+  if (platform === 'win32') {
+    // Windows .cmd/.bat shims cannot be launched with shell:false.
+    // Reuse the installed Gateway's existing resolver, but allow only a
+    // direct Node entrypoint or native executable for JSON-bearing RPC args.
+    // Never interpolate an untrusted conversation turn into cmd.exe.
+    const runner = resolveOpenClawGatewayWindowsExecutable({
+      env, ...(existsSyncFn ? { existsSync: existsSyncFn } : {}),
+    });
+    if (!runner.ok || !['node-entrypoint', 'native-executable'].includes(runner.strategy)) {
+      return { success: false, blocker: 'OPENCLAW_CONVERSATION_SAFE_WINDOWS_RUNNER_UNAVAILABLE' };
+    }
+    command = runner.command;
+    args = runner.strategy === 'node-entrypoint'
+      ? [runner.resolvedOpenClawPath, ...gatewayArgs]
+      : gatewayArgs;
+  }
+  const executed = spawnSyncFn(command, args, {
+    encoding: 'utf8', shell: false, windowsHide: true,
+    timeout: 18_000, maxBuffer: 32 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (executed?.error || executed?.status !== 0) {
+    return { success: false, blocker: 'OPENCLAW_CONVERSATION_GATEWAY_CALL_FAILED' };
+  }
+  try {
+    const value = JSON.parse(String(executed.stdout || ''));
+    return value?.schemaVersion === OPENCLAW_CONVERSATION_RPC_SCHEMA ? value : value?.result;
+  } catch {
+    return { success: false, blocker: 'OPENCLAW_CONVERSATION_GATEWAY_JSON_INVALID' };
+  }
+}
+
+function validOpenClawGatewayReply(reply, params) {
+  return reply?.schemaVersion === OPENCLAW_CONVERSATION_RPC_SCHEMA
+    && reply.success === true
+    && reply.executionSurface === 'openclaw-gateway-plugin'
+    && /^openclaw-gateway:[1-9][0-9]*$/.test(text(reply.providerInstance))
+    && reply.requestId === params.requestId
+    && reply.messageId === params.messageId
+    && reply.threadId === params.threadId
+    && reply.turnId === params.turnId
+    && reply.relatedIssue === params.relatedIssue
+    && typeof reply.replyText === 'string'
+    && reply.replyText.length > 0 && reply.replyText.length <= 300
+    && reply.sourceHeadProven === false && reply.modelResponseProven === false
+    && reply.arbitraryShellAllowed === false && reply.sourceMutationAllowed === false
+    && reply.mergeAuthority === false;
 }
 
 function sharedConversationTurnSegments(turnRecord = {}) {
@@ -773,6 +839,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   reconcileInboxFn = async () => ({ ok: true }),
   answerQuestionFn = answerStephanosWorkspaceQuestionRecord,
   persistConversationCanvasFn = persistStephanosConversationCanvasFromPersistedQaV1,
+  openClawGatewayCallFn = callOpenClawSharedConversationGateway,
   writeAtomicJsonFn = writeAtomicJson,
 } = {}) {
   const readRecord = (segments) => readWorkspaceRecordFn({
@@ -890,6 +957,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   let projection = null;
   let workspaceRecord = null;
   let answerRecord = null;
+  let openClawRoundTrip = null;
   let primaryWrite = { ok: true, reason: 'NO_PRIMARY_WRITE_REQUIRED', bytes: 0 };
   let answerWrite = { ok: true, reason: 'NO_ANSWER_WRITE_REQUIRED', bytes: 0 };
   let canvasPersistence = { ok: true, classification: 'NO_CANVAS_PERSISTENCE_REQUIRED', persisted: false, resumed: false };
@@ -1033,6 +1101,85 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       } else {
         primaryWrite = { ok: false, reason: existingTurn.reason, bytes: 0 };
         deliveryStatus = 'WORKSPACE_SHARED_TURN_READ_FAILED';
+      }
+      // The addressed OpenClaw request must have an authentic Gateway round trip.
+      // A persisted inbound turn alone MUST NOT be classified as connected.
+      if (deliveryStatus === 'WORKSPACE_SHARED_TURN_PASS'
+          && request.boundedPayload?.requestedEntityId === 'openclaw') {
+        const params = {
+          schemaVersion: OPENCLAW_CONVERSATION_RPC_SCHEMA,
+          requestId: request.requestId,
+          messageId: turnRecord.messageId,
+          threadId: decodedTurn.turn.threadId,
+          turnId: decodedTurn.turn.turnId,
+          relatedIssue: turnRecord.relatedIssue,
+          text: decodedTurn.turn.text,
+          issuedAtUtc: request.timestampUtc,
+          expiresAtUtc: request.expiryUtc,
+        };
+        let gatewayReply;
+        try { gatewayReply = await openClawGatewayCallFn(params); }
+        catch { gatewayReply = { success: false, blocker: 'OPENCLAW_CONVERSATION_GATEWAY_EXCEPTION' }; }
+        if (!validOpenClawGatewayReply(gatewayReply, params)) {
+          deliveryStatus = 'WORKSPACE_OPENCLAW_GATEWAY_UNPROVEN';
+        } else {
+          const replyTurnId = `openclaw-reply-${digest(request.requestId).slice(0, 24)}`;
+          const replySegments = ['inbox', `shared-turn-${digest(replyTurnId).slice(0, 24)}.json`];
+          const existingReply = await readWorkspaceRecordFn({
+            workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot,
+            segments: replySegments, readFileFn,
+          });
+          if (existingReply.ok) {
+            const decoded = decodeStephanosSharedConversationTurnRecord(existingReply.record, {
+              workspaceValidationOptions: { nowMs, staleAfterMs: 30 * 60 * 1000 },
+            });
+            if (!decoded.valid || decoded.turn.senderParticipantId !== 'openclaw'
+                || decoded.turn.threadId !== params.threadId
+                || decoded.turn.replyToTurnId !== params.turnId
+                || decoded.turn.text !== gatewayReply.replyText
+                || existingReply.record.relatedIssue !== params.relatedIssue) {
+              deliveryStatus = 'WORKSPACE_OPENCLAW_REPLY_EXISTING_CONFLICT';
+            } else {
+              answerRecord = existingReply.record;
+              deliveryStatus = 'WORKSPACE_OPENCLAW_ROUNDTRIP_PASS';
+            }
+          } else if (existingReply.reason !== 'WORKSPACE_RECORD_NOT_FOUND') {
+            deliveryStatus = 'WORKSPACE_OPENCLAW_REPLY_READ_FAILED';
+          } else {
+            const builtReply = createStephanosSharedConversationTurnRecord({
+              threadId: params.threadId, turnId: replyTurnId, senderParticipantId: 'openclaw',
+              replyToTurnId: params.turnId, text: gatewayReply.replyText,
+              visibleToParticipantIds: STEPHANOS_SHARED_CONVERSATION_OPENCLAW_PARTICIPANTS,
+              timestampUtc,
+            }, {
+              relatedIssue: params.relatedIssue, relatedPr: turnRecord.relatedPr,
+              proofRefs: [`receipts/${request.requestId}`],
+              workspaceValidationOptions: { nowMs },
+            });
+            if (!builtReply.valid) {
+              deliveryStatus = 'WORKSPACE_OPENCLAW_REPLY_SCHEMA_REJECTED';
+            } else {
+              answerWrite = await persistOnce({
+                workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot,
+                segments: replySegments, record: builtReply.record,
+                nowMs, recordExistsFn, writeAtomicJsonFn,
+              });
+              if (answerWrite.ok) {
+                answerRecord = builtReply.record;
+                deliveryStatus = 'WORKSPACE_OPENCLAW_ROUNDTRIP_PASS';
+              } else {
+                deliveryStatus = 'WORKSPACE_OPENCLAW_REPLY_WRITE_FAILED';
+              }
+            }
+          }
+          if (deliveryStatus === 'WORKSPACE_OPENCLAW_ROUNDTRIP_PASS') {
+            openClawRoundTrip = Object.freeze({
+              state: 'NATIVE_GATEWAY_ACK_PERSISTED',
+              providerInstance: gatewayReply.providerInstance,
+              sourceHeadProven: false, modelResponseProven: false,
+            });
+          }
+        }
       }
     }
   } else if (verification.accepted && request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) {
@@ -1180,7 +1327,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   }
 
   const acceptedDelivery = verification.accepted === true
-    && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS', 'WORKSPACE_QA_PASS', 'WORKSPACE_SHARED_TURN_PASS'].includes(deliveryStatus)
+    && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS', 'WORKSPACE_QA_PASS', 'WORKSPACE_SHARED_TURN_PASS', 'WORKSPACE_OPENCLAW_ROUNDTRIP_PASS'].includes(deliveryStatus)
     && primaryWrite.ok === true
     && answerWrite.ok === true
     && canvasPersistence.ok === true;
@@ -1255,6 +1402,12 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       summary: workspaceRecord.summary,
     } : null),
     correlatedAnswerRecord: compactConversationRecord(answerRecord),
+    openClawRoundTrip: openClawRoundTrip ? {
+      ...openClawRoundTrip,
+      replyToTurnId: request.boundedPayload?.turnRecord?.subjectId,
+      replyTurnId: answerRecord?.subjectId,
+      replyText: answerRecord ? JSON.parse(answerRecord.body).text : '',
+    } : null,
     sanitizedAnswer: publicationRecovery?.ok ? {
       ...sanitizedConversationAnswerProjection(answerRecord, workspaceRecord, publicationRecovery.atMs),
       answeredAtUtc: answerRecord.timestampUtc,

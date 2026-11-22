@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { callOpenClawSharedConversationGateway } from '../../scripts/chatgpt-shared-workspace-github-relay-core.mjs';
 
 import {
   CHATGPT_BRIDGE_PARTICIPANT_ID,
@@ -187,4 +188,138 @@ test('response retry resumes the already persisted shared turn without duplicati
     workspace.writes.filter((entry) => entry.segments[0] === 'inbox' && /^shared-turn-/.test(entry.segments[1])).length,
     1,
   );
+});
+
+
+test('addressed OpenClaw turn requires a real native Gateway reply and persists the same-thread turn', async () => {
+  const workspace = fakeWorkspace();
+  const turnRecord = canonicalTurn({
+    senderParticipantId: 'chatgpt-bridge',
+    text: 'Please acknowledge this shared conversation.',
+  });
+  const paramsSeen = [];
+  const request = requestFor(turnRecord, { boundedPayload: {
+    requestedEntityId: 'openclaw', turnRecord,
+    transportAttestation: {
+      sourceSurface: 'chatgpt-app',
+      sourceMessageId: 'source-turn-001',
+      operatorAuthored: false,
+    },
+  } });
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...relayOptions(workspace, request),
+    openClawGatewayCallFn: async (params) => {
+      paramsSeen.push(params);
+      return {
+        schemaVersion: 'stephanos.openclaw-shared-conversation-gateway.v1',
+        success: true, executionSurface: 'openclaw-gateway-plugin',
+        providerInstance: 'openclaw-gateway:123',
+        requestId: params.requestId,
+        messageId: params.messageId,
+        threadId: params.threadId,
+        turnId: params.turnId,
+        relatedIssue: params.relatedIssue,
+        replyText: 'OpenClaw Gateway received the shared conversation turn. Native assistant reasoning is not yet qualified by this handshake.',
+        sourceHeadProven: false, modelResponseProven: false,
+        arbitraryShellAllowed: false, sourceMutationAllowed: false, mergeAuthority: false,
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_OPENCLAW_ROUNDTRIP_PASS');
+  assert.equal(paramsSeen.length, 1);
+  const replies = workspace.writes.filter((entry) => entry.record?.participantId === 'openclaw');
+  assert.equal(replies.length, 1);
+  const reply = JSON.parse(replies[0].record.body);
+  assert.equal(reply.threadId, turnRecord.correlationId);
+  assert.equal(reply.replyToTurnId, turnRecord.subjectId);
+  assert.equal(reply.senderParticipantId, 'openclaw');
+  assert.equal(reply.visibleToParticipantIds.at(-1), 'openclaw');
+  assert.equal(replies[0].record.sourceMutationAllowed, false);
+});
+
+test('one-way GitHub delivery cannot masquerade as a two-way OpenClaw reply', async () => {
+  const workspace = fakeWorkspace();
+  const turnRecord = canonicalTurn({ senderParticipantId: 'chatgpt-bridge' });
+  const request = requestFor(turnRecord, { boundedPayload: {
+    requestedEntityId: 'openclaw', turnRecord,
+    transportAttestation: {
+      sourceSurface: 'chatgpt-app',
+      sourceMessageId: 'source-turn-001',
+      operatorAuthored: false,
+    },
+  } });
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...relayOptions(workspace, request),
+    openClawGatewayCallFn: async () => ({ success: false, blocker: 'GATEWAY_UNAVAILABLE' }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_OPENCLAW_GATEWAY_UNPROVEN');
+  assert.equal(workspace.writes.some((entry) => entry.record?.participantId === 'openclaw'), false);
+});
+
+test('Gateway reply with wrong request lineage is denied without writing an OpenClaw turn', async () => {
+  const workspace = fakeWorkspace();
+  const turnRecord = canonicalTurn({ senderParticipantId: 'chatgpt-bridge' });
+  const request = requestFor(turnRecord, { boundedPayload: {
+    requestedEntityId: 'openclaw', turnRecord,
+    transportAttestation: {
+      sourceSurface: 'chatgpt-app',
+      sourceMessageId: 'source-turn-001',
+      operatorAuthored: false,
+    },
+  } });
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...relayOptions(workspace, request),
+    openClawGatewayCallFn: async (params) => ({
+      schemaVersion: 'stephanos.openclaw-shared-conversation-gateway.v1',
+      success: true, executionSurface: 'openclaw-gateway-plugin',
+      providerInstance: 'openclaw-gateway:123',
+      requestId: params.requestId,
+      messageId: params.messageId,
+      threadId: 'wrong-thread', turnId: params.turnId,
+      relatedIssue: params.relatedIssue,
+      replyText: 'Untrusted mismatch', sourceHeadProven: false, modelResponseProven: false,
+      arbitraryShellAllowed: false, sourceMutationAllowed: false, mergeAuthority: false,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_OPENCLAW_GATEWAY_UNPROVEN');
+  assert.equal(workspace.writes.some((entry) => entry.record?.participantId === 'openclaw'), false);
+});
+
+test('OpenClaw conversation RPC uses installed Windows Node entrypoint without a command shell', () => {
+  const appData = 'C:\\Users\\Operator\\AppData\\Roaming';
+  const nodeExe = 'C:\\Node\\node.exe';
+  const entry = 'C:\\Users\\Operator\\AppData\\Roaming\\npm\\node_modules\\openclaw\\openclaw.mjs';
+  const env = { APPDATA: appData, Path: 'C:\\Node' };
+  const calls = [];
+  const response = callOpenClawSharedConversationGateway({ requestId: 'request-safe-001' }, {
+    platform: 'win32', env,
+    existsSyncFn: (candidate) => [entry, nodeExe].includes(candidate),
+    spawnSyncFn: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: JSON.stringify({ schemaVersion: 'stephanos.openclaw-shared-conversation-gateway.v1', success: true }) };
+    },
+  });
+  assert.equal(response.success, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, nodeExe);
+  assert.equal(calls[0].args[0], entry);
+  assert.deepEqual(calls[0].args.slice(1, 4), ['gateway', 'call', 'stephanos-builder-provider.sharedConversation']);
+  assert.equal(calls[0].options.shell, false);
+});
+
+test('OpenClaw conversation RPC fails closed on Windows when only a .cmd shim is available', () => {
+  const env = { APPDATA: 'C:\\Users\\Operator\\AppData\\Roaming', Path: 'C:\\Node' };
+  const shim = 'C:\\Users\\Operator\\AppData\\Roaming\\npm\\openclaw.cmd';
+  let spawned = false;
+  const response = callOpenClawSharedConversationGateway({ requestId: 'request-cmd-denied' }, {
+    platform: 'win32', env,
+    existsSyncFn: (candidate) => candidate === shim,
+    spawnSyncFn: () => { spawned = true; return { status: 0, stdout: '{}' }; },
+  });
+  assert.equal(response.success, false);
+  assert.equal(response.blocker, 'OPENCLAW_CONVERSATION_SAFE_WINDOWS_RUNNER_UNAVAILABLE');
+  assert.equal(spawned, false);
 });
