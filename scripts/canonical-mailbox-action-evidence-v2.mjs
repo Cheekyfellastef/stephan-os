@@ -293,7 +293,7 @@ function incompleteMailboxActionPage(status,reason){
   throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
  throw Error(`MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_${status.toUpperCase()}_${reason}`);
 }
-function readMailboxActionRuns(read,status){
+function readMailboxActionRunsOnce(read,status){
  const runs=[],seen=new Set();let total,effectivePageSize;
  for(let page=1;page<=MAILBOX_ROTATION_ACTIONS_MAX_PAGES;page++){
   let response;
@@ -338,6 +338,27 @@ function readMailboxActionRuns(read,status){
   if(runs.length===total)return{total_count:total,workflow_runs:runs};
  }
  incompleteMailboxActionPage(status,'PAGE_LIMIT');
+}
+
+function transientMailboxActionInventoryStage(error,status){
+ const prefix=`MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_${status.toUpperCase()}_`;
+ const message=String(error?.message||'');
+ if(!message.startsWith(prefix))return'';
+ const stage=message.slice(prefix.length);
+ return ['TOTAL_DRIFT','PAGE_LENGTH'].includes(stage)?stage:'';
+}
+function readMailboxActionRuns(read,status){
+ // GitHub Actions list responses can be time-inconsistent across adjacent pages
+ // even when every individual response is well formed. Re-read the ENTIRE
+ // status exactly once for transient count/page-shape drift; never splice
+ // pages from different observations and never retry malformed/unsafe data.
+ for(let attempt=1;attempt<=2;attempt++){
+  try{return readMailboxActionRunsOnce(read,status);}
+  catch(error){
+   if(attempt===2||!transientMailboxActionInventoryStage(error,status))throw error;
+  }
+ }
+ throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE');
 }
 
 export function inventoryMailboxRotationExecution({read,activationHead,now=()=>new Date().toISOString(),local=localMailboxPublicationRevocations,collectProofs}={}){
