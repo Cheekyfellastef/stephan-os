@@ -65,7 +65,7 @@ test('openClaw local adapter blocks execution when approvals are missing', () =>
   assert.match(summary.adapterNextAction, /complete openclaw approval gates/i);
 });
 
-test('openClaw local adapter v1 remains non-executing even when all future gates would otherwise be satisfied', () => {
+test('openClaw local adapter executes only when the connected bounded gate is fully satisfied', () => {
   const summary = adjudicateOpenClawLocalAdapter({
     adapterMode: 'connected',
     adapterConnectionState: 'connected',
@@ -77,7 +77,28 @@ test('openClaw local adapter v1 remains non-executing even when all future gates
     adapterSatisfiedApprovals: ['approve_openclaw_adapter_enable', 'approve_command_execution'],
   });
 
+  assert.equal(summary.adapterCanExecute, true);
+  assert.equal(summary.adapterExecutionPreconditionsSatisfied, true);
+  assert.equal(summary.adapterReadiness, 'connected_ready');
+  assert.equal(summary.adapterBlockers.some((entry) => /status\/health-only/i.test(entry)), false);
+  assert.match(summary.adapterNextAction, /current bounded openclaw task/i);
+});
+
+
+test('openClaw local adapter still blocks a connected adapter when policy execution is not authorized', () => {
+  const summary = adjudicateOpenClawLocalAdapter({
+    adapterMode: 'connected',
+    adapterConnectionState: 'connected',
+    adapterExecutionMode: 'enabled',
+    policyAllowsExecution: false,
+    killSwitchAvailable: true,
+    killSwitchEngaged: false,
+    adapterRequiredApprovals: ['approve_openclaw_adapter_enable'],
+    adapterSatisfiedApprovals: ['approve_openclaw_adapter_enable'],
+  });
+
   assert.equal(summary.adapterCanExecute, false);
+  assert.equal(summary.adapterExecutionPreconditionsSatisfied, false);
   assert.equal(summary.adapterReadiness, 'connected_blocked');
-  assert.ok(summary.adapterBlockers.some((entry) => /status\/health-only/i.test(entry)));
+  assert.ok(summary.adapterBlockers.some((entry) => /policy harness does not allow execution/i.test(entry)));
 });
