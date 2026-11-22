@@ -359,3 +359,44 @@ test('native FREEZE evidence read exceptions preserve DRAINING with a specific b
     assert.equal(JSON.stringify(result).includes('STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED'), false);
   }
 });
+
+test('FREEZE retries only recognised transient evidence reads, never side effects', async () => {
+  for (const [reader, transient] of [
+    ['readActions', 'MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE'],
+    ['readComments', 'MAILBOX_HISTORY_PAGE_INVALID'],
+  ]) {
+    const f = fixture();
+    const originalRead = f[reader];
+    let calls = 0;
+    f[reader] = async (...args) => {
+      calls += 1;
+      if (calls === 1) throw new Error(transient);
+      return originalRead(...args);
+    };
+    const result = await executeMailboxRotationOnHost(command(), f);
+    assert.equal(result.ok, true, reader);
+    assert.equal(result.finalVerdict, 'MAILBOX_ROTATION_DRAINING', reader);
+    assert.equal(calls, 2, reader);
+    assert.equal(f.events.filter(e => e.type === 'fence').length, 1, reader);
+    assert.equal(f.state.mailboxRotation.phase, 'DRAINING', reader);
+    assert.equal(f.state.mailboxRotation.drained, false, reader);
+  }
+});
+
+test('repeated transient evidence errors stay fail-closed after exactly two GET attempts', async () => {
+  for (const [reader, transient, blocker] of [
+    ['readActions', 'MAILBOX_ACTION_BATCH_READ_FAILED', 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED'],
+    ['readComments', 'MAILBOX_HISTORY_PAGE_INVALID', 'MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED'],
+  ]) {
+    const f = fixture();
+    let calls = 0;
+    f[reader] = async () => { calls += 1; throw new Error(transient); };
+    const result = await executeMailboxRotationOnHost(command(), f);
+    assert.equal(calls, 2, reader);
+    assert.equal(result.ok, false, reader);
+    assert.equal(result.blocker, blocker, reader);
+    assert.equal(f.state.mailboxRotation.phase, 'DRAINING', reader);
+    assert.equal(f.state.mailboxRotation.drained, false, reader);
+    assert.equal(f.events.filter(e => e.type === 'fence').length, 1, reader);
+  }
+});

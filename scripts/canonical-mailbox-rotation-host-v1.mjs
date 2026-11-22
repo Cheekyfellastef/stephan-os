@@ -4,6 +4,32 @@ import { evaluateCanonicalMailboxSuccessorCandidate } from '../shared/agents/can
 import { MAILBOX_ROTATION_SCHEMA, auditMailboxRotationComments, projectMailboxRotation,
   validateMailboxRotationCommandShape, validateMailboxRotationRecord, verifyMailboxRotationProbes } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 
+// Evidence GETs can race a GitHub Actions status change or a transient provider
+// read failure. Retry only a recognised, read-only observation once. Never retry
+// persistence, fence publication, source admission, or any command execution.
+const RETRYABLE_ROTATION_READ_CODES = new Set([
+  'MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE',
+  'MAILBOX_ACTION_BATCH_RUN_DRIFT',
+  'MAILBOX_ACTION_BATCH_READ_FAILED',
+  'MAILBOX_HISTORY_PAGE_INVALID',
+]);
+function retryableRotationReadError(error) {
+  const code = String(error?.code || error?.message || '');
+  return RETRYABLE_ROTATION_READ_CODES.has(code)
+    || /\b(?:HTTP\s*)?(?:429|500|502|503|504)\b/i.test(code)
+    || /^(?:ECONNRESET|ETIMEDOUT|EAI_AGAIN)$/.test(code);
+}
+async function readRotationEvidenceWithOneRetry(read, ...args) {
+  try {
+    return await read(...args);
+  } catch (error) {
+    if (!retryableRotationReadError(error)) throw error;
+    // The caller revalidates evidence freshness and head identity; this is
+    // never a substitute for a native quiescence/drained certificate.
+    return read(...args);
+  }
+}
+
 export function readMailboxAuthorityLiteral(source) {
   if (typeof source !== 'string' || Buffer.byteLength(source, 'utf8') > 64000) throw new Error('MAILBOX_ROTATION_SOURCE_INVALID');
   const active = source.match(/^export const CANONICAL_MAILBOX_ISSUE = ([1-9][0-9]*);$/m);
@@ -86,7 +112,7 @@ export async function executeMailboxRotationOnHost(command, {
   if (!['CANCELLED', 'VERIFIED'].includes(record.phase)) {
     let actionsQuiescent = false;
     try {
-      state.mailboxRotationActions = await readActions(state.mailboxRotation);
+      state.mailboxRotationActions = await readRotationEvidenceWithOneRetry(readActions, state.mailboxRotation);
       state.mailboxRotation = { ...state.mailboxRotation, ...mailboxActionEvidenceSummary(state.mailboxRotationActions) };
       actionsQuiescent = mailboxActionsExecutionQuiescent(state.mailboxRotationActions, {
         now: now(), mainHead: sourceHead, activationHead: state.mailboxRotation.cutoverHead,
@@ -102,7 +128,7 @@ export async function executeMailboxRotationOnHost(command, {
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
     }
     try {
-      state.mailboxRotationInventory = auditMailboxRotationComments(await readComments(record.predecessorIssue), {
+      state.mailboxRotationInventory = auditMailboxRotationComments(await readRotationEvidenceWithOneRetry(readComments, record.predecessorIssue), {
         issueNumber: record.predecessorIssue, barrierCommentId: record.barrierCommentId,
       });
     } catch {
