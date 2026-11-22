@@ -16,6 +16,7 @@ const RETRYABLE_ROTATION_READ_CODES = new Set([
 function retryableRotationReadError(error) {
   const code = String(error?.code || error?.message || '');
   return RETRYABLE_ROTATION_READ_CODES.has(code)
+    || /^MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_(?:QUEUED|IN_PROGRESS|WAITING|REQUESTED|PENDING)_(?:READ|RESPONSE|TOTAL_DRIFT|PAGE_LENGTH|PAGE_LIMIT)$/.test(code)
     || /\b(?:HTTP\s*)?(?:429|500|502|503|504)\b/i.test(code)
     || /^(?:ECONNRESET|ETIMEDOUT|EAI_AGAIN)$/.test(code);
 }
@@ -130,7 +131,9 @@ export async function executeMailboxRotationOnHost(command, {
         'MAILBOX_ACTION_NONADMISSION_SOURCE_UNPROVEN',
         'MAILBOX_ACTION_REVOCATION_SOURCE_UNPROVEN',
       ]);
-      const blocker = typed.has(error?.message) ? error.message
+      const inventoryStage = typeof error?.message === 'string'
+        && /^MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_(?:QUEUED|IN_PROGRESS|WAITING|REQUESTED|PENDING)_(?:READ|RESPONSE|TOTAL_DRIFT|PAGE_LENGTH|PAGE_LIMIT)$/.test(error.message);
+      const blocker = typed.has(error?.message) || inventoryStage ? error.message
         : 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED';
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
       persist(state);
