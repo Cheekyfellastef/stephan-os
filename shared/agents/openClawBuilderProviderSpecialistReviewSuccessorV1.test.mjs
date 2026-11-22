@@ -736,8 +736,8 @@ test('PR #3563 specialist rejects permission, model-proof, mutation, process, an
     sharedConversationIndex().replace('sourceMutationAllowed: false, mergeAuthority: false };', 'sourceMutationAllowed: true, mergeAuthority: false };'),
     sharedConversationIndex('spawn(userExecutable, userArgs);'),
     sharedConversationIndex().replace(
-      "}",
-      "  api.registerGatewayMethod('unexpected.method', async () => ({}), { scope: 'operator.read' });\n}",
+      "  api.registerGatewayMethod(SHARED_CONVERSATION_METHOD, async (params) => receiveOpenClawSharedConversationTurn(params, gatewayContext(SHARED_CONVERSATION_METHOD)), { scope: 'operator.read' });",
+      "  api.registerGatewayMethod(SHARED_CONVERSATION_METHOD, async (params) => receiveOpenClawSharedConversationTurn(params, gatewayContext(SHARED_CONVERSATION_METHOD)), { scope: 'operator.read' });\\n  api.registerGatewayMethod('unexpected.method', async () => ({}), { scope: 'operator.read' });",
     ),
   ];
   for (const content of variants) {
