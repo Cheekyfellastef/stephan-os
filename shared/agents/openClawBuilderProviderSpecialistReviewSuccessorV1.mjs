@@ -1005,10 +1005,10 @@ function reviewSharedConversationIndex(source, path, findings) {
     ["executionSurface: 'openclaw-gateway-plugin'", 'shared-conversation-execution-surface-missing'],
     ["replyText: 'OpenClaw Gateway received the shared conversation turn. Native assistant reasoning is not yet qualified by this handshake.'", 'shared-conversation-fixed-ack-missing'],
     ['sourceHeadProven: false, modelResponseProven: false', 'shared-conversation-model-source-denial-missing'],
+    ["Object.keys(params).sort().join(',') !== [...SHARED_CONVERSATION_KEYS].sort().join(',')", 'shared-conversation-envelope-closure-missing'],
   ]);
   sharedConversationRequireExecutablePatterns(findings, source, path, [
     [/context\.executingInsideOpenClawGateway\s*!==\s*true/, 'shared-conversation-native-context-gate-missing'],
-    [/Object\.keys\(params\)\.sort\(\)\.join\(['"],['"]\)\s*!==\s*\[\.\.\.SHARED_CONVERSATION_KEYS\]\.sort\(\)\.join\(['"],['"]\)/, 'shared-conversation-envelope-closure-missing'],
   ]);
 
   const uncommented = stripComments(source);
