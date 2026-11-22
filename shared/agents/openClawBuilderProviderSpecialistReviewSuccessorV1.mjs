@@ -650,7 +650,7 @@ function countMatches(source, pattern) {
 function activeTestHas(source, title, assertionPattern) {
   const uncommented = stripComments(source);
   if (/\b(?:test|it|describe)\.(?:skip|todo|only)\s*\(/.test(uncommented)) return false;
-  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\export function analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(input = {}) {');
+  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\export function analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1(input = {}) {');');
   const opener = new RegExp(`\\btest\\s*\\(\\s*(['\"])${escapedTitle}\\1\\s*,`);
   const match = opener.exec(uncommented);
   if (!match) return false;
@@ -977,8 +977,10 @@ function reviewSharedConversationIndex(source, path, findings) {
   ]);
   requireExecutablePatterns(findings, source, path, [
     [/context\.executingInsideOpenClawGateway\s*!==\s*true/, 'shared-conversation-native-context-gate-missing'],
-    [/\^openclaw-gateway:\[1-9\]\[0-9\]\*\$\/\.test\(context\.providerInstance\s*\|\|\s*['"]['"]\)/, 'shared-conversation-instance-gate-missing'],
     [/Object\.keys\(params\)\.sort\(\)\.join\(['"],['"]\)\s*!==\s*\[\.\.\.SHARED_CONVERSATION_KEYS\]\.sort\(\)\.join\(['"],['"]\)/, 'shared-conversation-envelope-closure-missing'],
+  ]);
+  requireLiterals(findings, source, path, [
+    ["!/^openclaw-gateway:[1-9][0-9]*$/.test(context.providerInstance || '')", 'shared-conversation-instance-gate-missing'],
   ]);
 
   const code = executableOnly(source);
