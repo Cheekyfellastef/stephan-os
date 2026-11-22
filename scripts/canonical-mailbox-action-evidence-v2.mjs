@@ -302,7 +302,12 @@ function readMailboxActionRuns(read,status){
   }catch(error){
    // Our own freshness/clock guards are stronger than provider-read errors.
    // Keep their exact typed blockers; redact only raw provider exceptions.
-   if(error?.message==='MAILBOX_ACTION_COLLECTION_STALE'
+   // The owner's bounded transcript adapter throws a private per-read probe;
+   // its WeakMap identity check must see the ORIGINAL exception to continue.
+   // Re-throwing it grants no execution or evidence: an unregistered exception
+   // is still denied by the owner reader's identity guard.
+   if(error?.message==='next fixed read'
+     ||error?.message==='MAILBOX_ACTION_COLLECTION_STALE'
      ||error?.message==='MAILBOX_ACTION_COLLECTION_CLOCK_INVALID')throw error;
    incompleteMailboxActionPage(status,'READ');
   }
