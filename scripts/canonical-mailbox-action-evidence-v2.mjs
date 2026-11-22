@@ -294,13 +294,13 @@ function incompleteMailboxActionPage(status,reason){
  throw Error(`MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_${status.toUpperCase()}_${reason}`);
 }
 function readMailboxActionRuns(read,status){
- const runs=[],seen=new Set();let total;
+ const runs=[],seen=new Set();let total,effectivePageSize;
  for(let page=1;page<=MAILBOX_ROTATION_ACTIONS_MAX_PAGES;page++){
   let response;
   try{
    response=read(`actions/runs?status=${status}&per_page=${MAILBOX_ROTATION_ACTIONS_PAGE_SIZE}${page===1?'':`&page=${page}`}`);
   }catch{
-   incompleteMailboxActionPage(status,'READ'); // no raw GitHub error or token text
+   incompleteMailboxActionPage(status,'READ');
   }
   if(!response||!Number.isSafeInteger(response.total_count)||response.total_count<0
     ||response.total_count>MAILBOX_ROTATION_ACTIONS_PAGE_SIZE*MAILBOX_ROTATION_ACTIONS_MAX_PAGES
@@ -309,7 +309,18 @@ function readMailboxActionRuns(read,status){
   if(total!==undefined&&response.total_count!==total)
    incompleteMailboxActionPage(status,'TOTAL_DRIFT');
   total=response.total_count;
-  if(response.workflow_runs.length!==Math.min(MAILBOX_ROTATION_ACTIONS_PAGE_SIZE,total-runs.length))
+  // Some authenticated API transports return a smaller effective page size
+  // than requested. A short first page is not proof of completion: retain the
+  // provider's total, require every subsequent full page to match its size,
+  // and deny the snapshot if all records cannot fit within the fixed bound.
+  if(page===1){
+   effectivePageSize=response.workflow_runs.length;
+   if((total>0&&effectivePageSize===0)||effectivePageSize>MAILBOX_ROTATION_ACTIONS_PAGE_SIZE)
+    incompleteMailboxActionPage(status,'PAGE_LENGTH');
+   if(total>effectivePageSize*MAILBOX_ROTATION_ACTIONS_MAX_PAGES)
+    incompleteMailboxActionPage(status,'PAGE_LIMIT');
+  }
+  if(response.workflow_runs.length!==Math.min(effectivePageSize,total-runs.length))
    incompleteMailboxActionPage(status,'PAGE_LENGTH');
   for(const run of response.workflow_runs){
    if(!Number.isSafeInteger(run?.id)||run.id<=0||seen.has(run.id))throw Error('MAILBOX_ROTATION_ACTIONS_INVENTORY_INVALID');
