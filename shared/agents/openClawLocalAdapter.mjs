@@ -180,11 +180,7 @@ export function adjudicateOpenClawLocalAdapter(input = {}) {
   const approvalsComplete = approvalsMissing.length === 0;
   const hasManualBlockers = manualBlockers.length > 0;
 
-  // A genuinely connected adapter supersedes the legacy health-only stub.
-  // Keep stub blockers for design/local-stub states, but do not let stale
-  // design-only projection veto a separately proven live Gateway connection.
-  const stubBlockers = adapterMode === 'connected' ? [] : stubSummary.stubBlockers;
-  const derivedBlockers = [...manualBlockers, ...stubBlockers];
+  const derivedBlockers = [...manualBlockers, ...stubSummary.stubBlockers];
   if (!policyHarnessPresent) derivedBlockers.push('OpenClaw policy harness must be present before adapter execution can be enabled.');
   if (!contractDefined) derivedBlockers.push('OpenClaw local adapter contract is not defined yet.');
   if (contractDefined && !localStubAvailable) derivedBlockers.push('OpenClaw local adapter stub is missing.');
@@ -194,22 +190,16 @@ export function adjudicateOpenClawLocalAdapter(input = {}) {
   if (!policyAllowsExecution) derivedBlockers.push('OpenClaw policy harness does not allow execution yet.');
   if (!approvalsComplete) derivedBlockers.push(`Missing OpenClaw approvals: ${approvalsMissing.join(', ')}.`);
   if (adapterExecutionMode !== 'enabled') derivedBlockers.push('Adapter execution mode is not enabled.');
-  if (adapterMode !== 'connected') {
-    derivedBlockers.push('OpenClaw Local Adapter Stub v1 is status/health-only; a proven connected adapter is required for execution.');
-  }
+  derivedBlockers.push('OpenClaw Local Adapter Stub v1 is status/health-only; live execution is intentionally disabled.');
 
   const adapterExecutionPreconditionsSatisfied = policyHarnessPresent
     && contractDefined
     && localStubAvailable
     && adapterConnected
-    && killSwitchAvailable
-    && !killSwitchEngaged
-    && policyAllowsExecution
     && approvalsComplete
-    && adapterExecutionMode === 'enabled'
     && !hasManualBlockers;
 
-  const adapterCanExecute = adapterExecutionPreconditionsSatisfied;
+  const adapterCanExecute = false;
 
   const adapterSafeToConnect = contractDefined
     && localStubAvailable
@@ -227,7 +217,7 @@ export function adjudicateOpenClawLocalAdapter(input = {}) {
   } else if (!adapterConnected) {
     adapterReadiness = 'needs_connection';
   } else {
-    adapterReadiness = adapterCanExecute ? 'connected_ready' : 'connected_blocked';
+    adapterReadiness = 'connected_blocked';
   }
 
   const adapterDesignReady = contractDefined;
@@ -242,10 +232,8 @@ export function adjudicateOpenClawLocalAdapter(input = {}) {
       adapterNextAction = adapterConnection.connectionNextAction || 'Advance OpenClaw adapter connection readiness (status-only).';
     } else if (!approvalsComplete) {
       adapterNextAction = 'Complete OpenClaw approval gates.';
-    } else if (adapterCanExecute) {
-      adapterNextAction = 'Execute only the current bounded OpenClaw task under the connected adapter, scoped grant and kill switch.';
     } else {
-      adapterNextAction = 'Resolve the remaining execution gate while keeping arbitrary shell, self-approval and direct-main writes disabled.';
+      adapterNextAction = 'Plan dry-run and execution integration; keep stub status-only in v1.';
     }
   }
 
