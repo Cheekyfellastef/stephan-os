@@ -491,3 +491,41 @@ test('invalid or backward collection clocks fail before yielding refreshed evide
   }),/MAILBOX_ACTION_COLLECTION_CLOCK_INVALID/);
  }
 });
+
+test('smaller effective API page size still requires complete unique records across all pages',()=>{
+ const f=pagedFixture(300,{protectedIndexes:[149,299]}),paths=[];
+ const read=path=>{
+  paths.push(path);
+  const match=path.match(/^actions\/runs\?status=queued&per_page=100(?:&page=([1-9][0-9]*))?$/);
+  if(match){
+   const page=Number(match[1]||1);
+   return{total_count:300,workflow_runs:structuredClone(f.runs.slice((page-1)*30,page*30))};
+  }
+  return f.api(path);
+ };
+ const result=f.collect(read);
+ assert.deepEqual(result.pendingRuns.map(p=>p.id),[10149,10299]);
+ assert.deepEqual(result.blockingRuns.map(p=>p.id),[10149,10299]);
+ assert.equal(paths.filter(p=>p.startsWith('actions/runs?status=queued&')).length,10);
+ assert.equal(mailboxActionsExecutionQuiescent(result),false);
+});
+
+test('short-page transport may not skip a page, change effective size, or exceed the ten-page bound',()=>{
+ for(const brokenPage of [2,7,10]){
+  const f=pagedFixture(300),reads=()=>{};
+  assert.throws(()=>f.collect(path=>{
+   const match=path.match(/^actions\/runs\?status=queued&per_page=100(?:&page=([1-9][0-9]*))?$/);
+   if(!match)return f.api(path);
+   const page=Number(match[1]||1);
+   const slice=f.runs.slice((page-1)*30,page*30);
+   if(page===brokenPage)slice.pop();
+   return{total_count:300,workflow_runs:structuredClone(slice)};
+  }),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE/);
+ }
+ const f=pagedFixture(301);
+ assert.throws(()=>f.collect(path=>{
+  const match=path.match(/^actions\/runs\?status=queued&per_page=100(?:&page=([1-9][0-9]*))?$/);
+  if(!match)return f.api(path);
+  return{total_count:301,workflow_runs:structuredClone(f.runs.slice(0,30))};
+ }),/MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE/);
+});
