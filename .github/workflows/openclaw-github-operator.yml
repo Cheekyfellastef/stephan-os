@@ -24,10 +24,19 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run focused contract tests
-        run: node --test shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs shared/agents/openClawGitHubMergeObservationV1.test.mjs
+      - name: Run focused contract and conversation route tests
+        run: >-
+          node --test
+          shared/agents/openClawGitHubOperator.test.mjs
+          shared/agents/openClawGitHubAuthorization.test.mjs
+          shared/agents/openClawGitHubExecutorPreflight.test.mjs
+          shared/agents/openClawGitHubMergeObservationV1.test.mjs
+          shared/agents/chatGptParticipantBridgeV1.shared-conversation-relay.test.mjs
+          shared/agents/chatGptSharedConversationRouteMeshV1.test.mjs
 
-      - name: Parse executor scripts
+      - name: Parse executor and conversation route scripts
         run: |
           node --check scripts/openclaw-github-operator.mjs
           node --check scripts/stephanos-issue-openclaw-github-authorization.mjs
+          node --check scripts/chatgpt-shared-workspace-github-relay-core.mjs
+          node --check shared/agents/chatGptSharedConversationRouteMeshV1.mjs

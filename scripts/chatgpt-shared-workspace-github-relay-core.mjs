@@ -7,6 +7,11 @@ import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { resolveOpenClawGatewayWindowsExecutable } from '../shared/agents/openClawGatewayStartup.mjs';
 import { fileURLToPath } from 'node:url';
+import {
+  deliverSharedConversationWithFailover,
+  describeSharedConversationRouteInventory,
+  SHARED_CONVERSATION_ROUTE_IDS,
+} from '../shared/agents/chatGptSharedConversationRouteMeshV1.mjs';
 
 import {
   CHATGPT_BRIDGE_PARTICIPANT_ID,
@@ -840,6 +845,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   answerQuestionFn = answerStephanosWorkspaceQuestionRecord,
   persistConversationCanvasFn = persistStephanosConversationCanvasFromPersistedQaV1,
   openClawGatewayCallFn = callOpenClawSharedConversationGateway,
+  openClawConversationFallbackRoutes = [],
   writeAtomicJsonFn = writeAtomicJson,
 } = {}) {
   const readRecord = (segments) => readWorkspaceRecordFn({
@@ -1117,14 +1123,153 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
           issuedAtUtc: request.timestampUtc,
           expiresAtUtc: request.expiryUtc,
         };
-        let gatewayReply;
-        try { gatewayReply = await openClawGatewayCallFn(params); }
-        catch { gatewayReply = { success: false, blocker: 'OPENCLAW_CONVERSATION_GATEWAY_EXCEPTION' }; }
-        if (!validOpenClawGatewayReply(gatewayReply, params)) {
+        const replyTurnId = 'openclaw-reply-' + digest(request.requestId).slice(0, 24);
+        const replySegments = ['inbox', 'shared-turn-' + digest(replyTurnId).slice(0, 24) + '.json'];
+        const routeEnvelope = {
+          requestId: params.requestId, messageId: params.messageId,
+          threadId: params.threadId, turnId: params.turnId,
+          relatedIssue: params.relatedIssue, text: params.text,
+        };
+        const workspaceReplyRoute = {
+          routeId: SHARED_CONVERSATION_ROUTE_IDS.SHARED_WORKSPACE_INBOX,
+          failureDomain: 'shared-workspace', priority: 20, costClass: 'zero-cost',
+          sendFn: async (envelope) => {
+            const loaded = await readWorkspaceRecordFn({
+              workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot,
+              segments: replySegments, readFileFn,
+            });
+            if (!loaded.ok) return { disposition: 'uncertain', reason: loaded.reason || 'OPENCLAW_REPLY_NOT_YET_PERSISTED' };
+            const decoded = decodeStephanosSharedConversationTurnRecord(loaded.record, {
+              workspaceValidationOptions: { nowMs, staleAfterMs: 30 * 60 * 1000 },
+            });
+            if (!decoded.valid || decoded.turn.senderParticipantId !== 'openclaw'
+                || decoded.turn.threadId !== envelope.threadId
+                || decoded.turn.replyToTurnId !== envelope.turnId
+                || loaded.record.relatedIssue !== envelope.relatedIssue) {
+              return { disposition: 'application-denied', reason: 'SHARED_WORKSPACE_OPENCLAW_REPLY_LINEAGE_REJECTED' };
+            }
+            return {
+              disposition: 'accepted',
+              receipt: {
+                routeId: SHARED_CONVERSATION_ROUTE_IDS.SHARED_WORKSPACE_INBOX,
+                requestId: envelope.requestId, messageId: envelope.messageId,
+                threadId: envelope.threadId, turnId: envelope.turnId,
+                relatedIssue: envelope.relatedIssue, idempotencyKey: envelope.idempotencyKey,
+                receiptId: loaded.record.messageId, replyText: decoded.turn.text,
+                transportIdentity: 'openclaw-shared-workspace-record',
+                executionSurface: 'shared-workspace',
+                sourceMutationAllowed: false, commandExecutionAllowed: false,
+                approvalAllowed: false, mergeAllowed: false, modelResponseProven: false,
+              },
+            };
+          },
+          verifyReceiptFn: async (receipt, envelope) => {
+            const loaded = await readWorkspaceRecordFn({
+              workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot,
+              segments: replySegments, readFileFn,
+            });
+            if (!loaded.ok || loaded.record.messageId !== receipt.receiptId) return false;
+            const decoded = decodeStephanosSharedConversationTurnRecord(loaded.record, {
+              workspaceValidationOptions: { nowMs, staleAfterMs: 30 * 60 * 1000 },
+            });
+            return decoded.valid && decoded.turn.senderParticipantId === 'openclaw'
+              && decoded.turn.threadId === envelope.threadId
+              && decoded.turn.replyToTurnId === envelope.turnId
+              && decoded.turn.text === receipt.replyText
+              && loaded.record.relatedIssue === envelope.relatedIssue;
+          },
+        };
+        const gatewayRoute = {
+          routeId: SHARED_CONVERSATION_ROUTE_IDS.OPENCLAW_GATEWAY_RPC,
+          failureDomain: 'openclaw-gateway', priority: 10, costClass: 'zero-cost',
+          sendFn: async (envelope) => {
+            let raw;
+            try { raw = await openClawGatewayCallFn(params); }
+            catch { return { disposition: 'uncertain', reason: 'OPENCLAW_GATEWAY_CALL_EXCEPTION' }; }
+            if (validOpenClawGatewayReply(raw, params)) {
+              return {
+                disposition: 'accepted',
+                receipt: {
+                  routeId: SHARED_CONVERSATION_ROUTE_IDS.OPENCLAW_GATEWAY_RPC,
+                  requestId: params.requestId, messageId: params.messageId,
+                  threadId: params.threadId, turnId: params.turnId,
+                  relatedIssue: params.relatedIssue, idempotencyKey: envelope.idempotencyKey,
+                  receiptId: 'gateway-' + digest(request.requestId).slice(0, 24),
+                  replyText: raw.replyText, transportIdentity: raw.providerInstance,
+                  executionSurface: raw.executionSurface,
+                  sourceMutationAllowed: false, commandExecutionAllowed: false,
+                  approvalAllowed: false, mergeAllowed: false, modelResponseProven: false,
+                },
+              };
+            }
+            if (raw?.success === false && raw.blocker === 'OPENCLAW_CONVERSATION_SAFE_WINDOWS_RUNNER_UNAVAILABLE') {
+              return { disposition: 'transport-failure', safeToRetry: true, reason: raw.blocker };
+            }
+            if (raw?.success === false && [
+              'OPENCLAW_CONVERSATION_ENVELOPE_INVALID',
+              'OPENCLAW_CONVERSATION_SCOPE_INVALID',
+              'OPENCLAW_CONVERSATION_EXPIRED',
+              'OPENCLAW_CONVERSATION_NATIVE_CONTEXT_REQUIRED',
+            ].includes(raw.blocker)) {
+              return { disposition: 'application-denied', reason: raw.blocker };
+            }
+            return { disposition: 'uncertain', reason: raw?.blocker || 'OPENCLAW_GATEWAY_OUTCOME_UNCLASSIFIED' };
+          },
+          verifyReceiptFn: (receipt, envelope) => {
+            const raw = {
+              schemaVersion: OPENCLAW_CONVERSATION_RPC_SCHEMA, success: true,
+              executionSurface: receipt.executionSurface, providerInstance: receipt.transportIdentity,
+              requestId: receipt.requestId, messageId: receipt.messageId, threadId: receipt.threadId,
+              turnId: receipt.turnId, relatedIssue: receipt.relatedIssue, replyText: receipt.replyText,
+              sourceHeadProven: false, modelResponseProven: false,
+              arbitraryShellAllowed: false, sourceMutationAllowed: false, mergeAuthority: false,
+            };
+            return receipt.routeId === SHARED_CONVERSATION_ROUTE_IDS.OPENCLAW_GATEWAY_RPC
+              && receipt.idempotencyKey === envelope.idempotencyKey
+              && validOpenClawGatewayReply(raw, params);
+          },
+          reconcileFn: async ({ envelope }) => {
+            const outcome = await workspaceReplyRoute.sendFn(envelope);
+            return outcome.disposition === 'accepted'
+              ? outcome
+              : { disposition: 'unknown', reason: outcome.reason || 'OPENCLAW_REPLY_NOT_YET_PERSISTED' };
+          },
+        };
+        const routes = [gatewayRoute, workspaceReplyRoute, ...openClawConversationFallbackRoutes];
+        const routeInventory = describeSharedConversationRouteInventory(routes);
+        const routeMesh = await deliverSharedConversationWithFailover({
+          envelope: routeEnvelope, routes,
+          recordAttemptFn: async (attempt) => {
+            const eventId = 'chatgpt-route-event-' + digest(request.requestId + ':' + attempt.index + ':' + attempt.routeId).slice(0, 24);
+            const event = createSharedWorkspaceEventRecord({
+              eventId, participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
+              timestampUtc: attempt.timestampUtc,
+              eventKind: attempt.disposition === 'accepted' ? 'response' : 'warning',
+              summary: ('OpenClaw route ' + attempt.routeId + ' ' + attempt.disposition + ': ' + (/^[A-Z0-9_:-]{1,120}$/i.test(attempt.reason) ? attempt.reason : 'ROUTE_REASON_REDACTED')).slice(0, 180),
+            });
+            const saved = await persistOnce({
+              workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot,
+              segments: ['events', eventId + '.json'], record: event,
+              nowMs, recordExistsFn, writeAtomicJsonFn,
+            });
+            return { ok: saved.ok };
+          },
+        });
+        if (!routeMesh.ok) {
           deliveryStatus = 'WORKSPACE_OPENCLAW_GATEWAY_UNPROVEN';
+          openClawRoundTrip = Object.freeze({
+            state: 'ROUTE_MESH_BLOCKED', reason: routeMesh.reason,
+            idempotencyKey: routeMesh.idempotencyKey || '',
+            routeAttempts: routeMesh.attempts || [], routeInventory,
+            independentFailureDomainCount: routeMesh.independentFailureDomainCount || 0,
+            sourceHeadProven: false, modelResponseProven: false,
+          });
         } else {
-          const replyTurnId = `openclaw-reply-${digest(request.requestId).slice(0, 24)}`;
-          const replySegments = ['inbox', `shared-turn-${digest(replyTurnId).slice(0, 24)}.json`];
+          const gatewayReply = {
+            replyText: routeMesh.receipt.replyText,
+            providerInstance: routeMesh.receipt.transportIdentity,
+            modelResponseProven: routeMesh.receipt.modelResponseProven,
+          };
           const existingReply = await readWorkspaceRecordFn({
             workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot,
             segments: replySegments, readFileFn,
@@ -1153,7 +1298,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
               timestampUtc,
             }, {
               relatedIssue: params.relatedIssue, relatedPr: turnRecord.relatedPr,
-              proofRefs: [`receipts/${request.requestId}`],
+              proofRefs: ['receipts/' + request.requestId],
               workspaceValidationOptions: { nowMs },
             });
             if (!builtReply.valid) {
@@ -1174,9 +1319,14 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
           }
           if (deliveryStatus === 'WORKSPACE_OPENCLAW_ROUNDTRIP_PASS') {
             openClawRoundTrip = Object.freeze({
-              state: 'NATIVE_GATEWAY_ACK_PERSISTED',
+              state: routeMesh.routeId === SHARED_CONVERSATION_ROUTE_IDS.OPENCLAW_GATEWAY_RPC
+                ? 'NATIVE_GATEWAY_ACK_PERSISTED' : 'NATIVE_OPENCLAW_REPLY_RECONCILED',
+              routeId: routeMesh.routeId, failureDomain: routeMesh.failureDomain,
               providerInstance: gatewayReply.providerInstance,
-              sourceHeadProven: false, modelResponseProven: false,
+              sourceHeadProven: false,
+              modelResponseProven: gatewayReply.modelResponseProven === true,
+              routeAttempts: routeMesh.attempts, routeInventory,
+              independentFailureDomainCount: routeMesh.independentFailureDomainCount,
             });
           }
         }
