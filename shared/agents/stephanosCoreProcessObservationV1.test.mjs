@@ -52,8 +52,8 @@ test('Windows Core actual observer reconciles only visible exact command and mat
     // Actual limited-token/native capability proof is a separate test.
     const limitedPrincipal = '$principal = [pscustomobject]@{}; $principal | Add-Member -MemberType ScriptMethod -Name IsInRole -Value { param($role) $false }';
     const ownerSource = await readFile(new URL('../../scripts/windows/read-sovereign-maintenance-owner-v2.ps1', import.meta.url), 'utf8');
-    assert.equal(ownerSource.split(principal).length, 2);
-    const fixtureOwner = ownerSource.replace(principal, limitedPrincipal).replace(/\r\n/g, '\n');
+    assert.equal(ownerSource.split(principal).length, 3);
+    const fixtureOwner = ownerSource.replaceAll(principal, limitedPrincipal).replace(/\r\n/g, '\n');
     const fixtureDigest = createHash('sha256').update(fixtureOwner).digest('hex');
     const pin = source.match(/\$sourceDigest -cne '([a-f0-9]{64})'/)?.[0];
     assert.ok(pin, 'actual loader must retain an exact content binding');
