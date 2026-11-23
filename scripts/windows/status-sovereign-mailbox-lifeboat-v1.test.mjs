@@ -16,6 +16,11 @@ test('fixed recovery mesh script now includes bounded mailbox and Lifeboat obser
   assert.match(script, /\$file\.Length -gt 65536/);
   assert.match(script, /ReparsePoint/);
   assert.match(script, /PRESENT_OWNER_UNVERIFIED/);
+  // The native guard may use STEPHANOS_SHARED_WORKSPACE_ROOT, which the
+  // minimal private PowerShell environment cannot assume it received.
+  // Absence at the default path is never proof that no guard writer exists.
+  assert.match(script, /DEFAULT_ROOT_ABSENT_CANONICAL_ROOT_UNPROVEN/);
+  assert.doesNotMatch(script, /ABSENT_AT_OBSERVATION/);
   assert.match(script, /mailboxGuardOwnerProven = \$false/);
   assert.match(script, /nativeMailboxIngressProven = \$false/);
   assert.match(script, /mailboxCutoverProven = \$false/);
