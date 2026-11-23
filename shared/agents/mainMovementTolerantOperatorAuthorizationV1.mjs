@@ -71,8 +71,12 @@ function filePaths(files) {
   return files ? Object.freeze(files.map((file) => file.path)) : null;
 }
 
+function isComparisonEnvelope(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function comparisonPaths(comparison = {}, { includeRenameSources = false } = {}) {
-  if (!Array.isArray(comparison.files)) return null;
+  if (!isComparisonEnvelope(comparison) || !Array.isArray(comparison.files)) return null;
   if (comparison.files.length === 0) return Object.freeze([]);
   const values = [];
   for (const file of comparison.files) {
@@ -95,6 +99,9 @@ function equalLists(left, right) {
 }
 
 function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdentical = false } = {}) {
+  if (!isComparisonEnvelope(comparison)) {
+    return Object.freeze({ valid: false, blockers: Object.freeze(['comparison-envelope-invalid']) });
+  }
   const blockers = [];
   const status = text(comparison.status).toLowerCase();
   const ahead = Number(comparison.ahead_by);
@@ -102,10 +109,11 @@ function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdenti
   const observedBase = exactSha(comparison?.base_commit?.sha);
   const mergeBase = exactSha(comparison?.merge_base_commit?.sha);
   const commits = Array.isArray(comparison?.commits) ? comparison.commits : [];
+  const headCommitPresent = 'head_commit' in comparison;
   const observedHead = exactSha(
-    comparison?.head_commit?.sha
-    ?? commits.at(-1)?.sha
-    ?? (status === 'identical' ? comparison?.base_commit?.sha : ''),
+    headCommitPresent
+      ? comparison?.head_commit?.sha
+      : (commits.at(-1)?.sha ?? (status === 'identical' ? comparison?.base_commit?.sha : '')),
   );
 
   if (allowIdentical && baseSha === headSha) {
@@ -277,7 +285,7 @@ export function evaluateMainMovementTolerantOperatorAuthorizationV1(input = {}) 
 
   let movementPaths = Object.freeze([]);
   if (currentBase === authorizationBase) {
-    if (observed.authorizationBaseToCurrentBaseComparison) {
+    if ('authorizationBaseToCurrentBaseComparison' in observed) {
       const noMovement = exactForwardComparison(
         observed.authorizationBaseToCurrentBaseComparison,
         authorizationBase,

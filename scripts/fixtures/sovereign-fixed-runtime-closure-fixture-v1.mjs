@@ -176,7 +176,7 @@ if (!maintenance) {
   // must be reassessed; an optional-looking pathname is never a generic bypass.
   const applicabilityPins = {
   "scripts/sovereign-commander-http.mjs": "e989d14bb01a83ce31ed6771d36025a67c103edf3f133dd277bb615680a5eea2",
-  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "e999aa177ace3f77b5ace753d340e87df5b3c748176d2cceb8efde48ab1ad87a",
+  "scripts/sovereign-fixed-runtime-parent-v1.mjs": "92ea2a0f5b1c3ac1000a50ad6440ceebb62dcf6c360b9a0993044898f47db33e",
   "shared/agents/sovereignMaintenanceAdmissionV1.mjs": "43e8549cdfe07ccc944afbe5dc52d87e41146db021e6ff9997bf4b559b590888",
   "scripts/windows/SovereignFixedRuntimeHostV1.cs": "24f03a18fc7b81e807fc9c2ef0bfbafa205c2de871d55aad15c127b1b433812c"
 };
