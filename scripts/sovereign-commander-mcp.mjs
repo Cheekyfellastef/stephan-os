@@ -435,6 +435,7 @@ const TOOLS = Object.freeze([
             'repair-ui-4173',
             'prepare-spatial-workspace',
             'restart-stephanos-runtime',
+            'status-sovereign-mailbox-lifeboat',
             'status-recovery-mesh',
             'status-worker-watchdog',
             'status-stephanos-core-daemon',
