@@ -44,7 +44,7 @@ export const SOVEREIGN_COMMANDER_MCP_PROTOCOLS = Object.freeze(new Set([SOVEREIG
 export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
   'battle-bridge-status', 'battle-bridge-observe', 'visibility-snapshot',
   'cpu-pressure-snapshot', 'controller-lane-status', 'meter-status',
-  'status-recovery-mesh', 'status-worker-watchdog', 'status-stephanos-core-daemon',
+  'status-sovereign-mailbox-lifeboat', 'status-recovery-mesh', 'status-worker-watchdog', 'status-stephanos-core-daemon',
   'starfield-vr-performance-diagnosis',
 ]);
 
