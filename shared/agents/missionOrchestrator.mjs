@@ -98,6 +98,20 @@ function scopeAllowsPath(scope, value) {
 
 // A repaired failed-task plan may reduce mutation authority, never enlarge it.
 // Evaluate containment with the same path semantics used at result ingestion.
+export function projectMissionSourceScopeShapeV1(next) {
+  const invalid = () => Object.freeze({ valid: false, allowedFiles: Object.freeze([]) });
+  if (!Array.isArray(next) || next.length < 1 || next.length > 64) return invalid();
+  for (const value of next) {
+    if (typeof value !== 'string' || value !== normalizePath(value) || value === '**' || isUnsafePath(value)
+        || !/^[A-Za-z0-9._/-]+(?:\/\*\*)?$/.test(value)
+        || value.replace(/\/\*\*$/, '').includes('*')
+        || value.split('/').some(part => !part || part === '.' || /[. ]$/.test(part)
+          || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:[.]|$)/i.test(part))) return invalid();
+  }
+  if (new Set(next.map(value => value.toLowerCase())).size !== next.length) return invalid();
+  return Object.freeze({ valid: true, allowedFiles: Object.freeze([...next]) });
+}
+
 export function projectNarrowedMissionSourceScopeV1(previous, next) {
   const invalid = () => Object.freeze({ valid: false, allowedFiles: Object.freeze([]) });
   const validScope = value => typeof value === 'string' && value === normalizePath(value)
@@ -365,6 +379,8 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
     repositoryRoot: text(input.repositoryRoot),
     baseBranch: text(input.baseBranch, 'main'),
     allowedFiles: allowedFiles.filter((path) => !isUnsafePath(path)),
+    ...(input.seedGrowthWork !== undefined ? { seedGrowthWork: clone(input.seedGrowthWork) } : {}),
+    ...(input.seedSourceWorkDescriptor !== undefined ? { seedSourceWorkDescriptor: clone(input.seedSourceWorkDescriptor) } : {}),
     requiredEvidence: unique(list(input.requiredEvidence).map(text)),
     requiredTests: unique(list(input.requiredTests).map(text)),
     browserProofRequired: input.browserProofRequired === true,
@@ -428,6 +444,13 @@ function normalizeChecks(checks) {
 }
 
 export function applyMissionOrchestratorEvent(currentState, event = {}, options = {}) {
+  // A pure reducer is not an authenticated source-correction producer. Until
+  // the private canonical store route exists, refuse without changing revision,
+  // blockers, custody, budget or phase, even when a caller supplies a witness.
+  if (['SOURCE_CONTRACT_CORRECTED', 'SOURCE_PLAN_SUPERSEDED', 'ORDINARY_SOURCE_PLAN_REAFFIRMED']
+    .includes(text(event.eventType).toUpperCase())) {
+    throw new Error('SOURCE_CONTRACT_CORRECTION_AUTHENTICATOR_REQUIRED');
+  }
   const timestamp = iso(event.timestamp, nowIso(options));
   const state = clone(currentState);
   ensureContinuity(state);

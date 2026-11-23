@@ -11,6 +11,49 @@ import { reconcileFlywheelLearningGoalsV1 } from './flywheelLearningGoalBridgeSe
 import { admitFlywheelCanonicalGoalV1, createFixedFlywheelGitHubIssueAdapterV1 } from './flywheelCanonicalGoalAdmissionService.js';
 import { buildGithubGoalMirrorEstate } from './programmeAuthorityService.js';
 import { planElasticGoalMissionAdmissions } from './elasticGoalMissionAdmissionService.js';
+import { SEED_SOURCE_WORK_DESCRIPTOR_SCHEMA_V1, SOURCE_SCOPE_RECONCILIATION_REQUIRED,
+  validateSeedSourceWorkDescriptorShapeV1, projectSeedSourceWorkRequirementV1,
+} from '../../shared/runtime/seedGrowthWorkV1.mjs';
+
+test('serialized seed descriptor separates declaration, source policy, execution parent and authority', () => {
+  const descriptor = {
+    schemaVersion: SEED_SOURCE_WORK_DESCRIPTOR_SCHEMA_V1, executionRelationship: 'SELF',
+    seedId: 'stephanos-flywheel-conversational-intelligence', ownerIssueRef: '#2798',
+    declarationSource: 'shared/runtime/conversationalIntelligenceSeedV1.mjs',
+    pressureKey: 'seed-2798:rung:hear_intent', targetRung: 'HEAR_INTENT',
+    childIssueNumber: 2956, missionId: 'critical-2956-elastic-goal',
+    branch: 'openclaw/elastic-goal-2956', allowedFiles: ['shared/runtime/useful-behavior.mjs'],
+    requiredTests: ['node --test shared/runtime/useful-behavior.test.mjs'],
+    authorityPlanFingerprint: 'a'.repeat(64), runtimePolicyHead: 'b'.repeat(40),
+    executionParentHead: 'c'.repeat(40), executionParentTree: 'd'.repeat(40),
+    correctionEvidenceRef: 'proof/correction-shape-only', acceptanceContractRef: 'conversation-intent-v1',
+  };
+  assert.equal(validateSeedSourceWorkDescriptorShapeV1(descriptor), true);
+  const work = { schemaVersion: 'stephanos.seed-growth-work.v1', seedId: descriptor.seedId,
+    ownerIssueRef: descriptor.ownerIssueRef, contractSource: descriptor.declarationSource,
+    pressureKey: descriptor.pressureKey, targetRung: descriptor.targetRung,
+    nextBestAction: 'Prove actual heard intent.', evidenceRefs: ['status/real-intent.json'] };
+  const projected = projectSeedSourceWorkRequirementV1({ seedGrowthWork: work,
+    seedSourceWorkDescriptor: descriptor });
+  assert.equal(projected.classification, 'SEED');
+  assert.equal(projected.blocker, SOURCE_SCOPE_RECONCILIATION_REQUIRED);
+  assert.equal(Object.hasOwn(projected, 'authorized'), false);
+  assert.equal(Object.hasOwn(projected, 'dispatchAllowed'), false);
+  for (const patch of [{ trusted: true }, { executionRelationship: 'EXTERNAL_DOMAIN_OWNER' },
+    { childIssueNumber: 2955 }, { missionId: 'critical-2434-elastic-goal' },
+    { branch: 'openclaw/elastic-goal-2434' }, { declarationSource: descriptor.allowedFiles[0] },
+    { runtimePolicyHead: '' }, { authorityPlanFingerprint: 'proof/copied-json' },
+    { allowedFiles: ['shared/a.mjs', 'SHARED/A.mjs'] },
+    { allowedFiles: ['shared/../runtime/a.mjs'] }, { requiredTests: [] }]) {
+    assert.equal(validateSeedSourceWorkDescriptorShapeV1({ ...descriptor, ...patch }), false,
+      JSON.stringify(patch));
+  }
+  for (const goal of [{}, { seedGrowthWork: null }, { seedGrowthWork: {} },
+    { classification: 'VERIFIED_NON_SEED', trusted: true }]) {
+    assert.equal(projectSeedSourceWorkRequirementV1(goal).classification, 'UNKNOWN');
+    assert.equal(projectSeedSourceWorkRequirementV1(goal).blocker, SOURCE_SCOPE_RECONCILIATION_REQUIRED);
+  }
+});
 
 const NOW = '2026-10-07T20:00:00.000Z';
 const NOW_MS = Date.parse(NOW);
@@ -149,7 +192,7 @@ function admissionIssue(number) {
   };
 }
 
-test('pressure reaches the existing admitted mission and completion returns proof without fabricating rung growth', async () => {
+test('seed proposal stays held before mission creation and legacy result projection does not grant a rung', async () => {
   const paths = await fixture();
   const payload = feed();
   const work = pressures(payload).find((item) => item.ownerIssueRef === '#2798');
@@ -168,9 +211,10 @@ test('pressure reaches the existing admitted mission and completion returns proo
     parallelCandidateDetails: [{ issue: ready.issueNumber, resourceIds: PATH_SCOPE }],
     portfolio: [{ issue: ready.issueNumber, title: ready.title, lifecycle: 'READY', route: ready.route, resourceIds: PATH_SCOPE }] };
   const mission = planElasticGoalMissionAdmissions(scheduler, [], { goalRecords: [ready] });
-  assert.equal(mission.admitted.length, 1);
-  assert.match(mission.admitted[0].missionInput.operatorIntent, /pressure seed-2798:rung:hear_intent/);
-  assert.match(mission.admitted[0].missionInput.operatorIntent, /hears and binds the operator intent/);
+  assert.equal(mission.admitted.length, 0, 'declaration-only seed intake must preserve premission correction eligibility');
+  assert.ok(mission.held.some(row => row.issueNumber === ready.issueNumber
+    && row.reason === SOURCE_SCOPE_RECONCILIATION_REQUIRED));
+  assert.match(ready.seedGrowthWork.nextBestAction, /hears and binds the operator intent/);
   assert.equal(mission.mergeAuthority, false);
   payload.records.goalRecords = [{ ...ready, status: 'COMPLETE', state: 'COMPLETE',
     resultProofRefs: ['proof/real-result'], reusableCapabilityId: 'retained-context', sharedLessonId: 'context-method' }];

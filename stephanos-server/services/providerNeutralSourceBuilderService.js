@@ -12,7 +12,9 @@ import {
   claimNextMissionWorkerItem,
   finalizeMissionWorkerQueueClaim,
 } from './missionOrchestratorWorkerConsumer.js';
-import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
+import { collectAgentWorkerResult, assertCanonicalMissionSourceEffectV1,
+  isMissionWorkerPassiveDataV1 } from './missionOrchestratorWorkerService.js';
+import { classifyElasticMissionIdentityV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import { captureSourceArtifactIdentityFromWorktreeV1, finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { analyzeImportStructureInSource } from '../../scripts/guard-import-structure.mjs';
 import { projectGoalTestContextPathsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
@@ -464,7 +466,7 @@ export function inspectStructuredNewFileContractV1() {
     loadedSourceSha256: LOADED_SOURCE_SHA256, observations: Object.freeze(observations) });
 }
 
-async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, options = {}) {
+async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, options = {}, beforeEffect) {
   const lstatImpl = options.sourceContextLstatImpl || lstat;
   const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
   const readFileImpl = options.sourceContextReadFileImpl || readFile;
@@ -538,9 +540,13 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
     );
   }
 
+  // Record only attempted writes, including writes that may have failed after changing bytes.
+  const attemptedWrites = [];
   try {
     for (const path of targetPaths) {
       const saved = rollbackSnapshot.find((entry) => entry.path === path);
+      if (beforeEffect) await beforeEffect();
+      attemptedWrites.push(saved);
       await writeFileImpl(
         resolve(worktreePath, path),
         nextByPath.get(path),
@@ -548,7 +554,9 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
       );
     }
   } catch (error) {
-    for (const saved of rollbackSnapshot) {
+    for (const saved of [...attemptedWrites].reverse()) {
+      // Losing original authority forbids cleanup writes too. Preserve source for recovery.
+      if (beforeEffect) await beforeEffect();
       if (saved.existed === true) {
         await writeFile(resolve(worktreePath, saved.path), saved.bytes);
       } else {
@@ -693,9 +701,12 @@ function modelPatchFallbackAllowed(_action = {}, sourceSnapshots = []) {
   return sourceSnapshots.length === 0;
 }
 
-async function callLocalBuilder(action, options = {}) {
+async function callLocalBuilder(action, options = {}, beforeEffect) {
   const sourceSnapshots = Array.isArray(options.sourceSnapshots) ? options.sourceSnapshots : [];
-  if (typeof options.generatePatch === 'function') return options.generatePatch(action, { sourceSnapshots });
+  if (typeof options.generatePatch === 'function') {
+    if (beforeEffect) await beforeEffect();
+    return options.generatePatch(action, { sourceSnapshots });
+  }
   const env = options.env || process.env;
   const endpoint = text(options.ollamaEndpoint || env.STEPHANOS_OLLAMA_ENDPOINT, 'http://127.0.0.1:11434/api/chat');
   const model = text(options.model || env.STEPHANOS_LOCAL_BUILDER_MODEL, 'qwen3-coder:30b');
@@ -706,6 +717,7 @@ async function callLocalBuilder(action, options = {}) {
     : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';
 
   for (let attempt = 1; attempt <= MAX_LOCAL_MODEL_ATTEMPTS; attempt += 1) {
+    if (beforeEffect) await beforeEffect();
     const retryReason = text(finalError).replace(/[\r\n]/g, ' ').slice(0, 240);
     const retryInstruction = attempt > 1
       ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Validator reason: ' + retryReason + '. Return only the requested JSON object with a corrected mutation. Do not explain, apologize, or wrap it in Markdown.\n'
@@ -822,7 +834,7 @@ function prepareEphemeralUiDependencyLink(worktreePath, options = {}) {
   return { created: true, path: worktreeModules };
 }
 
-function runEphemeralStephanosVerify(worktreePath, run, options = {}) {
+async function runEphemeralStephanosVerify(worktreePath, run, options = {}, beforeEffect) {
   const before = generatedDistStatus(worktreePath, run);
   if (before.error || before.status !== 0) {
     return {
@@ -845,6 +857,7 @@ function runEphemeralStephanosVerify(worktreePath, run, options = {}) {
   let result = { status: 1, stdout: '', stderr: 'PROVIDER_NEUTRAL_STEPHANOS_VERIFY_NOT_RUN', error: null };
   try {
     dependencyLink = prepareEphemeralUiDependencyLink(worktreePath, options);
+    if (beforeEffect) await beforeEffect();
     const build = run('node.exe', ['scripts/build-stephanos-ui.mjs'], {
       cwd: worktreePath,
       env: options.env || process.env,
@@ -857,6 +870,7 @@ function runEphemeralStephanosVerify(worktreePath, run, options = {}) {
         error: build.error || null,
       };
     } else {
+      if (beforeEffect) await beforeEffect();
       const verify = run('node.exe', ['scripts/verify-stephanos-dist.mjs'], {
         cwd: worktreePath,
         env: options.env || process.env,
@@ -901,15 +915,16 @@ function runEphemeralStephanosVerify(worktreePath, run, options = {}) {
   return result;
 }
 
-function runRequiredTests(action, worktreePath, run, options = {}) {
+async function runRequiredTests(action, worktreePath, run, options = {}, beforeEffect) {
   const tests = Array.isArray(action.requiredTests) ? action.requiredTests.map(text).filter(Boolean) : [];
   if (!tests.length) throw new Error('PROVIDER_NEUTRAL_REQUIRED_TESTS_REQUIRED');
   const receipts = [];
   for (const command of tests) {
     const parsed = parseBoundedTestCommand(command);
     if (!parsed) throw new Error(`PROVIDER_NEUTRAL_TEST_COMMAND_UNSAFE:${command}`);
+    if (beforeEffect) await beforeEffect();
     const result = command === 'npm run stephanos:verify'
-      ? runEphemeralStephanosVerify(worktreePath, run, options)
+      ? await runEphemeralStephanosVerify(worktreePath, run, options, beforeEffect)
       : run(parsed.executable, parsed.args, { cwd: worktreePath, env: options.env || process.env });
     if (result.error || result.status !== 0) {
       const error = new Error(`PROVIDER_NEUTRAL_TEST_FAILED:${command}`);
@@ -955,7 +970,9 @@ function requireLocalOwnedSourceProposalClaim(claim) {
   const item = claim?.item;
   const action = item?.payload;
   const grant = item?.actionGrant;
-  const same = key => text(grant?.[key]).toLowerCase() === text(action?.[key]).toLowerCase();
+  const same = key => key === 'repository'
+    ? text(grant?.[key]).toLowerCase() === text(action?.[key]).toLowerCase()
+    : grant?.[key] === action?.[key];
   if (claim?.adapter !== 'foundry-forge' || item?.adapter !== 'foundry-forge'
       || item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
       || action?.adapter !== 'foundry-forge' || action?.actionKind !== 'agent-handoff'
@@ -967,8 +984,7 @@ function requireLocalOwnedSourceProposalClaim(claim) {
       || grant.leaseSeizureAllowed !== false || !text(claim.processingPath)
       || !text(action.missionId) || !text(action.actionId)
       || !same('missionId') || !same('actionId') || !same('repository')
-      || text(item.missionId).toLowerCase() !== text(action.missionId).toLowerCase()
-      || text(item.actionId).toLowerCase() !== text(action.actionId).toLowerCase()
+      || item.missionId !== action.missionId || item.actionId !== action.actionId
       || text(grant.branch) !== text(action.branch)
       || text(action.repository).toLowerCase() !== 'cheekyfellastef/stephan-os'
       || !/^[a-f0-9]{40}$/.test(text(grant.sourceRevision).toLowerCase())) {
@@ -983,7 +999,18 @@ export async function produceProviderNeutralSourceBuildProposalV1(claim, options
   if (typeof options.runCommand !== 'function') {
     throw new Error('PROVIDER_NEUTRAL_SOURCE_PROPOSAL_BOUNDED_RUNNER_REQUIRED');
   }
+  if (!isMissionWorkerPassiveDataV1(claim)) throw new Error('PROVIDER_NEUTRAL_LOCAL_SOURCE_PROPOSAL_CLAIM_REQUIRED');
+  const identities = [[claim.item?.missionId, claim.item?.payload?.branch],
+    [claim.item?.payload?.missionId, claim.item?.payload?.branch],
+    [claim.item?.actionGrant?.missionId, claim.item?.actionGrant?.branch]];
+  if (identities.some(([id, branch]) => classifyElasticMissionIdentityV1(id, branch).kind === 'NONCANONICAL_ELASTIC'))
+    throw new Error('NONCANONICAL_ELASTIC_MISSION_IDENTITY');
   requireLocalOwnedSourceProposalClaim(claim);
+  if (identities.some(([id, branch]) => classifyElasticMissionIdentityV1(id, branch).kind === 'CANONICAL_ELASTIC')) {
+    // The existing child currently authenticates only copyable stdin/frame
+    // hashes. Do not replace native child attestation with JSON or API secrets.
+    throw new Error('SOURCE_TASK_CHILD_SEMANTIC_CUSTODY_REQUIRED');
+  }
   return runClaimedProviderNeutralSourceBuild(claim, options, SOURCE_BUILD_PROPOSAL_MODE);
 }
 
@@ -1016,7 +1043,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
 
 async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
   const proposalOnly = mode === SOURCE_BUILD_PROPOSAL_MODE;
-  const action = claim.item?.payload || {};
+  let action = claim.item?.payload || {};
   const worktreePath = text(action.worktreePath);
   // Future native Job Object execution needs its own independent Windows
   // specialist review. This quarantine-first PR keeps the existing builder
@@ -1035,13 +1062,23 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
   let executionReceipt = null;
   let mutationSnapshot = [];
   let mutationEvidence = '';
-  const guardMutation = operation => withOriginalSourceAttemptMutationGuard(action.missionId, operation, {
+  const revalidateSource = async () => {
+    if (!proposalOnly) {
+      const observed = await assertCanonicalMissionSourceEffectV1(action, claim, options);
+      if (observed) { action = observed.action; claim = observed.claim; }
+    }
+  };
+  const guardMutation = operation => withOriginalSourceAttemptMutationGuard(action.missionId, async () => {
+    await revalidateSource();
+    return operation();
+  }, {
     env: options.env, missionStoreOptions: { root: options.root }, readMissionRecord: options.readMissionRecord,
   });
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
     }
+    await revalidateSource();
     if (!worktreePath || !existsSync(worktreePath)) throw new Error('PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
     if (!Array.isArray(action.allowedFiles) || action.allowedFiles.length === 0) throw new Error('PROVIDER_NEUTRAL_ALLOWED_FILES_REQUIRED');
 
@@ -1082,6 +1119,7 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
     const generated = await callLocalBuilder(
       { ...sourceBuildAction, goalContext },
       { ...options, sourceSnapshots, testSnapshots },
+      revalidateSource,
     );
     providerCompleted = true;
     const { finalized, receipt, sourceTestReceipts, proposalExecution, proposalIdentity } = await guardMutation(async () => {
@@ -1096,7 +1134,7 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
         );
         const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, structuredEditSnapshots);
         mutationAttempted = true;
-        mutationSnapshot = await applyStructuredEdits(worktreePath, edits, structuredEditSnapshots, options);
+        mutationSnapshot = await applyStructuredEdits(worktreePath, edits, structuredEditSnapshots, options, revalidateSource);
         mutationEvidence = JSON.stringify(edits);
         structuredEditsApplied = true;
         mutationApplied = true;
@@ -1106,6 +1144,7 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
         patchPath = text(claim.processingPath)
           ? claim.processingPath + '.provider-neutral.patch'
           : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
+        await revalidateSource();
         await writeFile(patchPath, patch, { encoding: 'utf8', flag: 'wx' });
 
         let applyArgs = ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath];
@@ -1124,6 +1163,7 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
           applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
         }
         mutationAttempted = true;
+        await revalidateSource();
         const apply = run('git.exe', applyArgs, { cwd: worktreePath });
         if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
         mutationEvidence = patch;
@@ -1147,7 +1187,7 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
         }
       }
 
-      const requiredTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      const requiredTestReceipts = await runRequiredTests(action, worktreePath, run, options, revalidateSource);
       // Newly owned regression files are additive evidence; never rewrite the
       // immutable owner-required command identity to make them an oracle.
       const ownedRegressionCommands = mutationSnapshot
@@ -1155,7 +1195,7 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
           && /\.(?:test|spec)\.(?:mjs|js)$/.test(saved.path))
         .map(saved => 'node --test ' + saved.path);
       const ownedRegressionReceipts = ownedRegressionCommands.length
-        ? runRequiredTests({ ...action, requiredTests: ownedRegressionCommands }, worktreePath, run, options) : [];
+        ? await runRequiredTests({ ...action, requiredTests: ownedRegressionCommands }, worktreePath, run, options, revalidateSource) : [];
       const sourceTestReceipts = Object.freeze([...requiredTestReceipts, ...ownedRegressionReceipts]);
       // options.now is an admission snapshot, not the completion clock.
       completedAt = new Date().toISOString();
@@ -1191,6 +1231,7 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
         });
         return { proposalExecution: execution, proposalIdentity: identity, receipt, sourceTestReceipts };
       }
+      await revalidateSource();
       const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1(
         action,
         execution,

@@ -12,6 +12,23 @@ import {
 } from './originalSourceAttemptFenceService.js';
 
 const digest = (v) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+
+test('identifier-only original fence rejects the whole reserved elastic family before a record read', async () => {
+  let reads = 0;
+  const options = { readMissionRecord: async () => {
+    reads++; return { state: { cancelled: false, currentPhase: 'AGENT_IMPLEMENTATION' } };
+  } };
+  for (const alias of ['critical-1557-elastic-goalcopy', 'critical-1557-elastic-goal:copy',
+    'critical_1557_elastic_goal', 'critical:1557:elastic:goal', 'critical1557elasticgoal',
+    'critical-abc-elastic-goal', 'critical-0-elastic-goal']) {
+    await assert.rejects(assertOriginalSourceAttemptNotFenced(alias, options), /NONCANONICAL_ELASTIC_MISSION_IDENTITY/);
+  }
+  assert.equal(reads, 0);
+  await assertOriginalSourceAttemptNotFenced('critical-1557-elastic-goal', options);
+  assert.equal(reads, 1);
+  await assertOriginalSourceAttemptNotFenced('critical-2009-native-executor', options);
+  assert.equal(reads, 1);
+});
 function fixture() {
   const missionId = 'critical-2962-elastic-goal';
   const action = `${missionId}-r1-27828c3fdb2c`;

@@ -1,10 +1,16 @@
 import './githubGoalEstateBoundedConcurrency.test.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   deriveGoalBodyResourceIds,
   fetchGithubGoalIssues,
+  readSeedSourceContractCorrectionEvidenceV1,
+  readCurrentOwnerAdmittedGoalPlanV1,
 } from './githubPrEvidenceService.js';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -17,6 +23,43 @@ function nonOwnerGoal(overrides = {}) { return canonicalGoal({ user: { login: 'c
 function admissionBody(overrides = {}) { const admission = { schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 2314, repository: REPOSITORY, state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [], sourceImplementationAllowed: true, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false, ...overrides }; return `Durable admission.\n\n\`\`\`stephanos-goal-admission-v1\n${JSON.stringify(admission)}\n\`\`\``; }
 function ownerAdmissionComment(overrides = {}) { return { user: { login: OWNER }, author_association: 'OWNER', body: admissionBody(), ...overrides }; }
 function ownerGoalLabelEvent() { return { event: 'labeled', label: { name: 'goal' }, actor: { login: OWNER } }; }
+
+test('actual current ordinary reader separates selected authority from advisory observation frames', async () => {
+  const now = Date.parse('2026-11-19T12:00:00Z');
+  const issueUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/2314';
+  const selected = ownerAdmissionComment({ id: 501, issue_url: issueUrl,
+    created_at: '2026-11-19T11:58:00Z', updated_at: '2026-11-19T11:58:00Z',
+    body: admissionBody({ resourceIds: ['repo:cheekyfellastef/stephan-os:path:scripts/ordinary.mjs'],
+      requiredTests: ['node --test scripts/ordinary.test.mjs'] }) });
+  const observe = async ({ comments = [selected], issueUpdate = '2026-11-19T11:58:00Z', events = [] } = {}) => {
+    const requests = [];
+    const fetchImpl = async url => {
+      requests.push(String(url));
+      if (url === issueUrl) return new Response(JSON.stringify(canonicalGoal({ url: issueUrl,
+        body: 'Implement the existing bounded ordinary function.', updated_at: issueUpdate })), { status: 200 });
+      if (String(url).startsWith(issueUrl + '/comments?')) return new Response(JSON.stringify(comments), { status: 200 });
+      if (String(url).startsWith(issueUrl + '/events?')) return new Response(JSON.stringify(events), { status: 200 });
+      throw new Error('UNEXPECTED_ENDPOINT');
+    };
+    return { observation: await readCurrentOwnerAdmittedGoalPlanV1(2314, {
+      env: { GITHUB_TOKEN: 'test-token' }, nowMs: now, fetchImpl }), requests };
+  };
+  const first = await observe();
+  assert.equal(first.observation.status, 'observed');
+  assert.equal(first.observation.selectedAuthority.scope.commentId, 501);
+  assert.equal(first.observation.sourceMutationAllowed, false);
+  const second = await observe({ comments: [selected, ownerAdmissionComment({ id: 502,
+    issue_url: issueUrl, body: 'Advisory progress update.', created_at: '2026-11-19T11:59:00Z',
+    updated_at: '2026-11-19T11:59:00Z' })], issueUpdate: '2026-11-19T11:59:00Z',
+    events: [{ id: 801, event: 'labeled', label: { name: 'status:observing' }, actor: { login: OWNER } }] });
+  assert.equal(second.observation.status, 'observed');
+  assert.equal(second.observation.authorityFingerprint, first.observation.authorityFingerprint);
+  assert.notEqual(second.observation.frameFingerprint, first.observation.frameFingerprint);
+  const malformed = await observe({ comments: [selected, ownerAdmissionComment({ id: 503,
+    issue_url: issueUrl, body: '```stephanos-goal-admission-v1\n{bad}\n```' })] });
+  assert.equal(malformed.observation.status, 'held');
+  assert.equal(malformed.observation.reasonCode, 'CURRENT_SOURCE_PLAN_OWNER_EVIDENCE_INVALID');
+});
 function priorMirror(overrides = {}) {
   return {
     schemaVersion: 'shared-agent-workspace-record.v1',
@@ -331,3 +374,146 @@ test('entire goal-estate observation is bounded by one total deadline across pag
 });
 
 test('unavailable authentication resolution participates in failure backoff', async () => { let clockMs = 3_000_000; const options = { owner: OWNER, repo: 'stephan-os-auth-backoff-test', auth: { configured: false, token: '', authority: 'none' }, cacheEnabled: true, failureBackoffMs: 30_000, nowMs: () => clockMs }; const first = await fetchGithubGoalIssues(options); assert.equal(first.status, 'error'); clockMs += 2_000; const backedOff = await fetchGithubGoalIssues(options); assert.equal(backedOff, first); });
+
+const correctionNow = Date.parse('2026-11-19T10:00:00Z');
+function correctionFixture() {
+  const issueUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/2955';
+  const intent = { id: 100, issue_url: issueUrl, user: { id: 267490109, login: OWNER, type: 'User' },
+    author_association: 'OWNER', performed_via_github_app: null,
+    created_at: '2026-11-19T09:00:00Z', updated_at: '2026-11-19T09:00:00Z',
+    body: 'Existing exact authenticated original outcome; this fixture supplies no live authority.' };
+  const binding = { childIssueNumber: 2955, missionId: 'critical-2955-elastic-goal',
+    seedId: 'starfield-vr-outcome-ownership', pressureKey: 'seed-2655:rung:observing', targetRung: 'OBSERVING',
+    originalIntentCommentId: intent.id, originalIntentIssueNumber: 2955,
+    originalIntentBodySha256: createHash('sha256').update(intent.body).digest('hex'), contractPreimageSha256: 'a'.repeat(64) };
+  const plan = { schemaVersion: 'stephanos.seed-source-contract-correction.v1', decision: 'CORRECT', repository: REPOSITORY,
+    binding, expiresAtUtc: '2026-11-19T10:04:00Z', runtimePolicyHead: 'b'.repeat(40), runtimePolicyTree: 'c'.repeat(40),
+    sourceContract: { allowedFiles: ['shared/runtime/usefulFeatureV1.mjs'],
+      requiredTests: ['node --test scripts/seed-useful.test.mjs'], requiredEvidence: ['Real original failure and useful replay'],
+      usefulOutcome: 'Actual useful behavior', domainAcceptanceContract: 'existing-starfield-domain-contract', executionRelationship: 'SELF' } };
+  const body = value => '```stephanos-seed-source-contract-correction-v1\n' + JSON.stringify(value) + '\n```';
+  const selected = { ...intent, id: 101, created_at: '2026-11-19T09:59:00Z',
+    updated_at: '2026-11-19T09:59:00Z', body: body(plan) };
+  return { issueUrl, intent, binding, plan, body, selected };
+}
+async function readCorrection(fixture, { comments = [fixture.selected], pages, fixedComment,
+  fixedIntent = fixture.intent, fetchOverride } = {}) {
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    if (fetchOverride) return fetchOverride(url, options);
+    const payload = url.includes('/comments?')
+      ? (pages ? pages(Number(new URL(url).searchParams.get('page'))) : comments)
+      : url.endsWith('/101') ? fixedComment || fixture.selected : fixedIntent;
+    return new Response(JSON.stringify(payload), { status: 200 });
+  };
+  const observation = await readSeedSourceContractCorrectionEvidenceV1(fixture.binding,
+    { env: { GITHUB_TOKEN: 'test-only' }, fetchImpl, nowMs: () => correctionNow });
+  return { observation, requests };
+}
+
+test('correction reader uses actual complete cohort and exact immutable reads but grants no correction authority', async () => {
+  const fixture = correctionFixture();
+  const { observation, requests } = await readCorrection(fixture);
+  assert.equal(observation.status, 'observed');
+  assert.equal(observation.reasonCode, 'SEED_CORRECTION_PRIVATE_PRODUCER_REQUIRED');
+  assert.equal(observation.completeCohort, true);
+  assert.deepEqual(observation.decision, fixture.plan);
+  assert.equal(observation.decisionCommentId, 101);
+  assert.equal(observation.mutationAuthority, false);
+  assert.equal(observation.correctionAllowed, false);
+  assert.equal(observation.dispatchAllowed, false);
+  assert.deepEqual(requests.map(row => row.url), [fixture.issueUrl + '/comments?per_page=100&page=1',
+    'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/comments/101',
+    'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/comments/100']);
+  assert.ok(requests.every(row => row.options.redirect === 'error' && row.options.signal));
+});
+
+test('correction reader must observe the terminal cohort page before selecting an immutable plan', async () => {
+  const fixture = correctionFixture();
+  const ordinary = Array.from({ length: 99 }, (_, index) => ({ ...fixture.intent, id: 1000 + index,
+    user: { id: index + 1, login: 'reader', type: 'User' }, body: 'Ordinary non-authority comment' }));
+  const { observation, requests } = await readCorrection(fixture, { pages: page => page === 1 ? [fixture.selected, ...ordinary] : [] });
+  assert.equal(observation.status, 'observed');
+  assert.equal(requests.filter(row => row.url.includes('/comments?')).length, 2);
+  const incomplete = await readCorrection(fixture, { pages: page => Array.from({ length: 100 }, (_, index) => ({
+    ...ordinary[0], id: page * 1000 + index })) });
+  assert.equal(incomplete.observation.reasonCode, 'SEED_CORRECTION_COHORT_INCOMPLETE');
+  assert.equal(incomplete.requests.length, 10);
+});
+
+test('applicable revocation, malformed owner decisions and competing plans cannot fall back to an older correction', async () => {
+  const fixture = correctionFixture();
+  const revoke = { schemaVersion: fixture.plan.schemaVersion, decision: 'REVOKE', repository: REPOSITORY,
+    binding: fixture.binding, expiresAtUtc: fixture.plan.expiresAtUtc, correctionCommentId: fixture.selected.id };
+  for (const [other, reason] of [
+    [{ ...fixture.selected, id: 102, body: fixture.body(revoke) }, 'SEED_CORRECTION_REVOKED'],
+    [{ ...fixture.selected, id: 102 }, 'SEED_CORRECTION_DECISION_AMBIGUOUS'],
+    [{ ...fixture.selected, id: 102, body: '```stephanos-seed-source-contract-correction-v1\n{"decision":"REVOKE"}\n```' }, 'SEED_CORRECTION_OWNER_DECISION_INVALID'],
+    [{ ...fixture.selected, id: 102, updated_at: '2026-11-19T09:01:00Z' }, 'SEED_CORRECTION_OWNER_DECISION_INVALID'],
+    [{ ...fixture.selected, id: 102, body: fixture.body({ ...fixture.plan, binding: { ...fixture.binding, contractPreimageSha256: 'd'.repeat(64) } }) }, 'SEED_CORRECTION_OWNER_DECISION_INVALID'],
+    [{ ...fixture.selected, id: 102, body: fixture.body({ ...fixture.plan, authenticated: true }) }, 'SEED_CORRECTION_OWNER_DECISION_INVALID'],
+    [{ ...fixture.selected, id: 102, body: fixture.body({ ...fixture.plan, expiresAtUtc: '2026-11-19T09:30:00Z' }) }, 'SEED_CORRECTION_OWNER_DECISION_INVALID'],
+  ]) {
+    const { observation, requests } = await readCorrection(fixture, { comments: [fixture.selected, other] });
+    assert.equal(observation.reasonCode, reason);
+    assert.equal(requests.length, 1, 'invalid current cohort must not select an older plan');
+    assert.equal(observation.correctionAllowed, false);
+  }
+});
+
+test('immutable correction and original intent reads reject identity or content movement after cohort observation', async () => {
+  const fixture = correctionFixture();
+  for (const fixedComment of [ { ...fixture.selected, body: fixture.selected.body + '\nchanged' },
+    { ...fixture.selected, updated_at: '2026-11-19T09:01:00Z' },
+    { ...fixture.selected, user: { ...fixture.selected.user, id: 2 } },
+    { ...fixture.selected, performed_via_github_app: { slug: 'connector' } } ]) {
+    const { observation } = await readCorrection(fixture, { fixedComment });
+    assert.equal(observation.status, 'held');
+    assert.equal(observation.correctionAllowed, false);
+  }
+  const changedIntent = await readCorrection(fixture, { fixedIntent: { ...fixture.intent, body: 'Other outcome' } });
+  assert.equal(changedIntent.observation.reasonCode, 'SEED_CORRECTION_ORIGINAL_INTENT_CHANGED');
+});
+
+test('correction reader holds on incomplete, oversized or failed current cohort and never fetches a selected comment', async () => {
+  const fixture = correctionFixture();
+  for (const [payload, status, reason] of [
+    [[], 503, 'SEED_CORRECTION_COHORT_READ_FAILED'],
+    [{ incomplete: true }, 200, 'SEED_CORRECTION_COHORT_INVALID'],
+    [[{ ...fixture.intent, body: 'x'.repeat(1024 * 1024) }], 200, 'SEED_CORRECTION_COHORT_UNBOUNDED'],
+    [[fixture.selected, fixture.selected], 200, 'SEED_CORRECTION_COHORT_INVALID'],
+  ]) {
+    const result = await readCorrection(fixture, { fetchOverride: async () => new Response(JSON.stringify(payload), { status }) });
+    assert.equal(result.observation.reasonCode, reason);
+    assert.equal(result.requests.length, 1);
+  }
+});
+
+test('Node correction binding refuses proxies and accessors without invoking them or a network reader', async () => {
+  const fixture = correctionFixture();
+  let effects = 0;
+  const options = { env: { GITHUB_TOKEN: 'test-only' }, fetchImpl: async () => { effects++; throw Error('unexpected'); } };
+  const proxy = new Proxy(fixture.binding, { ownKeys() { effects++; throw Error('trap'); }, get() { effects++; throw Error('trap'); } });
+  const accessor = { ...fixture.binding };
+  Object.defineProperty(accessor, 'missionId', { enumerable: true, get() { effects++; throw Error('getter'); } });
+  for (const binding of [proxy, accessor, { ...fixture.binding, authenticated: true }]) {
+    const result = await readSeedSourceContractCorrectionEvidenceV1(binding, options);
+    assert.equal(result.reasonCode, 'SEED_CORRECTION_BINDING_INVALID');
+  }
+  assert.equal(effects, 0);
+});
+
+test('correction observation respects the existing shared GitHub quota hold before another read', async () => {
+  const fixture = correctionFixture();
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'seed-correction-rate-hold-'));
+  let requests = 0;
+  const options = { env: { GITHUB_TOKEN: 'test-only' }, workspaceRoot, nowMs: () => correctionNow,
+    fetchImpl: async () => { requests++; return new Response('{}', { status: 429 }); } };
+  const first = await readSeedSourceContractCorrectionEvidenceV1(fixture.binding, options);
+  assert.equal(first.reasonCode, 'SEED_CORRECTION_RATE_LIMIT_BACKOFF');
+  const held = await readSeedSourceContractCorrectionEvidenceV1(fixture.binding, options);
+  assert.equal(held.reasonCode, 'SEED_CORRECTION_RATE_LIMIT_BACKOFF');
+  assert.equal(requests, 1);
+  assert.equal(held.correctionAllowed, false);
+});

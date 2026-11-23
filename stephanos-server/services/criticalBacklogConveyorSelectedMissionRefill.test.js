@@ -21,6 +21,11 @@ function elasticImplementationMission(issueNumber) {
     allowedFiles: [`shared/agents/elastic-goal-${issueNumber}.mjs`],
     requiredTests: [`node --test shared/agents/elastic-goal-${issueNumber}.test.mjs`],
     requiredEvidence: ['focused elastic-goal proof'],
+    // This suite mocks publication: this is a pure scheduler/action projection,
+    // not authenticated authority. Real producer/queue/effect tests are separate.
+    currentOrdinarySourcePlan: { schemaVersion: 'stephanos.current-ordinary-source-plan.v1',
+      purpose: 'REAFFIRM_EXISTING_ORDINARY_SOURCE_PLAN', missionId: `critical-${issueNumber}-elastic-goal`,
+      branch: `openclaw/elastic-goal-${issueNumber}`, authorityPlanFingerprint: 'a'.repeat(64) },
     revision: 1,
     currentPhase: 'AGENT_IMPLEMENTATION',
     git: {

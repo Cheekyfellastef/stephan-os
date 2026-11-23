@@ -4,61 +4,61 @@ import { appendExecutionReceipt, createExecutionReceipt, readExecutionReceiptHis
 import { writeFileSync, unlinkSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, readdir, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, appendMissionWorkerExecutionReceiptTransition, processNextForgePublicationItem, processNextGitHubInspectionItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
+import { admitCurrentOrdinaryFixtureV1, prepareOrdinaryGoalFixtureV1 } from './fixtures/currentOrdinarySourcePlanFixtureV1.mjs';
+import { createMissionWorkerActionGrantV1, missionWorkerActionGrantsMatchV1 } from '../../shared/agents/missionOrchestratorWorker.mjs';
+import { createExactWorkerActionGrant } from '../../shared/agents/durableFlywheelControllerVNext.mjs';
+import { claimNextMissionWorkerItem, beginMissionWorkerExecutionReceiptChain, appendMissionWorkerExecutionReceiptTransition, processNextForgePublicationItem, processNextGitHubInspectionItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
-async function grantedForgePublicationFixture() {
+async function grantedForgePublicationFixture(t) {
   const options = await runtime();
   options.sharedWorkspaceRoot = join(options.root, '..', 'workspace');
   options.repoRoot = join(options.root, '..', 'repo');
   const missionId = 'critical-1819-elastic-goal';
-  const created = await createMissionRecord(intent(missionId), options);
-  const state = created.state;
+  await prepareOrdinaryGoalFixtureV1(missionId, options);
+  const created = await createMissionRecord({ ...intent(missionId), branch: 'openclaw/elastic-goal-1819',
+    allowedFiles: ['shared/agents/publication.mjs', 'shared/agents/publication.mjs/**'],
+    requiredTests: ['node --test shared/agents/publication.test.mjs'] }, options);
+  let state = created.state;
   state.currentPhase = 'GITHUB_COMMIT'; state.revision = 5;
   state.git.worktreeReady = true;
   state.dispatch = { ...state.dispatch, adapter: 'foundry-forge', status: 'complete' };
   state.sourcePublication = { artifactSha256: 'e'.repeat(64), outboxId: 'offline-publication-' + 'f'.repeat(24),
     exactParentHead: 'a'.repeat(40), exactResultTree: 'c'.repeat(40), canonicalBranch: state.git.branch };
   await writeFile(created.statePath, JSON.stringify(state));
-  const actionId = 'forge-publication-receipt-test';
-  const action = { actionId, missionId, adapter: 'forge-publication', actionKind: 'forge-escrow-publication',
-    operation: 'publish-forge-escrow', repository: state.repository, branch: state.git.branch,
-    ...state.sourcePublication, receiptRequirement: 'signed exact-tree Forge draft PR publication' };
-  const grant = { schemaVersion: 'stephanos.mission-worker-action-grant.v1',
-    grantId: 'grant-' + actionId, actionId, missionId, missionRevision: 5,
-    repository: state.repository, issueNumber: 1819, prNumber: null, branch: state.git.branch,
-    headSha: '', sourceRevision: 'a'.repeat(40), adapter: 'forge-publication',
-    workerId: 'github-first', capacityProofRefs: ['forge-publication-fixture-proof'] };
-  const item = { schemaVersion: 'stephanos.mission-worker-queue-item.v1', adapter: 'forge-publication',
-    actionId, missionId, payload: action, actionGrant: grant, createdAt: new Date(Date.now() - 1000).toISOString(),
-    executionBinding: { ...grant, schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
-      executionId: actionId, leaseKey: missionId + '-r5-lease' } };
-  const pending = join(options.queueRoot, 'forge-publication', 'pending');
-  await mkdir(pending, { recursive: true });
-  const path = join(pending, actionId + '.json');
-  await writeFile(path, JSON.stringify(item));
+  const actual = await admitCurrentOrdinaryFixtureV1(t, missionId, options);
+  state = actual.state;
+  state.sourcePublication.exactParentHead = actual.sourceHead;
+  await writeFile(created.statePath, JSON.stringify(state));
+  const grant = createExactWorkerActionGrant({ criticalBacklog: { activeMission: state } }, actual.sourceHead);
+  assert.equal(missionWorkerActionGrantsMatchV1(grant, grant), true);
   options.actionGrant = grant;
+  const published = await publishMissionWorkerAction(state, options);
+  assert.equal(published.published, true, JSON.stringify(published));
+  const path = published.path, item = JSON.parse(await readFile(path)), actionId = grant.actionId;
+  assert.deepEqual(grant.capacityProofRefs, []);
+  assert.equal(grant.capacityReceiptId, null);
   const history = () => readExecutionReceiptHistory(options.sharedWorkspaceRoot, { executionId: actionId }, { repoRoot: options.repoRoot });
   return { options, item, path, state, history };
 }
 
-test('actual Forge publication consumer records canonical custody before publisher and completion after consumption', async () => {
-  const f = await grantedForgePublicationFixture();
+test('actual Forge publication consumer records canonical custody before publisher and completion after consumption', async t => {
+  const f = await grantedForgePublicationFixture(t);
   let calls = 0;
   const result = await processNextForgePublicationItem({ ...f.options, executeForgePublication: async () => {
     calls++;
     const h = await f.history();
     assert.deepEqual(h.receipts.map(r => r.state), ['queued', 'accepted', 'started', 'progress']);
     assert.ok(h.receipts.every(r => r.workerType === 'github-first'));
-    assert.ok(h.receipts.every(r => r.executionId === f.item.actionId && r.sourceHead === 'a'.repeat(40)));
+    assert.ok(h.receipts.every(r => r.executionId === f.item.actionId && r.sourceHead === f.options.actionGrant.sourceRevision));
     assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.pullRequest.number, null);
     return { ok: true, finalVerdict: 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF',
       draft: true, mergeAuthority: false, forcePushAllowed: false,
@@ -72,6 +72,15 @@ test('actual Forge publication consumer records canonical custody before publish
   assert.equal(missionWorkerTickMadeProgress({ processed: result }, f.options.actionGrant), true);
   const h = await f.history();
   assert.deepEqual(h.receipts.map(r => r.state), ['queued', 'accepted', 'started', 'progress', 'completed']);
+  assert.match(h.receipts[0].proofRefs[0], /^proof\/queue-[0-9a-f]{64}\.json$/);
+  const queueProof = JSON.parse(await readFile(join(f.options.sharedWorkspaceRoot, h.receipts[0].proofRefs[0])));
+  assert.equal(queueProof.queueObservation.actionId, f.item.actionId);
+  assert.equal(queueProof.queueObservation.artifactSha256, f.item.payload.artifactSha256);
+  assert.equal(queueProof.queueObservation.outboxId, f.item.payload.outboxId);
+  assert.equal(queueProof.queueObservation.sourcePlanKind, 'CURRENT_ORDINARY_SOURCE_PLAN');
+  assert.equal(queueProof.queueObservation.capacityQualified, false);
+  assert.equal(queueProof.queueObservation.artifactContentsVerified, false);
+  assert.equal(queueProof.queueObservation.publicationVerified, false);
   const state = (await readMissionRecord(f.state.missionId, f.options)).state;
   assert.equal(state.pullRequest.number, 3002);
   assert.equal(state.pullRequest.state, 'draft');
@@ -85,15 +94,39 @@ test('actual Forge publication consumer records canonical custody before publish
   assert.equal((await f.history()).receipts.length, 5);
 });
 
-test('Forge publication foreign persisted binding refuses before publisher or receipt fabrication', async () => {
-  const f = await grantedForgePublicationFixture();
+test('Forge publication foreign persisted binding refuses before publisher or receipt fabrication', async t => {
+  const f = await grantedForgePublicationFixture(t);
   f.item.executionBinding.sourceRevision = 'f'.repeat(40);
   await writeFile(f.path, JSON.stringify(f.item));
   const result = await processNextForgePublicationItem({ ...f.options,
     executeForgePublication: async () => assert.fail('foreign grant reached publisher') });
   assert.match(result.result.error, /EXECUTION_RECEIPT_QUEUE_GRANT_BINDING_MISMATCH/);
   assert.equal((await f.history()).receipts.length, 0);
-  assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, 5);
+  assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision);
+});
+
+test('noncapacity publication queue proof refuses missing bytes, changed escrow identity and conflicting observations', async t => {
+  for (const fault of ['missing-processing', 'changed-escrow', 'conflicting-proof']) await t.test(fault, async t => {
+    const f = await grantedForgePublicationFixture(t);
+    const claim = await claimNextMissionWorkerItem('forge-publication', f.options);
+    assert.ok(claim);
+    if (fault === 'missing-processing') await unlink(claim.processingPath);
+    if (fault === 'changed-escrow') {
+      claim.item.payload.artifactSha256 = '0'.repeat(64);
+      await writeFile(claim.processingPath, JSON.stringify(claim.item));
+    }
+    if (fault === 'conflicting-proof') {
+      const digest = createHash('sha256').update(await readFile(claim.processingPath)).digest('hex');
+      const directory = join(f.options.sharedWorkspaceRoot, 'proof');
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'queue-' + digest + '.json'), JSON.stringify({ proofId: 'foreign' }));
+    }
+    await assert.rejects(beginMissionWorkerExecutionReceiptChain(claim, f.options),
+      /ENOENT|SOURCE_SCOPE_RECONCILIATION_REQUIRED|EXECUTION_RECEIPT_QUEUE_OBSERVATION_CONFLICT/);
+    assert.equal((await f.history()).receipts.length, 0);
+    assert.deepEqual(f.options.actionGrant.capacityProofRefs, []);
+    assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, f.state.revision);
+  });
 });
 
 function freshCodexCapacityRouting() {
@@ -123,7 +156,8 @@ function sourceIdentity(missionId, actionId) {
     actionId,
     repository: 'Cheekyfellastef/stephan-os',
     canonicalPr: 2163,
-    canonicalBranch: `openclaw/${missionId}`,
+    canonicalBranch: /^critical-([1-9][0-9]*)-elastic-goal$/.test(missionId)
+      ? `openclaw/elastic-goal-${/^critical-([1-9][0-9]*)-elastic-goal$/.exec(missionId)[1]}` : `openclaw/${missionId}`,
     exactParentHead: 'a'.repeat(40),
     exactParentTree: 'b'.repeat(40),
     exactResultTree: 'c'.repeat(40),
@@ -141,7 +175,8 @@ function validEscrow(missionId, actionId) {
     actionId,
     repository: 'Cheekyfellastef/stephan-os',
     canonicalPr: 2163,
-    canonicalBranch: `openclaw/${missionId}`,
+    canonicalBranch: /^critical-([1-9][0-9]*)-elastic-goal$/.test(missionId)
+      ? `openclaw/elastic-goal-${/^critical-([1-9][0-9]*)-elastic-goal$/.exec(missionId)[1]}` : `openclaw/${missionId}`,
     exactParentHead: 'a'.repeat(40),
     exactParentTree: 'b'.repeat(40),
     exactResultTree: 'c'.repeat(40),
@@ -207,8 +242,10 @@ async function readyCodexMission(missionId, options) {
 test('verification consumer binds canonical elastic goal evidence to proven source and tests', async () => {
   const options = await runtime();
   const missionId = 'critical-1818-elastic-goal';
+  options.sharedWorkspaceRoot = join(options.root, '..', 'workspace');
+  await prepareOrdinaryGoalFixtureV1(missionId, options);
   const requirement = 'Goal #1818 bounded implementation and focused verification evidence';
-  await createMissionRecord({ ...intent(missionId), requiredEvidence: [requirement] }, options);
+  await createMissionRecord({ ...intent(missionId), branch: 'openclaw/elastic-goal-1818', requiredEvidence: [requirement] }, options);
   let state = (await appendMissionEvent(missionId, {
     eventId: 'verification-worktree',
     eventType: 'WORKTREE_READY',
@@ -352,27 +389,33 @@ test('claims each queue item exactly once', async () => {
   assert.equal(await claimNextMissionWorkerItem('openclaw-signed', options), null);
 });
 
-test('signed pickup racing cancellation cannot invoke a writer after queue rename', async () => {
+test('signed pickup observes cancellation under the original mission lock before queue rename', async t => {
   const options = await runtime(); const missionId = 'critical-2962-elastic-goal';
-  const created = await createMissionRecord(intent(missionId), { ...options, env: {} });
-  const published = await publishMissionWorkerAction(created.state, { ...options, env: {} });
+  options.env = {}; options.sharedWorkspaceRoot = join(options.root, '..', 'workspace');
+  options.repoRoot = join(options.root, '..', 'repo');
+  await prepareOrdinaryGoalFixtureV1(missionId, options);
+  await createMissionRecord({ ...intent(missionId), branch: 'openclaw/elastic-goal-2962',
+    allowedFiles: ['shared/agents/signed.mjs', 'shared/agents/signed.mjs/**'],
+    requiredTests: ['node --test shared/agents/signed.test.mjs'] }, options);
+  const actual = await admitCurrentOrdinaryFixtureV1(t, missionId, options);
+  options.actionGrant = createExactWorkerActionGrant({ criticalBacklog: { activeMission: actual.state } }, actual.sourceHead);
+  assert.ok(options.actionGrant);
+  const published = await publishMissionWorkerAction(actual.state, options);
+  assert.equal(published.published, true, JSON.stringify(published));
   const record = await readMissionRecord(missionId, options);
   const lockPath = join(options.root, missionId + '.lock');
   await writeFile(lockPath, 'test holds the existing mission lock');
   const claiming = claimNextMissionWorkerItem('openclaw-signed', options);
   const processing = join(options.queueRoot, 'openclaw-signed', 'processing', published.action.actionId + '.json');
   try {
-    let renamed = false;
-    for (let attempt = 0; attempt < 200; attempt++) {
-      if (await access(processing).then(() => true, () => false)) { renamed = true; break; }
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    assert.equal(renamed, true);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(await access(processing).then(() => true, () => false), false);
     await writeFile(record.statePath, JSON.stringify({ ...record.state, cancelled: true,
       currentPhase: 'CANCELLED', revision: record.state.revision + 1 }));
   } finally { await unlink(lockPath); }
-  assert.equal(await claiming, null);
+  await assert.rejects(claiming, /ORIGINAL_SOURCE_ATTEMPT_FENCED/);
   assert.deepEqual(await readdir(join(options.queueRoot, 'openclaw-signed', 'processing')), []);
+  assert.equal(await access(published.path).then(() => true, () => false), true);
 });
 
 test('agent handoff stays pending until atomic processing claim proves pickup', async () => {

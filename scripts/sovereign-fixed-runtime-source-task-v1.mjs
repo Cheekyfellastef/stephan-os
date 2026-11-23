@@ -8,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {produceProviderNeutralSourceBuildProposalV1} from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 import {createBattleBridgeMinimalChildEnvironment, battleBridgeGitFixedConfigArgs} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import {inspectStephanosNativeCapacityGamingAdmissionV1} from '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs';
+import {classifyElasticMissionIdentityV1} from '../shared/runtime/seedGrowthWorkV1.mjs';
 const SCHEMA='stephanos.fixed-source-task-input.v1';
 const QUEUE='C:\\Users\\Stephan Callear\\Documents\\OpenClaw-Standalone\\mission-runner\\orchestrator\\worker-queue';
 const WORKSPACE='C:\\Users\\Stephan Callear\\Documents\\Stephanos-openclaw-workspace';
@@ -52,6 +53,8 @@ async function main() {
   let input;
   try {
     input=await readInput();
+    if(classifyElasticMissionIdentityV1(input?.missionId).kind === 'NONCANONICAL_ELASTIC')
+      throw new Error('NONCANONICAL_ELASTIC_MISSION_IDENTITY');
     if(input?.schemaVersion!==SCHEMA || Object.keys(input).sort().join(',')!==
       'actionId,claimSha256,frameSha256,missionId,remainingMs,requestId,schemaVersion,sourceHead' ||
       !['actionId','missionId','requestId'].every(k=>/^[a-z0-9][a-z0-9._-]{0,127}$/.test(input[k]??'')) ||

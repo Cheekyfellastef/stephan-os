@@ -9,6 +9,34 @@ import {
   projectNarrowedMissionSourceScopeV1,
 } from './missionOrchestrator.mjs';
 
+test('pure reducer cannot promote a source-contract correction witness into authority or state movement', () => {
+  const state = createMissionOrchestratorState({ missionId: 'seed-correction-refusal',
+    operatorIntent: 'Original bounded outcome', intendedOutcome: 'Useful behavior', missionKind: 'implementation',
+    repository: 'Cheekyfellastef/stephan-os', branch: 'openclaw/seed-correction-refusal',
+    allowedFiles: ['shared/runtime/declaration.mjs'], requiredTests: ['npm run stephanos:verify'], requiredEvidence: ['actual useful proof'] });
+  const original = structuredClone(state);
+  for (const eventType of ['SOURCE_CONTRACT_CORRECTED', 'ORDINARY_SOURCE_PLAN_REAFFIRMED', 'SOURCE_PLAN_SUPERSEDED']) {
+    assert.throws(() => applyMissionOrchestratorEvent(state, { eventType,
+      authenticated: true, sourceContractCorrectionProof: { verified: true },
+      allowedFiles: ['shared/runtime/useful.mjs'] }), /SOURCE_CONTRACT_CORRECTION_AUTHENTICATOR_REQUIRED/);
+  }
+  assert.deepEqual(state, original);
+});
+
+test('mission intake preserves seed genesis association without turning it into source authority', () => {
+  const seedGrowthWork = { seedId: 'original-child-association', pressureKey: 'seed-1:rung:observing' };
+  const state = createMissionOrchestratorState({ missionId: 'seed-genesis-association',
+    operatorIntent: 'Original bounded child', intendedOutcome: 'Useful behavior', missionKind: 'implementation',
+    repository: 'Cheekyfellastef/stephan-os', branch: 'openclaw/seed-genesis-association',
+    allowedFiles: ['shared/runtime/declaration.mjs'], requiredTests: ['npm run stephanos:verify'],
+    requiredEvidence: ['actual proof'], seedGrowthWork });
+  assert.deepEqual(state.seedGrowthWork, seedGrowthWork);
+  seedGrowthWork.seedId = 'changed-by-caller';
+  assert.equal(state.seedGrowthWork.seedId, 'original-child-association');
+  assert.equal(state.seedSourceWorkDescriptor, undefined);
+  assert.equal(state.currentOrdinarySourcePlan, undefined);
+});
+
 test('retry source scope is directional containment with unchanged path boundaries', () => {
   const project = projectNarrowedMissionSourceScopeV1;
   for (const [prior, next] of [

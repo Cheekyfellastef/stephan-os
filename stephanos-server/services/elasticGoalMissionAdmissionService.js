@@ -1,11 +1,16 @@
 import os from 'node:os';
 import { projectExternalMergeExecutionObligationV1 } from '../../shared/agents/externalMergeObservationV1.mjs';
-import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
+import { validateSeedGrowthWorkV1, projectMissionSeedSourcePlanShapeV1,
+  projectSeedSourceAssociationV1, projectSeedSourceWorkRequirementV1, validateSeedSourceWorkDescriptorShapeV1,
+  seedSourceEffectPhaseV1, SOURCE_SCOPE_RECONCILIATION_REQUIRED } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import { projectGoalAdmissionRequiredTestsV1, projectOwnerGoalRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { resolve } from 'node:path';
 import {
   createMissionRecord,
   listMissionRecords,
+  reaffirmCurrentOrdinarySourcePlanV1,
+  readSeedSourceGoalAdmissionEvidenceV1,
+  assertSeedSourceContractAdmissionV1,
 } from './missionOrchestratorStore.js';
 import {
   MAXIMUM_BUILD_LANES,
@@ -72,7 +77,7 @@ function defaultWorktreeRoot(options = {}) {
   return resolve(home, 'Documents', 'GitHub', 'stephan-os-worktrees');
 }
 
-function sourceScope(candidate = {}, portfolioGoal = {}) {
+export function sourceScope(candidate = {}, portfolioGoal = {}) {
   const projection = projectCanonicalResourceIds(candidate.resourceIds ?? portfolioGoal.resourceIds ?? []);
   if (!projection.valid || projection.resourceIds.length === 0) {
     return freeze({ valid: false, repository: '', allowedFiles: [], resourceIds: [], reason: 'RESOURCE_SCOPE_REQUIRED' });
@@ -334,6 +339,10 @@ function missionInput(issueNumber, goal, scope, options = {}) {
     ].join(' '),
     intendedOutcome: title,
     missionKind: 'implementation',
+    ...(validateSeedGrowthWorkV1(goal?.seedGrowthWork)
+      ? { seedGrowthWork: structuredClone(goal.seedGrowthWork) } : {}),
+    ...(validateSeedSourceWorkDescriptorShapeV1(goal?.seedSourceWorkDescriptor)
+      ? { seedSourceWorkDescriptor: structuredClone(goal.seedSourceWorkDescriptor) } : {}),
     repository: scope.repository,
     repositoryRoot: text(options.repoRoot),
     baseBranch: 'main',
@@ -393,6 +402,13 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     reason: text(item.reasonCode, 'ELASTIC_SELECTION_HELD'),
     resourceIds: list(item.conflictingResourceIds),
   }));
+  for (const state of records) {
+    const semantic = projectMissionSeedSourcePlanShapeV1(state);
+    if (semantic.applicable && seedSourceEffectPhaseV1(state) && !semantic.valid) {
+      held.push({ issueNumber: issueFromMissionId(state.missionId), missionId: state.missionId,
+        reason: SOURCE_SCOPE_RECONCILIATION_REQUIRED });
+    }
+  }
   for (const [issueNumber, conflict] of reservationHolds) {
     const prior = held.find(item => item.issueNumber === issueNumber && item.reason === conflict.reason);
     if (prior) Object.assign(prior, conflict);
@@ -400,7 +416,9 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
   }
   const runnableMissions = records.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
+    const semantic = projectMissionSeedSourcePlanShapeV1(state);
     return missionRunnable(state) && !sourceHolds.has(state.missionId)
+      && !(semantic.applicable && seedSourceEffectPhaseV1(state) && !semantic.valid)
       && !(issueNumber && goalOperatorContained(options.goalRecords, issueNumber));
   });
   for (const candidate of inventory.candidates) {
@@ -415,6 +433,8 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     }
     const existing = records.find((state) => missionMatchesIssue(state, issueNumber));
     if (existing) {
+      const semantic = projectMissionSeedSourcePlanShapeV1(existing);
+      if (semantic.applicable && seedSourceEffectPhaseV1(existing) && !semantic.valid) continue;
       const exclusionReason = missionAdmissionExclusionReason(existing);
       if (exclusionReason) {
         held.push({ issueNumber, reason: exclusionReason, missionId: existing.missionId });
@@ -450,11 +470,17 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
       held.push({ issueNumber, reason: 'GOAL_REQUIRED_TEST_PLAN_UNPROVEN' });
       continue;
     }
+    const association = projectSeedSourceAssociationV1({ ...goal, ...record, allowedFiles: scope.allowedFiles });
+    if (association.associated && !projectSeedSourceWorkRequirementV1(record).descriptorShapeValid) {
+      held.push({ issueNumber, reason: SOURCE_SCOPE_RECONCILIATION_REQUIRED });
+      continue;
+    }
     admitted.push({
       issueNumber,
       missionId: missionIdForIssue(issueNumber),
       existing: false,
-      missionInput: missionInput(issueNumber, { ...goal, requiredTests: tests.commands, seedGrowthWork: record?.seedGrowthWork }, scope, options),
+      missionInput: missionInput(issueNumber, { ...goal, requiredTests: tests.commands,
+        seedGrowthWork: record?.seedGrowthWork, seedSourceWorkDescriptor: record?.seedSourceWorkDescriptor }, scope, options),
       resourceIds: scope.resourceIds,
     });
   }
@@ -503,6 +529,27 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
       goalRecords = list(workspaceFeed?.records?.goalRecords);
     }
   }
+  // A serialized goal descriptor is preparation data. Resolve a corrected seed
+  // through the fixed private authority reader before the ordinary planner can
+  // propose its first original mission. The store repeats this under its lock.
+  const readSeedAdmission = deps.readSeedSourceGoalAdmissionEvidenceV1
+    ?? (options.testOnly === true ? null : readSeedSourceGoalAdmissionEvidenceV1);
+  if (readSeedAdmission) {
+    goalRecords = await Promise.all(goalRecords.map(async record => {
+      if (!record?.seedSourceWorkDescriptor) return record;
+      try {
+        const observed = await readSeedAdmission(record.issueNumber, { ...missionStoreOptions,
+          sharedWorkspaceRoot: workspaceRoot });
+        if (observed.status !== 'observed' || observed.classification !== 'CORRECTED_ORIGINAL_SEED')
+          throw new Error(SOURCE_SCOPE_RECONCILIATION_REQUIRED);
+        return observed.goal;
+      } catch {
+        const heldRecord = { ...record };
+        delete heldRecord.seedSourceWorkDescriptor;
+        return heldRecord;
+      }
+    }));
+  }
   const plan = planElasticGoalMissionAdmissions(input.scheduler, before, {
     ...missionStoreOptions,
     env,
@@ -522,6 +569,7 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
     try {
       const result = await createRecord(admission.missionInput, {
         ...missionStoreOptions,
+        sharedWorkspaceRoot: workspaceRoot,
         createdBy: 'durable-flywheel-controller',
       });
       if (result?.state) created.push(result.state);
@@ -533,17 +581,78 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
       else held.push({ issueNumber: admission.issueNumber, reason: `MISSION_CREATE_FAILED:${text(error?.message, 'unknown')}` });
     }
   }
-  const after = await listRecords(missionStoreOptions);
+  let after = await listRecords(missionStoreOptions);
+  // Source hold does not block authenticated admission maintenance. Intake
+  // alone creates no source grant; the private producer must prove the current
+  // unchanged ordinary owner plan before a source phase becomes runnable.
+  const reaffirm = deps.reaffirmCurrentOrdinarySourcePlanV1
+    ?? (options.testOnly === true ? null : reaffirmCurrentOrdinarySourcePlanV1);
+  const sourceAdmissionRefusals = new Set();
+  if (reaffirm) {
+    for (const state of after) {
+      const semantic = projectMissionSeedSourcePlanShapeV1(state);
+      if (!semantic.applicable || !seedSourceEffectPhaseV1(state) || semantic.valid) continue;
+      try {
+        await reaffirm(state.missionId, { ...missionStoreOptions,
+          sharedWorkspaceRoot: workspaceRoot, expectedMissionRevision: state.revision });
+      } catch (error) {
+        sourceAdmissionRefusals.add(state.missionId);
+        if (!held.some(item => item.missionId === state.missionId
+          && item.reason === SOURCE_SCOPE_RECONCILIATION_REQUIRED)) {
+          held.push({ issueNumber: issueFromMissionId(state.missionId), missionId: state.missionId,
+            reason: SOURCE_SCOPE_RECONCILIATION_REQUIRED,
+            detail: /^[A-Z0-9_]{1,128}$/.test(error?.reasonCode || error?.message || '')
+              ? error.reasonCode || error.message : 'CURRENT_SOURCE_PLAN_PROOF_UNAVAILABLE' });
+        }
+      }
+    }
+    after = await listRecords(missionStoreOptions);
+  }
+  const assertCurrentSourcePlan = deps.assertSeedSourceContractAdmissionV1
+    ?? (options.testOnly === true ? null : assertSeedSourceContractAdmissionV1);
+  if (assertCurrentSourcePlan) {
+    for (const state of after) {
+      const semantic = projectMissionSeedSourcePlanShapeV1(state);
+      if (!semantic.applicable || !seedSourceEffectPhaseV1(state)) continue;
+      try {
+        await assertCurrentSourcePlan(state.missionId, { ...missionStoreOptions, sharedWorkspaceRoot: workspaceRoot,
+          expectedMissionRevision: state.revision,
+          ...(semantic.valid ? { expectedSourcePlanFingerprint: semantic.authorityPlanFingerprint,
+            expectedSourcePlanKind: semantic.sourcePlanKind } : {}) });
+      } catch (error) {
+        sourceAdmissionRefusals.add(state.missionId);
+        if (!held.some(row => row.missionId === state.missionId && row.reason === SOURCE_SCOPE_RECONCILIATION_REQUIRED))
+          held.push({ issueNumber: issueFromMissionId(state.missionId), missionId: state.missionId,
+            reason: SOURCE_SCOPE_RECONCILIATION_REQUIRED });
+      }
+    }
+  }
   const candidateIssues = new Set(plan.admitted.map(({ issueNumber }) => issueNumber));
   const elasticMissions = after.filter((state) => issueFromMissionId(state?.missionId) !== null);
   const sourceHolds = new Map(projectElasticRetainedSourceHoldsV1(elasticMissions,
     { goalRecords, scheduler: input.scheduler }).map(hold => [hold.missionId, hold]));
+  for (let index = held.length - 1; index >= 0; index--) {
+    if (held[index].reason === SOURCE_SCOPE_RECONCILIATION_REQUIRED
+      && !sourceAdmissionRefusals.has(held[index].missionId)
+      && after.some(state => state.missionId === held[index].missionId
+        && projectMissionSeedSourcePlanShapeV1(state).valid)) held.splice(index, 1);
+  }
+  for (const state of elasticMissions) {
+    if (seedSourceEffectPhaseV1(state) && !projectMissionSeedSourcePlanShapeV1(state).valid
+      && !held.some(item => item.missionId === state.missionId && item.reason === SOURCE_SCOPE_RECONCILIATION_REQUIRED)) {
+      held.push({ issueNumber: issueFromMissionId(state.missionId), missionId: state.missionId,
+        reason: SOURCE_SCOPE_RECONCILIATION_REQUIRED });
+    }
+  }
   for (const hold of sourceHolds.values()) {
     if (!held.some(item => item.issueNumber === hold.issueNumber && item.reason === hold.reason)) held.push(hold);
   }
   const runnableMissions = elasticMissions.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
+    const semantic = projectMissionSeedSourcePlanShapeV1(state);
     return missionRunnable(state) && !sourceHolds.has(state.missionId)
+      && !(seedSourceEffectPhaseV1(state) && sourceAdmissionRefusals.has(state.missionId))
+      && !(semantic.applicable && seedSourceEffectPhaseV1(state) && !semantic.valid)
       && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
   });
   const activeMissions = elasticMissions.filter((state) => {
@@ -572,7 +681,9 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const selectedMission = eligibleRunnable.find(grantablePhase)
     ?? eligibleRunnable[0]
     ?? activeMissions.find((state) => !sourceConstructionAlreadyReplaced(state)
-      && !sourceHolds.has(state.missionId))
+      && !sourceHolds.has(state.missionId)
+      && !(seedSourceEffectPhaseV1(state) && sourceAdmissionRefusals.has(state.missionId))
+      && !(seedSourceEffectPhaseV1(state) && !projectMissionSeedSourcePlanShapeV1(state).valid))
     ?? null;
   return freeze({
     schemaVersion: ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA,

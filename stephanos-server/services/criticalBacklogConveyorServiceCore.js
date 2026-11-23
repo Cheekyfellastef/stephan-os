@@ -283,6 +283,8 @@ export function exactElasticExternalGrant(mission, candidate, sourceRevision, no
     prNumber: null,
     branch,
     headSha: null,
+    sourcePlanFingerprint: action.sourcePlanFingerprint || null,
+    sourcePlanKind: action.sourcePlanKind || null,
     boundedActionCount: 1,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
