@@ -103,10 +103,38 @@ function Get-SovereignMaintenanceNativeOwnerV2 {
     Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1' -ErrorAction Stop
     try { $connections = @(Get-CimInstance -Namespace 'root/StandardCimv2' -ClassName MSFT_NetTCPConnection -Filter 'LocalPort = 18791 AND State = 2') }
     catch { throw 'OWNER_CIM_LISTENER_QUERY_FAILED' }
-    $owners = @($connections | ForEach-Object { [long]$_.OwningProcess } | Select-Object -Unique)
-    if ($owners.Count -ne 1 -or $owners[0] -lt 1 -or $connections.Count -lt 1) { throw 'OWNER_LISTENER_UNPROVEN' }
+    # The maintenance identity is the unique loopback owner. Tailscale Serve may
+    # hold this port on its own tailnet interfaces without owning 127.0.0.1.
+    # Never treat an unverified foreign or wildcard listener as a Commander.
+    $loopback = @($connections | Where-Object { $_.LocalAddress -in @('127.0.0.1','::1') })
+    $owners = @($loopback | ForEach-Object { [long]$_.OwningProcess } | Select-Object -Unique)
+    if ($owners.Count -ne 1 -or $owners[0] -lt 1 -or $loopback.Count -lt 1) { throw 'OWNER_LISTENER_UNPROVEN' }
     foreach ($connection in $connections) {
-        if ($connection.LocalAddress -notin @('127.0.0.1','::1')) { throw 'OWNER_LISTENER_NOT_PRIVATE' }
+        $address = [string]$connection.LocalAddress
+        if ($address -in @('127.0.0.1','::1')) {
+            if ([long]$connection.OwningProcess -ne $owners[0]) { throw 'OWNER_LISTENER_UNPROVEN' }
+            continue
+        }
+        try { $ip = [System.Net.IPAddress]::Parse($address) }
+        catch { throw 'OWNER_LISTENER_NOT_PRIVATE' }
+        $octets = $ip.GetAddressBytes()
+        $tailnetAddress = [bool](
+            ($octets.Length -eq 4 -and $octets[0] -eq 100 -and $octets[1] -ge 64 -and $octets[1] -le 127) -or
+            ($octets.Length -eq 16 -and $octets[0] -eq 253 -and $octets[1] -eq 122 -and
+             $octets[2] -eq 17 -and $octets[3] -eq 92 -and $octets[4] -eq 161 -and $octets[5] -eq 224)
+        )
+        if (-not $tailnetAddress) { throw 'OWNER_LISTENER_NOT_PRIVATE' }
+        $tailPid = [long]$connection.OwningProcess
+        if ($tailPid -lt 1 -or $tailPid -eq $owners[0]) { throw 'OWNER_LISTENER_UNPROVEN' }
+        try { $tail = @(Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + [string]$tailPid)) }
+        catch { throw 'OWNER_CIM_PROCESS_QUERY_FAILED' }
+        if ($tail.Count -ne 1 -or [long]$tail[0].ProcessId -ne $tailPid -or
+            [string]$tail[0].Name -cne 'tailscaled.exe' -or
+            [string]$tail[0].ExecutablePath -ine 'C:\Program Files\Tailscale\tailscaled.exe' -or
+            $tail[0].CreationDate -isnot [datetime] -or
+            $tail[0].CreationDate.ToUniversalTime() -gt [datetime]::UtcNow) {
+            throw 'OWNER_LISTENER_UNPROVEN'
+        }
     }
     try { $rows = @(Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + [string]$owners[0])) }
     catch { throw 'OWNER_CIM_PROCESS_QUERY_FAILED' }
