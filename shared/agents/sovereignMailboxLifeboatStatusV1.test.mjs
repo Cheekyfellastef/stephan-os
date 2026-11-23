@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const script = readFileSync(new URL('./status-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
-const registry = readFileSync(new URL('../../shared/agents/sovereignCommanderV1.mjs', import.meta.url), 'utf8');
-const remote = readFileSync(new URL('../../shared/agents/sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
-const privateMcp = readFileSync(new URL('../sovereign-commander-mcp.mjs', import.meta.url), 'utf8');
+const script = readFileSync(new URL('../../scripts/windows/status-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
+const registry = readFileSync(new URL('./sovereignCommanderV1.mjs', import.meta.url), 'utf8');
+const remote = readFileSync(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
+const privateMcp = readFileSync(new URL('../../scripts/sovereign-commander-mcp.mjs', import.meta.url), 'utf8');
 
 test('fixed recovery mesh script now includes bounded mailbox and Lifeboat observation', () => {
   assert.match(script, /'Stephanos Battle Bridge GitHub Command Mailbox'/);
