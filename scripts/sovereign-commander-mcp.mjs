@@ -341,9 +341,9 @@ const TOOLS = Object.freeze([
   {
     name: 'start_process',
     title: 'Start a fixed read-only diagnostic session',
-    description: 'Start only status-recovery-mesh or status-worker-watchdog as a bounded private process session. Returns observed direct-child launch state; output can be read separately before exit. No commands, arguments, environment, input, arbitrary PIDs or repair actions are accepted. This does not prove descendant or maintenance custody release.',
+    description: 'Start only status-recovery-mesh, status-worker-watchdog or status-sovereign-mailbox-lifeboat as a bounded private read-only process session. Returns observed direct-child launch state; output can be read separately before exit. No commands, arguments, environment, input, arbitrary PIDs or repair actions are accepted. This does not prove descendant or maintenance custody release.',
     inputSchema: { type: 'object', additionalProperties: false, required: ['profile'],
-      properties: { profile: { type: 'string', enum: ['status-recovery-mesh', 'status-worker-watchdog'] } } },
+      properties: { profile: { type: 'string', enum: ['status-recovery-mesh', 'status-worker-watchdog', 'status-sovereign-mailbox-lifeboat'] } } },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
