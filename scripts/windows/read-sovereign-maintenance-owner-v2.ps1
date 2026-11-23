@@ -115,6 +115,11 @@ function Get-SovereignMaintenanceNativeOwnerV2 {
     # hold this port on its own tailnet interfaces without owning 127.0.0.1.
     # Never treat an unverified foreign or wildcard listener as a Commander.
     $loopback = @($connections | Where-Object { $_.LocalAddress -in @('127.0.0.1','::1') })
+    # Preserve the original refusal for a public wildcard-only listener.
+    # Neither this classification nor a Tailscale-only socket proves ownership.
+    if ($loopback.Count -eq 0 -and @($connections | Where-Object {
+        $_.LocalAddress -in @('0.0.0.0','::')
+    }).Count -gt 0) { throw 'OWNER_LISTENER_NOT_PRIVATE' }
     $owners = @($loopback | ForEach-Object { [long]$_.OwningProcess } | Select-Object -Unique)
     if ($owners.Count -ne 1 -or $owners[0] -lt 1 -or $loopback.Count -lt 1) { throw 'OWNER_LISTENER_UNPROVEN' }
     foreach ($connection in $connections) {
