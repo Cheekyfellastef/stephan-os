@@ -223,7 +223,7 @@ function Get-CimInstance {
 }
 function Assert-Held([string]$expected) {
  try { $null=Get-SovereignMaintenanceNativeOwnerV2; throw 'FALSE_OWNER_ACCEPTANCE' }
- catch { if($_.Exception.Message -cne $expected){throw ('WRONG_OWNER_BLOCKER:'+ $_.Exception.Message)} }
+ catch { if($_.Exception.Message -cne $expected){throw ('WRONG_OWNER_BLOCKER:EXPECTED='+$expected+':OBSERVED='+$_.Exception.Message)} }
 }
 $valid=Get-SovereignMaintenanceNativeOwnerV2
 if($valid.pid -ne 10 -or $valid.imageSha256 -cne ('b'*64) -or [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::Calls -ne 1){throw 'MISSING_BOUND_FALLBACK'}
@@ -240,6 +240,7 @@ foreach($code in @('OWNER_NATIVE_ACCESS_DENIED','OWNER_NATIVE_OPEN_FAILED','OWNE
 $script:row.ProcessId=11; Assert-Held 'OWNER_PROCESS_UNPROVEN'; $script:row.ProcessId=10
 $script:connections=@(); Assert-Held 'OWNER_LISTENER_UNPROVEN'
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='0.0.0.0'}); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
+$script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='::'}); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},[pscustomobject]@{OwningProcess=11;LocalAddress='::1'}); Assert-Held 'OWNER_LISTENER_UNPROVEN'
 # Genuine Tailscale Serve uses distinct tailnet-specific sockets, not 127.0.0.1.
 $script:connections=@(
