@@ -52,7 +52,9 @@ function Safe-Code([object]$Record, [string]$Name) {
     $field = $Record.PSObject.Properties[$Name]
     if ($null -eq $field) { return '' }
     $value = [string]$field.Value
-    if ($value -cmatch '^[A-Za-z][A-Za-z0-9_:-]{0,119}
+    if ($value -cmatch '^[A-Za-z][A-Za-z0-9_:-]{0,119}$') { return $value }
+    return ''
+}
 $mailbox = Fixed-TaskObservation 'Stephanos Battle Bridge GitHub Command Mailbox'
 $lifeboat = Fixed-TaskObservation 'Stephanos Battle Bridge Recovery Lifeboat'
 $localWorkspace = Join-Path $env:USERPROFILE 'Documents\Stephanos\shared-agent-workspace'
@@ -82,7 +84,7 @@ if ($bankId) { $bankHeartbeat = Read-BoundedObservation (Join-Path $lifeboatRoot
     mailboxGuardLockState = $lockState
     mailboxGuardOwnerProven = $false
     lifeboatActiveBank = $bankId
-    lifeboatBankPayloadVerified = ($null -ne $bankHeartbeat -and $bankHeartbeat.payloadVerified -eq $true)
+    lifeboatBankPayloadVerified = ($null -ne $bankHeartbeat -and $null -ne $bankHeartbeat.PSObject.Properties['payloadVerified'] -and $bankHeartbeat.PSObject.Properties['payloadVerified'].Value -eq $true)
     lifeboatGithubClaimVerdict = (Safe-Code $bankHeartbeat 'githubClaimVerdict')
     lifeboatRemoteAccessHealVerdict = (Safe-Code $bankHeartbeat 'remoteAccessAutoHealVerdict')
     lifeboatNativeRecoveryVerdict = (Safe-Code $recovery 'verdict')
