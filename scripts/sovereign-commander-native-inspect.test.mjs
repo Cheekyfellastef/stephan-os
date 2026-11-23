@@ -268,7 +268,7 @@ test('owner error diagnostics reject private data and ignore accessors or inheri
     { diagnosticCode: 'OWNER_NATIVE_ACCESS_DENIED' }));
   const unrelated = Object.assign(Error('SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN'),
     { diagnosticCode: 'OWNER_NATIVE_ACCESS_DENIED' });
-  for (const [error, expected] of [[accessor, 'OWNER_OBSERVER_INVALID_RECEIPT'], [inherited, undefined],
+  for (const [error, expected] of [[accessor, undefined], [inherited, undefined],
     [unrelated, undefined]]) {
     const report = await inspectSovereignControlSystemV1(fixture({ readOwner: () => { throw error; } }).options);
     assert.equal(report.owner.diagnosticCode, expected);
