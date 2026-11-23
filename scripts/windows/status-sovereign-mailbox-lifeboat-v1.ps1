@@ -67,8 +67,8 @@ $activeBank = Read-BoundedStatus (Join-Path $lifeboatRoot 'state\active-bank.jso
 $lockState = 'UNPROVEN'
 try { $lockState = if (Test-Path -LiteralPath $lockFile -PathType Leaf) { 'PRESENT_OWNER_UNVERIFIED' } else { 'ABSENT_AT_OBSERVATION' } } catch {}
 
-$bankId = ''
-if ($null -ne $activeBank -and [string]$activeBank.activeBank -cin @('A', 'B')) { $bankId = [string]$activeBank.activeBank }
+$bankId = Safe-StatusCode $activeBank 'activeBank'
+if ($bankId -cnotin @('A', 'B')) { $bankId = '' }
 $bankHeartbeat = $null
 if ($bankId) {
     $bankHeartbeat = Read-BoundedStatus (Join-Path $lifeboatRoot ("status\bank-$bankId-heartbeat.json"))
