@@ -6,7 +6,7 @@ import { createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecuti
 
 export const SOVEREIGN_PROCESS_SESSION_SCHEMA_V1 = 'stephanos.sovereign-process-sessions.v1';
 export const SOVEREIGN_PROCESS_SESSION_EXECUTABLE_V1 = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const RECOVERY_SCRIPT_SHA256 = '52efc88e50a2437bc4c4519b9c447bb440e1e5bdc61d350e8cdb20ea189a82fb';
+const RECOVERY_SCRIPT_SHA256 = '3d8fb6933c15960c1b92d016fd760ca5dc35af12612f24c089b8de917a3516b6';
 const WATCHDOG_SCRIPT_SHA256 = '948d3b7ae81589301741d2975d2f5b0878f9592e085d29e768873231d7cb0230';
 export const SOVEREIGN_PROCESS_SESSION_PROFILES_V1 = Object.freeze({
   'status-recovery-mesh': Object.freeze({
