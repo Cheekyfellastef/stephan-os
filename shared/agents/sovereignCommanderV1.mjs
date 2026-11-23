@@ -373,7 +373,7 @@ function fixedRegistry(repoRoot) {
     }),
     'status-sovereign-mailbox-lifeboat': frozen({
       executable: powershell,
-      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-sovereign-mailbox-lifeboat-v1.ps1')]),
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-battle-bridge-recovery-mesh.ps1')]),
       timeoutMs: 15_000,
     }),
     'status-recovery-mesh': frozen({
