@@ -16,6 +16,13 @@ test('fixed recovery mesh script now includes bounded mailbox and Lifeboat obser
   assert.match(script, /\$file\.Length -gt 65536/);
   assert.match(script, /ReparsePoint/);
   assert.match(script, /PRESENT_OWNER_UNVERIFIED/);
+  // An unavailable task API and a failed Get-ScheduledTaskInfo call
+  // never establish proof that the scheduled task is not installed.
+  assert.match(script, /Get-ScheduledTask -TaskName \$Name -TaskPath/);
+  assert.match(script, /Get-ScheduledTaskInfo -TaskName \$Name -TaskPath/);
+  assert.match(script, /installed = \$null/);
+  assert.doesNotMatch(script, /installed = \$false/);
+  assert.match(script, /exactTaskIdentityProven = \$false/);
   // The native guard may use STEPHANOS_SHARED_WORKSPACE_ROOT, which the
   // minimal private PowerShell environment cannot assume it received.
   // Absence at the default path is never proof that no guard writer exists.
