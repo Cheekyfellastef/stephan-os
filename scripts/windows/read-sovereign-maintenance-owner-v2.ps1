@@ -20,6 +20,14 @@ namespace Stephanos {
         [DllImport("kernel32.dll", SetLastError=true)]
         static extern bool CloseHandle(IntPtr handle);
         public static string Observe(uint pid, long expectedCreatedUtcTicks) {
+            return ObserveExact(pid, expectedCreatedUtcTicks, @"C:\Program Files\nodejs\node.exe");
+        }
+        // Fixed, no caller-selected path. Used when the normal operator cannot
+        // read the SYSTEM-owned Tailscale service image through CIM.
+        public static string ObserveTailscale(uint pid, long expectedCreatedUtcTicks) {
+            return ObserveExact(pid, expectedCreatedUtcTicks, @"C:\Program Files\Tailscale\tailscaled.exe");
+        }
+        private static string ObserveExact(uint pid, long expectedCreatedUtcTicks, string expectedImage) {
             if (pid == 0 || pid > Int32.MaxValue || expectedCreatedUtcTicks <= 0 || expectedCreatedUtcTicks > DateTime.UtcNow.Ticks)
                 return "OWNER_PROCESS_BIRTH_UNAVAILABLE";
             // Query-limited information and a zero-time liveness wait only.
@@ -41,7 +49,7 @@ namespace Stephanos {
                 var image = new StringBuilder(1024); uint length = 1024;
                 if (!QueryFullProcessImageNameW(process, 0, image, ref length))
                     return "OWNER_NATIVE_IMAGE_UNPROVEN";
-                if (!String.Equals(image.ToString(), @"C:\Program Files\nodejs\node.exe", StringComparison.OrdinalIgnoreCase))
+                if (!String.Equals(image.ToString(), expectedImage, StringComparison.OrdinalIgnoreCase))
                     return "OWNER_NATIVE_IMAGE_MISMATCH";
                 state = WaitForSingleObject(process, 0);
                 if (state == 0) return "OWNER_NATIVE_PROCESS_EXITED";
@@ -130,10 +138,27 @@ function Get-SovereignMaintenanceNativeOwnerV2 {
         catch { throw 'OWNER_CIM_PROCESS_QUERY_FAILED' }
         if ($tail.Count -ne 1 -or [long]$tail[0].ProcessId -ne $tailPid -or
             [string]$tail[0].Name -cne 'tailscaled.exe' -or
-            [string]$tail[0].ExecutablePath -ine 'C:\Program Files\Tailscale\tailscaled.exe' -or
             $tail[0].CreationDate -isnot [datetime] -or
             $tail[0].CreationDate.ToUniversalTime() -gt [datetime]::UtcNow) {
             throw 'OWNER_LISTENER_UNPROVEN'
+        }
+        $tailImage = [string]$tail[0].ExecutablePath
+        if ($tailImage) {
+            if ($tailImage -ine 'C:\Program Files\Tailscale\tailscaled.exe') {
+                throw 'OWNER_LISTENER_UNPROVEN'
+            }
+        } else {
+            # SYSTEM service image paths are commonly opaque to a limited-user
+            # CIM query. The existing read-only native query pins PID/birth/image
+            # using PROCESS_QUERY_LIMITED_INFORMATION, with no token elevation.
+            $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+            if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                throw 'OWNER_LISTENER_UNPROVEN'
+            }
+            Initialize-StephanosCanonicalNodeIdentityV1
+            $tailCode = [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::ObserveTailscale(
+                [uint32]$tailPid, [long]$tail[0].CreationDate.ToUniversalTime().Ticks)
+            if ($tailCode -cne '') { throw 'OWNER_LISTENER_UNPROVEN' }
         }
     }
     try { $rows = @(Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + [string]$owners[0])) }
