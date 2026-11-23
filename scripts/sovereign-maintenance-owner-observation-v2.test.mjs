@@ -12,11 +12,11 @@ const ownerScript = fileURLToPath(new URL('./windows/read-sovereign-maintenance-
 const principalConstruction = '[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())';
 function ownerTokenFixture(t, principalType) {
   const source = readFileSync(ownerScript, 'utf8');
-  assert.equal(source.split(principalConstruction).length, 2, 'one actual token boundary must be exercised');
+  assert.equal(source.split(principalConstruction).length, 3, 'both fixed normal-operator token boundaries must be exercised');
   const root = mkdtempSync(join(tmpdir(), 'owner-token-fixture-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const path = join(root, 'owner.ps1');
-  writeFileSync(path, source.replace(principalConstruction, `[${principalType}]::new()`));
+  writeFileSync(path, source.replaceAll(principalConstruction, `[${principalType}]::new()`));
   return path.replace(/'/g, "''");
 }
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
