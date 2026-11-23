@@ -52,8 +52,58 @@ function Safe-Code([object]$Record, [string]$Name) {
     $field = $Record.PSObject.Properties[$Name]
     if ($null -eq $field) { return '' }
     $value = [string]$field.Value
-    if ($value -cmatch '^[A-Za-z][A-Za-z0-9_:-]{0,119}$') { return $value }
+    if ($value -cmatch '^[A-Za-z][A-Za-z0-9_:-]{0,119}
+$mailbox = Fixed-TaskObservation 'Stephanos Battle Bridge GitHub Command Mailbox'
+$lifeboat = Fixed-TaskObservation 'Stephanos Battle Bridge Recovery Lifeboat'
+$localWorkspace = Join-Path $env:USERPROFILE 'Documents\Stephanos\shared-agent-workspace'
+$lockPath = Join-Path $localWorkspace 'github-command-mailbox\receipt-publication-deferred-v1.json.lock-v1.json'
+$lockState = 'UNPROVEN'
+try { $lockState = if (Test-Path -LiteralPath $lockPath -PathType Leaf) { 'PRESENT_OWNER_UNVERIFIED' } else { 'ABSENT_AT_OBSERVATION' } } catch {}
+$lifeboatRoot = Join-Path $env:LOCALAPPDATA 'Stephanos\BattleBridgeRecoveryLifeboat'
+$recovery = Read-BoundedObservation (Join-Path $lifeboatRoot 'status\mobile-recovery-current.json')
+$active = Read-BoundedObservation (Join-Path $lifeboatRoot 'state\active-bank.json')
+$bankId = Safe-Code $active 'activeBank'
+if ($bankId -cnotin @('A', 'B')) { $bankId = '' }
+$bankHeartbeat = $null
+if ($bankId) { $bankHeartbeat = Read-BoundedObservation (Join-Path $lifeboatRoot ("status\bank-$bankId-heartbeat.json")) }
+
+[pscustomobject]@{
+    schemaVersion = 'stephanos.battle-bridge-recovery-mesh-status.v1'
+    taskName = $taskName
+    installed = [bool]$task
+    state = if ($task) { [string]$task.State } else { 'Missing' }
+    lastTaskResult = if ($info) { [int64]$info.LastTaskResult } else { -1 }
+    lastRunTimeUtc = if ($info -and $info.LastRunTime.Year -gt 2000) { $info.LastRunTime.ToUniversalTime().ToString('o') } else { '' }
+    nextRunTimeUtc = if ($info -and $info.NextRunTime.Year -gt 2000) { $info.NextRunTime.ToUniversalTime().ToString('o') } else { '' }
+    status = $status
+    maximumConcurrentExecutors = 1
+    mailboxTask = $mailbox
+    lifeboatTask = $lifeboat
+    mailboxGuardLockState = $lockState
+    mailboxGuardOwnerProven = $false
+    lifeboatActiveBank = $bankId
+    lifeboatBankPayloadVerified = (Safe-True $bankHeartbeat 'payloadVerified')
+    lifeboatGithubClaimVerdict = (Safe-Code $bankHeartbeat 'githubClaimVerdict')
+    lifeboatRemoteAccessHealVerdict = (Safe-Code $bankHeartbeat 'remoteAccessAutoHealVerdict')
+    lifeboatNativeRecoveryVerdict = (Safe-Code $recovery 'verdict')
+    lifeboatNativeRecoveryRequestId = (Safe-Code $recovery 'requestId')
+    lifeboatNativeRecoveryReceiptId = (Safe-Code $recovery 'receiptId')
+    nativeMailboxIngressProven = $false
+    mailboxCutoverProven = $false
+    readOnly = $true
+    taskStartAllowed = $false
+    guardLockMutationAllowed = $false
+    arbitraryShellAllowed = $false
+    sourceMutationAllowed = $false
+    pcRestartAllowed = $false
+} | ConvertTo-Json -Depth 10
+) { return $value }
     return ''
+}
+function Safe-True([object]$Record, [string]$Name) {
+    if ($null -eq $Record) { return $false }
+    $field = $Record.PSObject.Properties[$Name]
+    return ($null -ne $field -and $field.Value -eq $true)
 }
 $mailbox = Fixed-TaskObservation 'Stephanos Battle Bridge GitHub Command Mailbox'
 $lifeboat = Fixed-TaskObservation 'Stephanos Battle Bridge Recovery Lifeboat'
