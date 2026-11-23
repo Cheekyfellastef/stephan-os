@@ -7,7 +7,9 @@ import { readFileSync } from 'node:fs';
 import { inspectSovereignControlSystemV1, parseSovereignControlSystemInspectionArgumentsV1,
   readSovereignGovernorDiagnosticV1 }
   from './sovereign-commander-native-inspect.mjs';
-import { projectSovereignControlSystemStatusV1, SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1 }
+import { projectSovereignControlSystemStatusV1, SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1,
+  SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1,
+  SOVEREIGN_CONTROL_SYSTEM_QUALIFICATION_DIAGNOSTIC_CODES_V1 }
   from '../shared/agents/sovereignControlSystemStatusV1.mjs';
 import { callSovereignMaintenanceOwnerV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
@@ -201,7 +203,8 @@ test('completed source-bound observation preserves refusal without granting repa
 
 test('fresh governor diagnostics survive an unproven owner without refreshing native admission', async () => {
   const f = fixture({
-    readOwner: () => { throw Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'); },
+    readOwner: () => { throw Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'),
+      { diagnosticCode: 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN' }); },
     readGovernor: () => freshGovernor({ signalActive: true, overrideMode: 'FORCE_ON', preparePending: true }),
     inspectRuntime: () => ({ ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',
       governorHoldCode: 'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE' }),
@@ -209,16 +212,92 @@ test('fresh governor diagnostics survive an unproven owner without refreshing na
   const report = await inspectSovereignControlSystemV1(f.options);
   assert.equal(report.owner.available, false); assert.equal(report.owner.stable, false);
   assert.equal(report.owner.reason, 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+  assert.equal(report.owner.diagnosticCode, 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN');
   assert.deepEqual(report.governorObservation, { available: true, observedAtUtc: NOW,
     signalActive: true, overrideMode: 'FORCE_ON', preparePending: true,
     readOnly: true, diagnosticOnly: true, executionAuthority: false });
   const published = projectSovereignControlSystemStatusV1(report);
   assert.deepEqual(published.governorObservation, report.governorObservation);
+  assert.equal(published.owner.diagnosticCode, 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN');
   assert.equal(published.guardian.available, false);
   assert.equal(published.nativeRuntime.qualificationObserved, false);
   assert.equal(published.nativeRuntime.governorHoldCode, 'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE');
   assert.equal(published.source.loadedSourceBytesProven, false);
   assert.equal(published.source.remoteMainProven, false);
+});
+
+test('owner refusal details survive either failed bracket without claiming identity or admission', async () => {
+  for (const failures of [['OWNER_NATIVE_ACCESS_DENIED', null], [null, 'OWNER_OBSERVER_TIMEOUT'],
+    ['OWNER_CIM_LISTENER_QUERY_FAILED', 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN']]) {
+    let reads = 0;
+    const report = await inspectSovereignControlSystemV1(fixture({ readOwner: () => {
+      const diagnosticCode = failures[reads++];
+      if (diagnosticCode) throw Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'), { diagnosticCode });
+      return nativeOwner();
+    } }).options);
+    assert.equal(reads, 2);
+    assert.equal(report.owner.diagnosticCode, failures.find(Boolean));
+    const published = projectSovereignControlSystemStatusV1(report);
+    assert.equal(published.owner.diagnosticCode, failures.find(Boolean));
+    assert.equal(published.owner.reason, 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+    assert.equal(published.owner.available, false); assert.equal(published.owner.stable, false);
+    assert.equal(published.guardian.available, false); assert.equal(published.protocol.available, false);
+    assert.equal(published.nativeRuntime.qualificationObserved, false);
+    const bytes = JSON.stringify(published);
+    assert.ok(Buffer.byteLength(bytes) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+    for (const privateField of ['pid', 'commandSha256', 'imageSha256', SID, 'PRIVATE'])
+      assert.equal(bytes.includes(privateField), false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(bytes)), published);
+  }
+});
+
+test('owner error diagnostics reject private data and ignore accessors or inherited fields', async () => {
+  let invoked = 0;
+  for (const diagnosticCode of ['PRIVATE_TOKEN', 'C:\\PRIVATE\\owner.exe', 'OWNER_PRIVATE_TOKEN',
+    'x'.repeat(10000), null, [], {}, { toString() { invoked++; return 'OWNER_NATIVE_ACCESS_DENIED'; } }]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ readOwner: () => {
+      throw Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'), { diagnosticCode });
+    } }).options);
+    const published = projectSovereignControlSystemStatusV1(report);
+    assert.equal(published.owner.diagnosticCode, 'OWNER_OBSERVER_INVALID_RECEIPT');
+    assert.equal(JSON.stringify(published).includes('PRIVATE'), false);
+  }
+  const accessor = Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+  Object.defineProperty(accessor, 'diagnosticCode', { get() { invoked++; return 'PRIVATE_TOKEN'; } });
+  const inherited = Object.create(Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'),
+    { diagnosticCode: 'OWNER_NATIVE_ACCESS_DENIED' }));
+  const unrelated = Object.assign(Error('SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN'),
+    { diagnosticCode: 'OWNER_NATIVE_ACCESS_DENIED' });
+  for (const [error, expected] of [[accessor, 'OWNER_OBSERVER_INVALID_RECEIPT'], [inherited, undefined],
+    [unrelated, undefined]]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ readOwner: () => { throw error; } }).options);
+    assert.equal(report.owner.diagnosticCode, expected);
+    assert.equal(projectSovereignControlSystemStatusV1(report).owner.diagnosticCode, expected);
+  }
+  assert.equal(invoked, 0);
+});
+
+test('owner failure detail is withdrawn when its exact source moves or never matches', async () => {
+  let sourceReads = 0;
+  const f = fixture({
+    readSourceHead: () => ++sourceReads === 1 ? HEAD : 'f'.repeat(40),
+    readOwner: () => { throw Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'),
+      { diagnosticCode: 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN' }); },
+  });
+  const report = await inspectSovereignControlSystemV1(f.options);
+  assert.equal(report.source.reason, 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED');
+  assert.equal(report.observationCompleted, false);
+  assert.equal(Object.hasOwn(report.owner, 'diagnosticCode'), false);
+  const published = projectSovereignControlSystemStatusV1(report);
+  assert.equal(Object.hasOwn(published.owner, 'diagnosticCode'), false);
+  assert.deepEqual(projectSovereignControlSystemStatusV1(published), published);
+  let ownerReads = 0;
+  f.options.dependencies.readSourceHead = () => 'f'.repeat(40);
+  f.options.dependencies.readOwner = () => { ownerReads++; return nativeOwner(); };
+  const mismatched = await inspectSovereignControlSystemV1(f.options);
+  assert.equal(mismatched.blocker, 'SOVEREIGN_CONTROL_SYSTEM_EXPECTED_MAIN_MISMATCH');
+  assert.equal(ownerReads, 0);
+  assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(mismatched).owner, 'diagnosticCode'), false);
 });
 
 test('native owner refusal detail survives either observation bracket without granting admission', async () => {
@@ -670,6 +749,148 @@ test('typed native denials survive; malformed success and arbitrary errors never
   }
 });
 
+test('every declared qualification denial survives public projection without additional observations', async () => {
+  const codes = SOVEREIGN_CONTROL_SYSTEM_QUALIFICATION_DIAGNOSTIC_CODES_V1;
+  assert.equal(codes.length, 60);
+  for (const [index, qualificationDiagnosticCode] of codes.entries()) {
+    const f = fixture();
+    f.options.dependencies.inspectRuntime = () => {
+      f.calls.push('native');
+      return { ok: false, reason: qualificationDiagnosticCode,
+        ...(index % 2 ? { sourceHead: HEAD } : {}),
+        dispatchAllowed: true, executionCustodyReleased: true, profiles: ['SOURCE_TASK_V1'],
+        sourceCode: 'PRIVATE_SOURCE_CODE', sourceStep: 'PRIVATE_SOURCE_STEP',
+        sourceConfiguration: { value: 'PRIVATE_CONFIGURATION' }, stderr: 'PRIVATE_NATIVE_ERROR' };
+    };
+    const report = await inspectSovereignControlSystemV1(f.options);
+    assert.equal(report.observationCompleted, true);
+    assert.equal(report.nativeRuntime.available, true);
+    assert.equal(report.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(report.nativeRuntime.qualificationDiagnosticCode, qualificationDiagnosticCode);
+    assert.equal(Object.isFrozen(report.nativeRuntime), true);
+    const published = projectSovereignControlSystemStatusV1(report);
+    assert.equal(published.nativeRuntime.qualificationDiagnosticCode, qualificationDiagnosticCode);
+    assert.equal(published.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(published.nativeRuntime.qualificationObserved, false);
+    assert.equal(published.observationOnly, true);
+    for (const forbidden of ['dispatchAllowed', 'executionCustodyReleased', 'profiles',
+      'sourceCode', 'sourceStep', 'sourceConfiguration', 'stderr']) {
+      assert.equal(Object.hasOwn(report.nativeRuntime, forbidden), false);
+      assert.equal(Object.hasOwn(published.nativeRuntime, forbidden), false);
+    }
+    assert.equal(JSON.stringify(published).includes('PRIVATE_'), false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(published))), published);
+    assert.ok(Buffer.byteLength(JSON.stringify(published)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+    assert.deepEqual(f.calls, ['source', 'governor', 'caller', 'owner', 'health', 'protocol',
+      'owner', 'native', 'ledger', 'source']);
+  }
+});
+
+test('qualification details cannot invent a cause from generic, private or coerced native reasons', async () => {
+  let invoked = 0;
+  const code = 'FIXED_RUNTIME_SOURCE_PROOF_READ';
+  for (const reason of [undefined, null, 1, true, Symbol('PRIVATE_SYMBOL'), [], {}, new String(code),
+    { toString() { invoked++; return code; } }, 'x'.repeat(10000), 'C:\\PRIVATE\\native.json',
+    'FIXED_RUNTIME_SOURCE_PROOF_PRIVATE_TOKEN', 'CANONICAL_GIT_PROBE_PRIVATE_TOKEN',
+    'MAINTENANCE_RECOVERY_PRIVATE_TOKEN', 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN']) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => ({ ok: false,
+      reason, qualificationDiagnosticCode: code, sourceCode: code, sourceStep: 'PRIVATE_STEP' }) }).options);
+    const published = projectSovereignControlSystemStatusV1(report);
+    assert.equal(report.nativeRuntime.available, true);
+    assert.equal(report.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(Object.hasOwn(published.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(JSON.stringify(published).includes('PRIVATE_'), false);
+  }
+  assert.equal(invoked, 0);
+});
+
+test('qualification denial capture rejects native accessors, inherited values and symbol keys without invoking them', async () => {
+  let invoked = 0;
+  const code = 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN';
+  const accessorRows = ['reason', 'sourceHead', 'qualificationDiagnosticCode'].map(key => {
+    const row = { ok: false, reason: code };
+    Object.defineProperty(row, key, { get() { invoked++; return key === 'sourceHead' ? HEAD : code; } });
+    return row;
+  });
+  for (const native of [...accessorRows, Object.assign(Object.create({ reason: code }), { ok: false }),
+    { ok: false, reason: code, [Symbol('PRIVATE_SYMBOL')]: code }]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => native }).options);
+    assert.equal(report.nativeRuntime.available, false);
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(report).nativeRuntime,
+      'qualificationDiagnosticCode'), false);
+  }
+  assert.equal(invoked, 0);
+});
+
+test('qualification detail requires an actual failed result and no conflicting native source', async () => {
+  const code = 'FIXED_RUNTIME_GIT_CLOSURE_CHANGED';
+  for (const native of [
+    { ok: true, reason: code, sourceHead: HEAD, observedAtUtc: NOW, profiles: [] },
+    { ok: 'false', reason: code }, { reason: code },
+    { ok: false, reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING', qualificationDiagnosticCode: code },
+    { ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD', qualificationDiagnosticCode: code },
+    ...['e'.repeat(40), '', undefined, null, 1, [], {}]
+      .map(sourceHead => ({ ok: false, reason: code, sourceHead })),
+  ]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => native }).options);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(report).nativeRuntime,
+      'qualificationDiagnosticCode'), false);
+    if (native.ok === true) assert.equal(report.nativeRuntime.qualificationObserved, true);
+    else assert.equal(report.nativeRuntime.qualificationObserved, false);
+  }
+  for (const message of [code, 'EACCES: PRIVATE_NATIVE_PATH']) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => { throw Error(message); } }).options);
+    assert.equal(report.nativeRuntime.available, false);
+    assert.equal(report.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+  }
+});
+
+test('source drift and expected-main mismatch remove qualification details without another native inspection', async () => {
+  for (const finalRead of [() => 'e'.repeat(40), () => { throw Error('PRIVATE_SOURCE_PATH'); }]) {
+    let sourceReads = 0, nativeCalls = 0;
+    const report = await inspectSovereignControlSystemV1(fixture({
+      readSourceHead: () => ++sourceReads === 1 ? HEAD : finalRead(),
+      inspectRuntime: () => { nativeCalls++; return { ok: false, reason: 'FIXED_RUNTIME_SOURCE_PROOF_HEAD_CHANGED' }; },
+    }).options);
+    assert.equal(report.observationCompleted, false);
+    assert.equal(report.nativeRuntime.reason, 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED');
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'qualificationDiagnosticCode'), false);
+    assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(report).nativeRuntime,
+      'qualificationDiagnosticCode'), false);
+    assert.equal(sourceReads, 2); assert.equal(nativeCalls, 1);
+  }
+  const wrong = fixture(); wrong.options.expectedMain = 'e'.repeat(40);
+  const refused = await inspectSovereignControlSystemV1(wrong.options);
+  assert.equal(Object.hasOwn(refused.nativeRuntime, 'qualificationDiagnosticCode'), false);
+  assert.deepEqual(wrong.calls, ['source']);
+});
+
+test('qualification and owner refusal details coexist without proving either owner custody or runtime qualification', async () => {
+  const report = await inspectSovereignControlSystemV1(fixture({
+    readOwner: () => { throw Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'),
+      { diagnosticCode: 'OWNER_LISTENER_UNPROVEN' }); },
+    inspectRuntime: () => ({ ok: false, reason: 'RUNTIME_SOURCE_PROOF_PROTECTED_CLOSURE_CHANGED' }),
+  }).options);
+  const published = projectSovereignControlSystemStatusV1(report);
+  assert.equal(published.owner.reason, 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+  assert.equal(published.owner.diagnosticCode, 'OWNER_LISTENER_UNPROVEN');
+  assert.equal(published.owner.available, false);
+  assert.equal(published.owner.stable, false);
+  assert.equal(published.nativeRuntime.reason, 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+  assert.equal(published.nativeRuntime.qualificationDiagnosticCode, 'RUNTIME_SOURCE_PROOF_PROTECTED_CLOSURE_CHANGED');
+  assert.equal(published.nativeRuntime.qualificationObserved, false);
+  assert.equal(published.observationOnly, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(published)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+});
+
 test('actual fixed-runtime governor vocabulary survives observation and public projection without authority', async () => {
   const source = readFileSync(new URL('./sovereign-fixed-runtime-parent-v1.mjs', import.meta.url), 'utf8');
   const codes = [...source.matchAll(/'native-capacity-gaming-[^']+':'(FIXED_RUNTIME_GOVERNOR_[^']+)'/g)]
@@ -697,6 +918,78 @@ test('actual fixed-runtime governor vocabulary survives observation and public p
     assert.ok(Buffer.byteLength(JSON.stringify(published)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
     assert.equal(nativeCalls, 1);
   }
+});
+
+test('the same native permission denial carries bounded causes beside an unproven owner', async () => {
+  const governorPermission = { observedAtUtc: '2026-10-31T12:59:29.000Z',
+    failed: [...SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1] };
+  let nativeCalls = 0;
+  const report = await inspectSovereignControlSystemV1(fixture({
+    readOwner: () => { throw Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'),
+      { diagnosticCode: 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN' }); },
+    inspectRuntime: () => {
+      nativeCalls++;
+      return { ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',
+        governorHoldCode: 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED', governorPermission,
+        dispatchAllowed: true, executionCustodyReleased: true, privateState: 'PRIVATE_TOKEN' };
+    },
+  }).options);
+  assert.equal(nativeCalls, 1);
+  assert.deepEqual(report.nativeRuntime.governorPermission, governorPermission);
+  assert.notEqual(report.nativeRuntime.governorPermission, governorPermission);
+  assert.equal(Object.isFrozen(report.nativeRuntime.governorPermission), true);
+  assert.equal(Object.isFrozen(report.nativeRuntime.governorPermission.failed), true);
+  const published = projectSovereignControlSystemStatusV1(report), bytes = JSON.stringify(published);
+  assert.deepEqual(published.nativeRuntime.governorPermission, governorPermission);
+  assert.equal(published.nativeRuntime.reason, 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+  assert.equal(published.nativeRuntime.governorHoldCode, 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED');
+  assert.equal(published.nativeRuntime.qualificationObserved, false);
+  assert.equal(published.owner.diagnosticCode, 'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN');
+  assert.equal(published.owner.available, false); assert.equal(published.guardian.available, false);
+  assert.equal(published.governorObservation.signalActive, false);
+  assert.ok(Buffer.byteLength(bytes) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+  for (const forbidden of ['dispatchAllowed', 'executionCustodyReleased', 'PRIVATE', SID])
+    assert.equal(bytes.includes(forbidden), false);
+  assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(bytes)), published);
+});
+
+test('permission causes are omitted for malformed data, other holds and changed source without reading getters', async () => {
+  const permission = { observedAtUtc: NOW, failed: ['ACTIVE'] };
+  let invoked = 0;
+  const accessor = { observedAtUtc: NOW };
+  Object.defineProperty(accessor, 'failed', { get() { invoked++; return ['PRIVATE_TOKEN']; } });
+  for (const governorPermission of [null, accessor, { ...permission, failed: ['PRIVATE_TOKEN'] },
+    { ...permission, observedAtUtc: '2026-10-31T13:00:00.001Z' },
+    { ...permission, observedAtUtc: '2026-10-31T12:59:14.999Z' },
+    { ...permission, executionAuthority: true }]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => ({
+      ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',
+      governorHoldCode: 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED', governorPermission,
+    }) }).options);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'governorPermission'), false);
+    assert.equal(report.nativeRuntime.governorHoldCode, 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED');
+    assert.equal(report.nativeRuntime.qualificationObserved, false);
+    assert.equal(JSON.stringify(projectSovereignControlSystemStatusV1(report)).includes('PRIVATE'), false);
+  }
+  for (const extra of [{ reason: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING' },
+    { governorHoldCode: 'FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE' }, { sourceHead: 'e'.repeat(40) },
+    { ok: true, sourceHead: HEAD, observedAtUtc: NOW, profiles: [] }]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ inspectRuntime: () => ({
+      ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',
+      governorHoldCode: 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED', governorPermission: permission, ...extra,
+    }) }).options);
+    assert.equal(Object.hasOwn(report.nativeRuntime, 'governorPermission'), false);
+  }
+  let sourceReads = 0;
+  const changed = await inspectSovereignControlSystemV1(fixture({
+    readSourceHead: () => ++sourceReads === 1 ? HEAD : 'e'.repeat(40),
+    inspectRuntime: () => ({ ok: false, reason: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',
+      governorHoldCode: 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED', governorPermission: permission }),
+  }).options);
+  assert.equal(changed.nativeRuntime.reason, 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED');
+  assert.equal(Object.hasOwn(changed.nativeRuntime, 'governorPermission'), false);
+  assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(changed).nativeRuntime, 'governorPermission'), false);
+  assert.equal(invoked, 0);
 });
 
 test('missing or private governor subcodes become a closed unavailable diagnostic without coercion', async () => {

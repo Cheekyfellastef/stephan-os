@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -38,11 +39,15 @@ function assertHold(options, reason) {
   assert.equal(result.ok, false);
   assert.equal(result.finalVerdict, 'STEPHANOS_NATIVE_CAPACITY_GAMING_HOLD');
   assert.equal(result.reason, `native-capacity-gaming-${reason}`);
+  if (reason !== 'permission-denied') assert.equal(Object.hasOwn(result, 'governorPermission'), false);
+  return result;
 }
 
 test('fresh canonical governor permission is admitted without changing its evidence', async () => withEvidence(async ({ file, options }) => {
   const before = await readFile(file, 'utf8');
-  assert.equal(inspectStephanosNativeCapacityGamingAdmissionV1(options).ok, true);
+  assert.deepEqual(inspectStephanosNativeCapacityGamingAdmissionV1(options), {
+    ok: true, reason: 'STEPHANOS_NATIVE_CAPACITY_GAMING_ADMITTED',
+  });
   assert.equal(inspectStephanosNativeCapacityGamingAdmissionV1({ ...options, nowMs: () => NOW + 30_000 }).ok, true);
   assert.equal(await readFile(file, 'utf8'), before);
 }));
@@ -79,6 +84,66 @@ test('missing, stale, coerced, active and cooldown state never supplies heavy-mo
     }));
   }
 });
+
+const permissionPredicates = [
+  ['PHASE', { phase: 'PREPARING' }], ['OVERRIDE', { overrideMode: 'FORCE_OFF' }],
+  ['LOAD', { ollamaLoadMode: 'unknown' }], ['COOLDOWN', { cooldownUntilUtc: '2026-10-24T22:01:00.000Z' }],
+  ['ACTIVE', { active: true }], ['FLAT_GAME', { flatGameActive: true }],
+  ['AIR_LINK', { airLinkActive: true }], ['REAL_AIR_LINK', { realAirLinkActive: true }],
+  ['VIRTUAL_AIR_LINK', { virtualAirLinkTestActive: true }], ['PREPARE_LEASE', { prepareLeaseActive: true }],
+  ['LOCAL_MODEL', { localModelAllowed: false }], ['HEAVY_MODEL', { heavyModelAllowed: false }],
+];
+
+test('each denied permission predicate identifies only its closed diagnostic label', async (t) => {
+  for (const [label, changed] of permissionPredicates) {
+    await t.test(label, async () => withEvidence(async ({ file, options }) => {
+      const bytes = JSON.stringify(state(changed));
+      await writeFile(file, bytes);
+      const result = assertHold(options, 'permission-denied');
+      assert.deepEqual(result.governorPermission, { observedAtUtc: OBSERVED, failed: [label] });
+      assert.equal(Object.isFrozen(result), true);
+      assert.equal(Object.isFrozen(result.governorPermission), true);
+      assert.equal(Object.isFrozen(result.governorPermission.failed), true);
+      assert.equal(await readFile(file, 'utf8'), bytes);
+    }));
+  }
+});
+
+test('all failures remain ordered and contain no state values, paths, process identities or model names', async () => withEvidence(async ({ file, options }) => {
+  const changed = Object.assign({}, ...permissionPredicates.map(([, values]) => values));
+  await writeFile(file, JSON.stringify(state({ ...changed,
+    phase: 'PRIVATE_PHASE', overrideMode: 'PRIVATE_OVERRIDE', ollamaLoadMode: 'PRIVATE_MODEL',
+    cooldownUntilUtc: 'PRIVATE_COOLDOWN', path: 'C:\\PRIVATE\\workspace', pid: 17281,
+    loadedModels: ['PRIVATE_MODEL'], nativeProbeAttempt: { pid: 17281, path: 'PRIVATE_PATH' },
+  })));
+  const result = assertHold(options, 'permission-denied');
+  assert.deepEqual(result.governorPermission, {
+    observedAtUtc: OBSERVED, failed: permissionPredicates.map(([label]) => label),
+  });
+  assert.equal(/PRIVATE|17281|path|pid|loadedModels/.test(JSON.stringify(result)), false);
+  assert.throws(() => result.governorPermission.failed.push('OTHER'), TypeError);
+  assert.throws(() => { result.governorPermission.observedAtUtc = '2000-01-01T00:00:00.000Z'; }, TypeError);
+}));
+
+test('permission diagnostics keep the originally validated sample when the evidence file changes during the clock check', async () => withEvidence(async ({ file, options }) => {
+  const originalAtUtc = new Date(NOW - 5000).toISOString();
+  await writeFile(file, JSON.stringify(state({ updatedAtUtc: originalAtUtc, localModelAllowed: false })));
+  const result = assertHold({ ...options, nowMs: () => {
+    writeFileSync(file, JSON.stringify(state({ heavyModelAllowed: false })));
+    return NOW;
+  } }, 'permission-denied');
+  assert.deepEqual(result.governorPermission, { observedAtUtc: originalAtUtc, failed: ['LOCAL_MODEL'] });
+  assert.deepEqual(assertHold(options, 'permission-denied').governorPermission,
+    { observedAtUtc: OBSERVED, failed: ['HEAVY_MODEL'] });
+}));
+
+test('original explicit-offset timestamps normalize while 31-second stale state still has no permission diagnostic', async () => withEvidence(async ({ file, options }) => {
+  await writeFile(file, JSON.stringify(state({ updatedAtUtc: '2026-10-24T23:00:00.000+01:00', heavyModelAllowed: false })));
+  const result = assertHold({ ...options, nowMs: () => NOW + 30_000 }, 'permission-denied');
+  assert.deepEqual(result.governorPermission, { observedAtUtc: OBSERVED, failed: ['HEAVY_MODEL'] });
+  assertHold({ ...options, nowMs: () => NOW + 31_000 }, 'observation-stale');
+  assertHold({ ...options, nowMs: () => NOW - 1 }, 'observation-future');
+}));
 
 test('missing, malformed, oversized and non-file governor evidence fails closed', async (t) => {
   for (const [name, change] of [

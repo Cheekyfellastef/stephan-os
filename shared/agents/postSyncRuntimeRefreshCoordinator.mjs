@@ -425,6 +425,14 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/windows/SovereignFixedRuntimeJobV1.cs',
   'scripts/windows/SovereignFixedRuntimeSourceV1.cs',
   'scripts/windows/install-sovereign-fixed-runtime-v1.ps1',
+  // An independently installed reviewer is not activated by source-only sync.
+  'scripts/sovereign-installed-reviewer-v1.mjs',
+  'scripts/sovereign-installed-reviewer-loader-v1.mjs',
+  'scripts/build-sovereign-reviewer-installation-v1.mjs',
+  'shared/agents/sovereignInstalledReviewerProfileV1.mjs',
+  'scripts/windows/SovereignReviewerProfileV1.cs',
+  'scripts/windows/SovereignReviewerHostV1.cs',
+  'scripts/windows/install-sovereign-reviewer-profile-v1.ps1',
   // Exact #1814 offline review/bootstrap and native compilation inputs. Their
   // immutable manual enrollment/preservation routes retain separate authority;
   // sync never compiles, installs, preserves a partial root or qualifies them.
