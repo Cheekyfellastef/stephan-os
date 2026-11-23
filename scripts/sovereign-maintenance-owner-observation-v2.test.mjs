@@ -201,7 +201,7 @@ $script:row=[pscustomobject]@{Name='node.exe';ProcessId=10;CreationDate=[datetim
  CommandLine='"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-commander-http.mjs"'}
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'})
 $script:tailRow=[pscustomobject]@{Name='tailscaled.exe';ProcessId=20;CreationDate=[datetime]::UtcNow.AddMinutes(-2);
- ExecutablePath='C:\Program Files\Tailscale\tailscaled.exe'}
+ ExecutablePath='C:\\Program Files\\Tailscale\\tailscaled.exe'}
 $script:queryFailure=''
 function Get-CimInstance {
  param($Namespace,$ClassName,$Filter)
@@ -246,8 +246,8 @@ $script:connections=@(
 $tailValid=Get-SovereignMaintenanceNativeOwnerV2
 if($tailValid.pid -ne 10 -or $tailValid.imageSha256 -cne ('b'*64)){throw 'TAILSCALE_LOOPBACK_OWNER_NOT_BOUND'}
 $script:tailRow.Name='imposter.exe'; Assert-Held 'OWNER_LISTENER_UNPROVEN'; $script:tailRow.Name='tailscaled.exe'
-$script:tailRow.ExecutablePath='C:\Users\Public\tailscaled.exe'; Assert-Held 'OWNER_LISTENER_UNPROVEN'
-$script:tailRow.ExecutablePath='C:\Program Files\Tailscale\tailscaled.exe'
+$script:tailRow.ExecutablePath='C:\\Users\\Public\\tailscaled.exe'; Assert-Held 'OWNER_LISTENER_UNPROVEN'
+$script:tailRow.ExecutablePath='C:\\Program Files\\Tailscale\\tailscaled.exe'
 $script:tailRow.CreationDate=$null; Assert-Held 'OWNER_LISTENER_UNPROVEN'
 $script:tailRow.CreationDate=[datetime]::UtcNow.AddMinutes(-2)
 $script:connections=@(
