@@ -44,7 +44,7 @@ const capturedReadAdapters = {
   'shared/agents/sovereignFileMoveV1.mjs': 'edb13d36cbe7c74d27834069d803601f13493919f0d6409fbb2ba1c82fc6a910',
   'shared/agents/sovereignPdfWriteV1.mjs': '90c5e0ecb3d1fdc354af1dbedcd04c24a2910e3fedb3277aa838168214164330',
 };
-const capturedProcessAdapterSha256 = '73c4f2b4863b9913810064de8f6049aa8b1bf29bb7addf0232e0ab3eed4793d5';
+const capturedProcessAdapterSha256 = 'a0fab3aa9512fa990a0de7f6c8b965071f2bc6eba5f81004011a0a4de6329de3';
 for (const target of requiredRoots) if (!members.has(target)) missing.push({ role: 'profile-root', target });
 // Checking all admitted JS members also covers a newly reachable import in a
 // packaged library outside the previous selected-root traversal. This cannot
@@ -113,7 +113,7 @@ while (queue.length) {
     if (digest(source.replace(/\r\n/g, '\n')) !== capturedProcessAdapterSha256)
       missing.push({ file, runtimeReadSourceUnproven: true });
     for (const [spec, pin] of [
-      ['../../scripts/windows/status-battle-bridge-recovery-mesh.ps1', 'c4aab18c5ea1dd72fe6c4b764899528c83bb8ca937dba1018ea2d68afaec5d51'],
+      ['../../scripts/windows/status-battle-bridge-recovery-mesh.ps1', '52efc88e50a2437bc4c4519b9c447bb440e1e5bdc61d350e8cdb20ea189a82fb'],
       ['../../scripts/windows/status-battle-bridge-worker-watchdog.ps1', '948d3b7ae81589301741d2975d2f5b0878f9592e085d29e768873231d7cb0230'],
     ]) {
       edge(file, spec, 'runtime-read');
