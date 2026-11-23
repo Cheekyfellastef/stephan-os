@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runBattleBridgeGoalDiscoveryHeartbeat } from '../../scripts/battle-bridge-goal-discovery-heartbeat.mjs';
+import { runBattleBridgeGoalDiscoveryHeartbeat as runActualHeartbeat } from '../../scripts/battle-bridge-goal-discovery-heartbeat.mjs';
+const runBattleBridgeGoalDiscoveryHeartbeat = options => runActualHeartbeat({ readWorkerHeartbeatAgeMs: () => 0, ...options });
 import { ensureCriticalBacklogMission } from './criticalBacklogConveyorService.js';
 
 const CURRENT_MAIN = 'a'.repeat(40);
@@ -93,13 +94,23 @@ test('stale-worker held lane is parked while admitted source work can still drai
   ]);
   assert.equal(parked.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
 
+  let drainedBuildCalls = 0;
   const drained = await runBattleBridgeGoalDiscoveryHeartbeat({
+    maxWorkConservingAttempts: 2,
     conveyor: async () => conveyorResult,
-    buildClaimedGoal: async () => ({ processed: true, success: true, reason: 'source-changed-and-tested' }),
+    buildClaimedGoal: async () => {
+      drainedBuildCalls += 1;
+      return drainedBuildCalls === 1
+        ? { processed: true, success: true, missionId: 'goal-drained', reason: 'source-changed-and-tested' }
+        : { processed: false, success: false, reason: 'queue-empty' };
+    },
   });
   assert.equal(drained.ok, true);
+  assert.equal(drainedBuildCalls, 2);
   assert.equal(drained.elasticHold.held[0].reason, 'MISSION_WORKER_RUNTIME_NOT_READY');
-  assert.equal(drained.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
+  assert.equal(drained.materialActionsSucceeded, 1);
+  assert.equal(drained.materialProgress, true);
+  assert.equal(drained.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
 });
 
 test('non-worker programme HOLD cannot enter elastic source admission', async () => {

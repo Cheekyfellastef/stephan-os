@@ -1,9 +1,27 @@
 import {
   MISSION_CONTROLLER_ROUTE,
+  projectMissionControllerTaskV1,
   routeMissionControllerCapacity,
 } from './missionControllerCapacityRouterV1.mjs';
+import { routeWithQualifiedOpenClawProvider } from './openClawProviderPoolQualificationV1.mjs';
+import { MAXIMUM_BUILD_LANES } from './elasticBuildCapacityV1.mjs';
 
 export const PROVIDER_INDEPENDENT_MISSION_CAPACITY_ROUTE_V1_SCHEMA = 'stephanos.provider-independent-mission-capacity-route.v1';
+
+const SOVEREIGN_SOURCE_ADAPTERS = Object.freeze({
+  [MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE]: 'foundry-forge',
+  [MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE]: 'stephanos-native',
+  [MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER]: 'sovereign-commander',
+  [MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE]: 'openclaw-standalone',
+  [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL]: 'openclaw-local',
+});
+
+const OPENCLAW_SOURCE_TASK_CLASSES = new Set(['FOCUSED_REPAIR', 'MULTI_MODULE_IMPLEMENTATION']);
+const CAPACITY_SHORTAGE_BLOCKERS = new Set([
+  'codex-capacity-unavailable',
+  'proven-build-fallback-unavailable',
+  'execution-surface-quarantine-active',
+]);
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -17,6 +35,42 @@ function freeze(value) {
   return Object.freeze(value);
 }
 
+function routeWithTrustedOpenClawSourceCapacity(input) {
+  const base = routeMissionControllerCapacity(input);
+  // The qualified pool may fill capacity, never override a canonical veto. In
+  // particular, its wrapper's broad "base unavailable" rule is not authority
+  // to reopen containment, invalid identity or non-pending dispatch custody.
+  const capacityEligible = (base.dispatchAllowed === true
+    && ['MISSION_CONTROLLER_ROUTE_READY', 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY'].includes(base.finalVerdict))
+    || (base.finalVerdict === 'MISSION_CONTROLLER_CAPACITY_BLOCKED'
+      && base.dispatchAllowed === false
+      && base.blockers.length > 0
+      && base.blockers.every((reason) => CAPACITY_SHORTAGE_BLOCKERS.has(reason)));
+  if (!capacityEligible
+    || !['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(input.mission?.currentPhase)
+    || input.mission?.dispatch?.status !== 'pending'
+    || !/^[0-9a-f]{40}$/i.test(text(input.sourceHead))
+    || base.task?.windowsBound !== false
+    || base.task?.taskClass !== projectMissionControllerTaskV1(input.mission).taskClass
+    || !OPENCLAW_SOURCE_TASK_CLASSES.has(base.task?.taskClass)) return base;
+
+  // These contexts come from the existing host capacity reader. Mission/task
+  // fields are never qualification authority; the pool validator rechecks the
+  // complete source/task/worker-bound real-work and Stephanos authority chain.
+  const contexts = [...list(input.openClawHostContexts), input.openClawHostContext]
+    .filter((context) => context && typeof context === 'object' && !Array.isArray(context))
+    .slice(0, MAXIMUM_BUILD_LANES);
+  const qualified = contexts.map((host) => routeWithQualifiedOpenClawProvider(input, host))
+    .filter((route) => route.finalVerdict === 'MISSION_CONTROLLER_OPENCLAW_POOL_ROUTE_READY'
+      && route.dispatchAllowed === true && route.openClawPoolEligible === true);
+  qualified.sort((left, right) => (
+    left.openClawCapacity.receipt.p95StartLatencySeconds - right.openClawCapacity.receipt.p95StartLatencySeconds
+    || left.openClawCapacity.receipt.queueDepth - right.openClawCapacity.receipt.queueDepth
+    || left.workerId.localeCompare(right.workerId)
+  ));
+  return qualified[0] || base;
+}
+
 function routePlanner(input, options = {}) {
   if (options.routePlanner !== undefined) {
     if (options.testOnly !== true || typeof options.routePlanner !== 'function') {
@@ -24,15 +78,31 @@ function routePlanner(input, options = {}) {
     }
     return options.routePlanner;
   }
-  return routeMissionControllerCapacity;
+  return routeWithTrustedOpenClawSourceCapacity;
 }
 
-function nonOpenAiAttempt(input, planner) {
-  return planner({
+// Shared by the single-mission worker and elastic capacity enumeration. This
+// only excludes metered transports; the canonical routers still own receipt,
+// task-class, source-head, freshness and existing-dispatch qualification.
+export function providerIndependentSourceCapacityInputV1(input = {}) {
+  // A non-OpenAI route is not necessarily sovereign: Desktop Commander is
+  // another metered external transport. Preserve it only as optional normal
+  // capacity when it is actually available, never as blackout independence.
+  const blockedAdapters = [...new Set([...list(input.blockedAdapters), 'desktop-commander'])];
+  return freeze({
     ...input,
     codexStatus: null,
     githubLaneReceipt: null,
+    desktopCommanderLaneReceipt: null,
+    blockedAdapters: freeze(blockedAdapters),
   });
+}
+
+export function isProviderIndependentSourceCapacityCandidateV1(candidate = {}) {
+  const route = text(candidate?.route).toUpperCase();
+  const adapter = text(candidate?.adapter).toLowerCase();
+  return Object.hasOwn(SOVEREIGN_SOURCE_ADAPTERS, route)
+    && SOVEREIGN_SOURCE_ADAPTERS[route] === adapter;
 }
 
 function decorate(result, additions = {}) {
@@ -74,9 +144,9 @@ export function routeProviderIndependentMissionCapacityV1(input = {}, options = 
     });
   }
 
-  const independent = nonOpenAiAttempt(input, planner);
+  const independent = planner(providerIndependentSourceCapacityInputV1(input));
   const independentReady = independent?.dispatchAllowed === true
-    && text(independent.route).toUpperCase() === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE;
+    && isProviderIndependentSourceCapacityCandidateV1(independent);
 
   if (independentReady) {
     return decorate({

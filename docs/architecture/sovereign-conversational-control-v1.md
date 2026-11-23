@@ -1,0 +1,287 @@
+# Sovereign conversational control
+
+Canonical owners: #2573 (Sovereign capability parity), #2315 (the existing
+Control Tower carrier), and #2961 (native goal-building repair admission).
+
+## Purpose
+
+Connect the existing Stephanos AI conversation, Sovereign Commander observations,
+Control Tower requests and original execution ledger. An operator can ask what
+is working, why a request is held, prepare a native inspection, or prepare the
+existing guarded goal-building repair. This does not create another controller,
+worker, scheduler, mailbox, execution owner or authority store.
+
+The previous copied JavaScript diagnostic failed before execution when its
+`node:` import suffixes and template-literal delimiters were lost. The native
+inspection now lives in source as a normal command; Control Tower can request
+the same implementation without pasting JavaScript.
+
+## What can be said and what happens
+
+| Conversation | Behavior | Execution boundary |
+|---|---|---|
+| Commander or Control Tower: “Show me control status” | Read fixed loopback Commander health and the existing relay status, then return a deterministic explanation | No model or native action |
+| “Why is repair blocked?” | Explain observed guardian state and original request outcomes, with observation times | Unknown evidence remains unknown |
+| “Inspect the native control system” | Prepare the exact `OBSERVE_CONTROL_SYSTEM` workflow choice | Authenticated owner submits one existing Control Tower request |
+| “Prepare the guarded goal-building repair request” | Prepare `BUILD_NEXT_ELIGIBLE_GOAL`, unless prior work is unresolved | Existing maintenance, canonical source, custody, gaming and build admission checks still decide execution |
+| Arbitrary shell, reboot, install, custody release, or caller-selected URL/path | Explain the supported fixed capabilities | Never turn chat text into a native command |
+
+Explicit Sovereign/Control Tower targets, their slash forms and operational
+mentions from Everyone enter the control service before provider configuration,
+credential loading, provider health probes or model execution. The existing
+exact `/sovereign` command retains its original read-only health-tool contract.
+General conversations with other participants continue to use the configured
+AI route. “No model used” describes only an observed control-service reply.
+
+The UI keeps the addressed identity separate from the actual responder. A
+control reply identifies **Stephanos control** and never claims that an
+independent native agent was dispatched. The ordinary AI route has no trusted
+operator identity: request text, target and runtime context are presentation
+inputs. They cannot borrow the server's Commander bearer, create a workflow
+request, invoke a maintenance tool or grant execution authority.
+
+An action handoff contains the single existing workflow URL, `main`, one closed
+operation, a ten-minute preparation interval and `NOT_SUBMITTED`. Opening the
+workflow is not submission. The browser validates those fields before showing
+the link, and removes expired or blocked preparation links. A random handoff ID
+is correlation only; it is not an execution token. An unresolved BUILD remains
+visible even if a later read-only inspection succeeds.
+
+## Meter and privacy boundary
+
+Control replies use deterministic observations and no language-model API.
+The remote carrier uses the existing GitHub Actions workflow, and the native
+side uses the existing Sovereign relay and local inspector. Neither requires
+an RDC or Codex remote-control session. GitHub, ChatGPT and any configured model
+retain their own service limits; this does not claim unlimited free hosting or
+model inference. No public listener, shared credential, new user account or
+anonymous native action is introduced.
+
+Public native status is a closed projection capped at 2048 bytes. It excludes
+SID, PID, paths, command lines, custody hashes, raw logs and reusable native
+qualification objects. Source equality is observation, not proof that a process
+loaded those bytes. The selected workspace's ledger is explicitly not proof of
+the relay workspace identity. The local command's caller token observation
+applies only to that diagnostic caller.
+
+## Remote native observation
+
+Authenticated `OBSERVE_CONTROL_SYSTEM` requests use the existing owner-comment
+ingress, Control Tower carrier and Sovereign relay to invoke the checked-in
+native inspector on Battle Bridge. This is the normal remote continuation of
+an inspection request and does not require a manual desktop or PowerShell
+handoff. The original command identity, expected main head, acceptance and
+terminal receipt remain the evidence for that request.
+
+After the source has been merged and adopted, direct local invocation also
+remains available:
+
+```powershell
+& 'C:\Program Files\nodejs\node.exe' 'C:\Users\Stephan Callear\Documents\GitHub\stephan-os\scripts\sovereign-commander-native-inspect.mjs'
+```
+
+Optional closed arguments are `--expected-main <40-character SHA>` and
+`--control-tower-request control-tower-build-<runId>-1`. There is no path, URL,
+PID, shell, install or repair argument. It rejects non-Windows/noncanonical
+source, samples the listener before and after bounded health, independently
+reads the existing fixed-runtime qualification, optionally reads the named
+original ledger entry and rechecks source. It creates no ledger entry and
+performs no native mutation.
+
+### Fresh governor diagnostics
+
+Immediately after initial source validation and before owner checks, the
+inspector captures the one fixed governor script from the expected main Git
+tree and invokes its existing `ObserveAdmission` branch. The child receives
+the captured immutable source through stdin and the fixed action; there is no
+caller-selected command, script, path or action. Bounded source capture, child
+time and output checks preserve unavailable evidence as a typed diagnostic.
+The source is rechecked before the complete observation can be accepted.
+
+The optional public `governorObservation` contains `available`, the original
+`observedAtUtc`, `signalActive`, `overrideMode` and `preparePending`, with
+`readOnly:true`, `diagnosticOnly:true` and `executionAuthority:false`. A failed
+observation contains only unavailability, a closed reason code and those same
+restrictive flags. The producer checks the actual child capture window; the
+shared projection binds the sample to the original inspection's first thirty
+seconds. Historical receipt readback never replaces that sample time with a
+new poll time. Receipts without this optional field keep their existing bytes
+and hashes.
+
+These are fresh detector facts, separate from the persisted governor state
+used by native capacity qualification. The observation does not refresh state,
+reconcile resources, clear preparation, stop a model or stop a process. It
+cannot clear a persisted stale, activity, override or preparation hold. An
+inactive detector result does not establish a complete process census or
+resource permission. Existing governor, owner, guardian and native
+qualification blockers retain their original meanings, and a successful
+governor observation alone cannot complete the control-system observation or
+admit a repair. Core census and writer-custody requirements remain unchanged.
+
+This governor diagnostic extension does not commission a different native
+owner or process-identity path.
+
+### Preserve the actual refusal detail
+
+The optional `owner.diagnosticCode` preserves the existing observer's closed
+`OWNER_*` failure code only when owner identity remains unproven and the source
+is stable. It carries no process identity, raw error text or recovery authority.
+The underlying `MAINTENANCE_MIGRATION_OWNER_UNPROVEN` refusal remains in force.
+
+For `FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED`, the optional
+`nativeRuntime.governorPermission` identifies the failed permission predicates
+and the original governor state's timestamp. It is derived from the same state
+that already passed the canonical workspace, file, schema, preparation, override
+and freshness checks. It does not read another file, resample the state or change
+any admission decision. The closed labels cover phase, override, load mode,
+cooldown, the six activity flags and the two model permissions; values such as
+paths, process IDs and model names are never projected.
+
+Both details are removed on source drift. Unknown owner diagnostic values become
+`OWNER_OBSERVER_INVALID_RECEIPT`; malformed governor details are omitted.
+Historical receipts without these details retain their existing bytes, and the complete
+public status remains subject to its 2048-byte bound. A failed permission label
+explains the observed refusal; it cannot grant qualification, clear a hold or
+prove that a repair subsequently ran.
+
+The optional `nativeRuntime.qualificationDiagnosticCode` preserves a closed
+qualification failure that the existing public reason maps to
+`FIXED_RUNTIME_QUALIFICATION_UNPROVEN`. It is captured from the same failed
+inspection, before that mapping, and retained only for an available denial with
+an original observation timestamp and a stable, matching source. Successful
+qualification, another refusal type, source drift, conflicting native source
+identity and unknown values omit the field. The generic reason, qualification
+flag and general blocker vocabulary remain unchanged.
+
+The compiled catalog covers source-proof, installed-version discovery,
+canonical-source and Git-probe failures, including two defensive source labels.
+A cross-module regression checks every source-declared qualification failure
+against the existing public reasons and this catalog. Adding a typed producer
+failure therefore requires an explicit public classification. Arbitrary error
+text, prefix lookalikes, paths and objects are never accepted as diagnostic
+codes. Historical receipts without the field keep their bytes and hashes, and
+the complete status still has the same 2048-byte limit.
+
+This projection changes neither the fixed-runtime parent nor its protected
+package closure, and performs no additional native read. The parent may already
+have reduced an unstructured filesystem or parsing error to the generic
+qualification refusal; the public projector cannot recover that lost detail.
+For `MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN`, only the existing umbrella
+code is retained. Its private source-step and configuration metadata remain
+outside this bounded public receipt. A fresh native observation is required to
+establish which diagnostic actually applies.
+
+Exit zero and `observationCompleted:true` mean the observation completed. An
+authentic installation or normal-operator refusal is a completed observation,
+not a healthy runtime. Exit two means a bounded inspection could not complete.
+The Control Tower consumer uses the public projected result and never carries
+the native inspector's short-lived private dispatch capability through JSON.
+
+## Durable request outcomes
+
+`currentPoll` describes the current carrier poll. `latestRequestObservation`
+describes a retained original ledger entry. The most recent BUILD and OBSERVE
+records remain separately addressable, so a successful observation cannot hide
+an ambiguous repair. Empty polls, new main heads and relay restarts never mint
+a new timestamp, source head or success for old work.
+
+The original exclusive reservation writes bounded `controlTowerObservation`
+metadata in the same ledger record: authenticated run, attempt, operation,
+source, archive identity and original acceptance time. The existing terminal
+transition writes the final fixed state and proof. A lost or unknown native
+response leaves the original reservation in place. There is no mutable
+“unknown-result update” that could race with and downgrade a terminal result.
+
+One shared status transition retains those original observations and closed
+request locators across an empty poll, observer rejection, malformed callback,
+carrier exception and restart. New heartbeat/failure times describe only the
+current poll. A generated sequence matrix checks that failures cannot erase an
+accepted request or refresh its historical observation time.
+
+Read-only recovery scans at most 256 hashed shard directories and 4,096 records
+in the original ledger. Each record remains at most 4,096 bytes; stored request
+metadata is capped at 3,500 bytes including its at-most-2,048-byte public native
+status. Recovery validates hashed paths and stable file/directory identities.
+An incomplete or unsafe scan holds building, while fixed observation remains
+available. This is not a cross-process lock or a replacement for original
+maintenance-owner custody.
+
+Historical records without new metadata remain readable but expose
+`LEGACY_DETAIL_UNAVAILABLE`; their missing timestamp, source and blocker are
+never reconstructed from a current poll. An original terminal phase with valid
+`DONE` or `BLOCKED` remains terminal and does not hold future builds merely
+because it predates the new detail format. A reservation or invalid terminal
+evidence stays unresolved. An unresolved original build prevents
+another distinct build run from being reserved or woken. Read-only observation
+remains available to investigate it. These records are diagnostics and replay
+protection, not goal completion, source admission or lease release authority.
+
+When building is held, the reader authenticates each candidate before selecting
+only an observation, within its existing ten-run and fifteen-second bounds.
+An older held BUILD run cannot starve a later OBSERVE run. Skipped builds are
+not marked recorded, completed, cancelled or executed. A status locator whose
+ledger entry has gone missing remains a historical unknown; absence never
+proves completion or permission to repeat work.
+
+### Compatibility with existing open work
+
+- PR #3302's separate ledger inventory validator must admit the optional
+  `controlTowerObservation` field through the same closed model when the two
+  changes are reconciled. Preserve its full-record digest and stability checks;
+  this change does not activate its mailbox-rotation inventory contract.
+- PR #3268's rotation tests and owner remain separate.
+- PR #2965 owns durable cross-device chat recovery and iPad scrolling. The
+  control targets and receipt cards are narrow additions to the existing UI;
+  its conversation recovery must preserve structured target context and must
+  not reintroduce prose prefixes before slash commands.
+- PRs #3169/#3159 retain their MCP and HTTP capability ownership. This slice
+  does not modify those registries, the native maintenance owner or its
+  qualification policy, and does not expand the native dependency set. Source
+  adoption still satisfies the existing complete current-main qualification.
+
+## Verification and commissioning
+
+`npm run stephanos:control:test` covers the bounded request, observation,
+inspection, conversation and presentation contracts. The browser suite exercises
+the actual desktop/phone DOM against explicit backend fixtures, including
+request provenance and switching targets during a delayed reply. AI handler
+tests use throwing provider/tool spies to prove that control replies cannot
+fall through to provider health, credential overlays or native execution.
+
+Fixture/source tests are not native commissioning. Acceptance still requires
+protected source integration, existing owner adoption, one authenticated
+observation run at the intended source head, its durable run-correlated native
+receipt, a real Commander conversation response, and—separately—any claimed
+material repair/build's original worker evidence. A staged Actions artifact,
+completed observation or successful guarded wake never proves a finished goal.
+
+The existing Sovereign Core Repair Custody job runs the inspector, public
+projection and governor suites on both Ubuntu and Windows. Its Windows-only
+governor fixtures execute the unchanged script and real `ObserveAdmission`
+parameter branch with inert process observations, mutation guards and an
+isolated workspace. Before/after file comparisons cover absent state, retained
+expired preparation and stale recorded activity. This proves the bounded
+source behavior in a fixture; commissioning still requires the actual remote
+request and its original Battle Bridge receipt.
+
+Reusable invariant: transport polls, retained request outcomes, runtime
+admission and material construction are separate facts. Keep their original
+identities and evidence even when they are presented in one conversation.
+
+## Connected GitHub submission and ordinary browser chat
+
+The bounded owner-comment ingress described in
+[Control Tower build start](control-tower-build-start-v1.md) lets an already
+authenticated GitHub connector submit the two existing closed operations to
+the same workflow, artifact reader and execution ledger. GitHub supplies the
+owner identity and immutable comment provenance. Chat text and runtime context
+do not supply those facts.
+
+The ordinary AI route still has no authenticated operator session. Its replies
+remain read-only, and a prepared browser handoff remains `NOT_SUBMITTED`.
+It does not read a Commander bearer, synthesize a GitHub principal, or post an
+owner comment on the browser caller's behalf. Receipt projections can now retain
+`control-tower-comment-<id>-1` alongside existing run-based request IDs. The
+actual workflow run remains separate metadata; missing comment history has no
+invented run ID. Desktop/phone receipt presentation is evidence only and cannot
+create submission, execution, native pickup or goal-completion authority.

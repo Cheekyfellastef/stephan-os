@@ -67,6 +67,22 @@ test('Air Link must already be active before Starfield starts', () => {
   assert.ok(result.blockers.includes('meta-air-link-session-not-active'));
 });
 
+test('current Meta Horizon Client.exe identity is accepted', () => {
+  const observations = mutarObservations();
+  observations.metaClient.path = 'C:\\Program Files\\Oculus\\Support\\oculus-client\\Client.exe';
+  const result = evaluateStarfieldVrLaunch(mutarProfile(), observations);
+  assert.equal(result.ok, true);
+  assert.equal(result.action, STARFIELD_VR_LAUNCH_ACTIONS.MUTAR_OPENXR);
+});
+
+test('arbitrary Meta client executable names remain blocked', () => {
+  const observations = mutarObservations();
+  observations.metaClient.path = 'C:\\Program Files\\Oculus\\Support\\oculus-client\\Other.exe';
+  const result = evaluateStarfieldVrLaunch(mutarProfile(), observations);
+  assert.ok(result.blockers.includes('meta-horizon-link-client-identity-mismatch'));
+});
+
+
 test('game and provider hashes bind launch to the verified evidence packet', () => {
   const observations = mutarObservations();
   observations.gameLauncher.sha256 = hash('c');

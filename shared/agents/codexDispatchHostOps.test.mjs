@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import {
   CODEX_DISPATCH_TEST_ARGS,
   parseTapTestSummary,
+  runApprovedBattleBridgeProofCommands,
   runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from './codexDispatchHostOps.mjs';
@@ -219,7 +220,11 @@ test('real Git fast-forward preserves and canonicalizes target-identical tracked
   const regression = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js';
   const servicePath = path.join(repoRoot, service);
   const regressionPath = path.join(repoRoot, regression);
-  const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', shell: false, windowsHide: true });
+  // This disposable fixture uses a local bare remote. Admit file transport only
+  // for its own child invocations; retain the host's inherited Git restrictions.
+  const git = (cwd, args, options = {}) => spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], {
+    ...options, cwd, encoding: 'utf8', shell: false, windowsHide: true,
+  });
   try {
     await mkdir(path.dirname(servicePath), { recursive: true });
     assert.equal(git(root, ['init', '-b', 'main', repoRoot]).status, 0);
@@ -245,7 +250,7 @@ test('real Git fast-forward preserves and canonicalizes target-identical tracked
     await writeFile(regressionPath, 'canonical test\n');
     const spawnSyncFn = (command, args, options) => command === 'node-test'
       ? { status: 0, stdout: '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n', stderr: '' }
-      : spawnSync(command, args, options);
+      : command === 'git' ? git(options.cwd, args, options) : spawnSync(command, args, options);
     const result = syncCodexDispatchBridge({
       repoRoot,
       operatorApproval: 'operator-approved',
@@ -344,7 +349,11 @@ test('real Git rejection preserves distinct staged content behind target-identic
   const remoteRoot = path.join(root, 'remote.git');
   const service = 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
   const servicePath = path.join(repoRoot, service);
-  const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8', shell: false, windowsHide: true });
+  // Keep the local test remote usable even under the fresh host's restricted
+  // environment, without changing process.env or production transport policy.
+  const git = (cwd, args, options = {}) => spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], {
+    ...options, cwd, encoding: 'utf8', shell: false, windowsHide: true,
+  });
   try {
     await mkdir(path.dirname(servicePath), { recursive: true });
     assert.equal(git(root, ['init', '-b', 'main', repoRoot]).status, 0);
@@ -374,7 +383,8 @@ test('real Git rejection preserves distinct staged content behind target-identic
       operatorApproval: 'operator-approved',
       expectedBranch: 'main',
       nodeCommand: 'node-test',
-      spawnSyncFn: spawnSync,
+      spawnSyncFn: (command, args, options) => command === 'git'
+        ? git(options.cwd, args, options) : spawnSync(command, args, options),
     });
 
     assert.equal(result.ok, false);
@@ -858,8 +868,8 @@ test('direct diagnostics treat only an exact release record as safely inactive l
       },
     },
   };
-  const readWithRelease = (releaseRecord) => (filePath) => {
-    if (filePath.endsWith('mission-orchestrator-worker-heartbeat.json')) return { state: 'present', value: heartbeat };
+  const readWithRelease = (releaseRecord, heartbeatRecord = heartbeat) => (filePath) => {
+    if (filePath.endsWith('mission-orchestrator-worker-heartbeat.json')) return { state: 'present', value: heartbeatRecord };
     if (filePath.endsWith('source-mutation-lease-current.json')) return { state: 'present', value: lease };
     if (filePath.endsWith(`${release.statusId}.json`)) return { state: 'present', value: releaseRecord };
     return { state: 'absent', value: null };
@@ -882,6 +892,32 @@ test('direct diagnostics treat only an exact release record as safely inactive l
   assert.equal(accepted.workerTelemetry.lease.releaseRecordValid, true);
   assert.deepEqual(accepted.workerTelemetry.blockers, []);
 
+  const degraded = await runBattleBridgeDiagnostics({
+    repoRoot: repository,
+    endpoints: [],
+    spawnSyncFn: scriptedSpawn({
+      'git rev-parse --show-toplevel': { stdout: `${repository}\n` },
+      'git branch --show-current': { stdout: 'main\n' },
+      'git rev-parse HEAD': { stdout: `${fullHead}\n` },
+      'git rev-parse --abbrev-ref --symbolic-full-name @{upstream}': { stdout: 'origin/main\n' },
+      'git status --branch --untracked-files=all': { stdout: 'On branch main\nYour branch is up to date with origin/main.\n' },
+      'git rev-list --left-right --count HEAD...@{upstream}': { stdout: '0\t0\n' },
+    }),
+    nowFn: () => new Date(nowUtc),
+    workspaceRoot: '/telemetry-fixture',
+    workerInspection,
+    readRecord: readWithRelease(release, {
+      ...heartbeat,
+      lastTickVerdict: 'MISSION_WORKER_TICK_FAILED',
+    }),
+  });
+  assert.equal(degraded.status, 'BLOCKED');
+  assert.equal(degraded.verdict, 'FAIL');
+  assert.equal(degraded.workerTelemetry.workerActive, true);
+  assert.equal(degraded.workerTelemetry.workerStatus, 'DEGRADED');
+  assert.equal(degraded.workerTelemetry.heartbeat.lastTickAffirmative, false);
+  assert.ok(degraded.workerTelemetry.blockers.includes('WORKER_LAST_TICK_DEGRADED'));
+
   const rejected = await runBattleBridgeDiagnostics({
     repoRoot: repository,
     endpoints: [],
@@ -901,4 +937,111 @@ test('direct diagnostics treat only an exact release record as safely inactive l
   assert.equal(rejected.workerTelemetry.ok, false);
   assert.ok(rejected.workerTelemetry.blockers.includes('SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID'));
   assert.equal(rejected.workerTelemetry.lease.released, false);
+});
+
+
+test('approved deterministic Battle Bridge proof runs exact allowlisted commands without a provider child', () => {
+  const head = 'a'.repeat(40);
+  const spawnSyncFn = scriptedSpawn({
+    'git rev-parse HEAD': [
+      { stdout: `${head}\n` },
+      { stdout: `${head}\n` },
+      { stdout: `${head}\n` },
+    ],
+    'git status --porcelain=v1 --untracked-files=all': [
+      { stdout: '' },
+      { stdout: '' },
+    ],
+    'node.exe --test shared/agents/autonomyBuildTrackV1.test.mjs': {
+      stdout: '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n',
+    },
+  });
+
+  const result = runApprovedBattleBridgeProofCommands({
+    repoRoot: 'C:\\repo',
+    expectedHead: head,
+    requestId: 'final-link-codex-2373-v1',
+    requestedProofCommands: [
+      'git rev-parse HEAD',
+      'node --test shared/agents/autonomyBuildTrackV1.test.mjs',
+    ],
+    platform: 'win32',
+    spawnSyncFn,
+    nodeCommand: 'node.exe',
+    nowFn: () => new Date('2026-09-25T05:40:00.000Z'),
+  });
+
+  assert.equal(result.handled, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.executionStarted, true);
+  assert.match(result.providerTaskId, /^host-proof-/);
+  assert.equal(result.exactHeadStable, true);
+  assert.equal(result.worktreeStable, true);
+  assert.equal(result.sourceMutationDetected, false);
+  assert.equal(result.finalVerdict, 'DIRECT_BATTLE_BRIDGE_PROOF_PASS');
+  assert.equal(result.proofResults.length, 2);
+  assert.equal(result.proofResults[0].observedValue, head);
+  assert.equal(result.proofResults[1].tapSummary.pass, 1);
+  assert.equal(spawnSyncFn.calls.some((call) => /powershell|cmd\.exe|npm|reset|clean|stash|checkout/i.test(call)), false);
+});
+
+test('unsupported proof commands remain on the existing provider path without host execution', () => {
+  let calls = 0;
+  const result = runApprovedBattleBridgeProofCommands({
+    repoRoot: 'C:\\repo',
+    expectedHead: 'b'.repeat(40),
+    requestId: 'unsupported-direct-proof-v1',
+    requestedProofCommands: ['npm test'],
+    platform: 'win32',
+    spawnSyncFn: () => {
+      calls += 1;
+      throw new Error('host execution must not start');
+    },
+  });
+
+  assert.equal(result.handled, false);
+  assert.equal(result.executionStarted, false);
+  assert.equal(result.providerTaskId, '');
+  assert.equal(result.blocker, 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_NOT_ALLOWLISTED');
+  assert.equal(calls, 0);
+});
+
+test('deterministic Battle Bridge proof fails closed if an allowlisted test changes the worktree', () => {
+  const head = 'c'.repeat(40);
+  const spawnSyncFn = scriptedSpawn({
+    'git rev-parse HEAD': [
+      { stdout: `${head}\n` },
+      { stdout: `${head}\n` },
+      { stdout: `${head}\n` },
+    ],
+    'git status --porcelain=v1 --untracked-files=all': [
+      { stdout: '' },
+      { stdout: '?? generated-proof-artifact.txt\n' },
+    ],
+    'node.exe --test shared/agents/autonomyBuildTrackV1.test.mjs': {
+      stdout: '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n',
+    },
+  });
+
+  const result = runApprovedBattleBridgeProofCommands({
+    repoRoot: 'C:\\repo',
+    expectedHead: head,
+    requestId: 'direct-proof-dirt-detection-v1',
+    requestedProofCommands: [
+      'git rev-parse HEAD',
+      'node --test shared/agents/autonomyBuildTrackV1.test.mjs',
+    ],
+    platform: 'win32',
+    spawnSyncFn,
+    nodeCommand: 'node.exe',
+    nowFn: () => new Date('2026-09-25T05:40:00.000Z'),
+  });
+
+  assert.equal(result.handled, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.executionStarted, true);
+  assert.equal(result.blocker, 'DIRECT_BATTLE_BRIDGE_PROOF_WORKTREE_CHANGED');
+  assert.equal(result.sourceMutationDetected, true);
+  assert.equal(result.finalVerdict, 'DIRECT_BATTLE_BRIDGE_PROOF_BLOCKED');
+  assert.equal(spawnSyncFn.calls.some((call) => /\b(reset|clean|stash|checkout)\b/i.test(call)), false);
 });

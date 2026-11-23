@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
+import vm from 'node:vm';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -8,14 +9,20 @@ import { tmpdir } from 'node:os';
 import {
   BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
   FORGE_LIFEBOAT_WORKER_ID,
+  FORGE_LIFEBOAT_LOCAL_TASK_CLASSES,
+  FORGE_LIFEBOAT_MAX_ALLOWED_FILES,
   MISSION_CONTROLLER_ROUTE,
   createBuildLaneCapacityStatusRecord,
   forgeLifeboatAuthorityReceiptId,
   forgeLifeboatProofRef,
   publishBuildLaneCapacityToSharedWorkspace,
+  projectForgeLifeboatSourceCompatibilityV1,
+  projectMissionControllerTaskV1,
   routeMissionControllerCapacity,
   validateBuildLaneCapacityReceipt,
 } from './missionControllerCapacityRouterV1.mjs';
+import { CODEX_TASK_CLASS } from './codexCapacityGovernorV1.mjs';
+import { resolveElasticExternalCapacityCandidates } from '../../stephanos-server/services/elasticOpenClawProviderPoolService.js';
 import {
   createStephanosNativeCapacityReceipt,
   createStephanosNativeSourceAuthority,
@@ -75,6 +82,19 @@ function githubReceipt(overrides = {}) {
     p95StartLatencySeconds: 20,
     authorityReceiptIds: [],
     proofRefs: ['receipts/github-builder/capacity.json'],
+    ...overrides,
+  };
+}
+
+function commanderReceipt(overrides = {}) {
+  return {
+    ...githubReceipt(),
+    receiptId: 'desktop-commander-capacity-20260810t1159z',
+    route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+    sourceHead: SOURCE_HEAD,
+    workerId: 'desktop-commander-battle-bridge-01',
+    p95StartLatencySeconds: 5,
+    proofRefs: ['receipts/desktop-commander/capacity.json'],
     ...overrides,
   };
 }
@@ -231,6 +251,54 @@ test('low Codex capacity routes an unowned source repair to a freshly proven Git
   assert.equal(result.selectedCapacityReceiptId, githubReceipt().receiptId);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('low Codex capacity routes scheduler-approved source work to fresh Desktop Commander capacity', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    desktopCommanderLaneReceipt: commanderReceipt(),
+  });
+  assert.equal(result.codex.dispatchAllowed, false);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER);
+  assert.equal(result.adapter, 'desktop-commander');
+  assert.equal(result.workerId, 'desktop-commander-battle-bridge-01');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.selectedCapacityReceiptId, commanderReceipt().receiptId);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('Desktop Commander capacity is rejected after the source head moves', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: 'b'.repeat(40),
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    desktopCommanderLaneReceipt: commanderReceipt(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-build-fallback-unavailable'));
+});
+
+test('Windows-bound work is not widened into Desktop Commander source authority', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    mission: mission({
+      allowedFiles: ['scripts/windows/repair-worker.ps1'],
+      requiredEvidence: ['Windows runtime proof'],
+    }),
+    task: { taskClass: 'WINDOWS_RUNTIME_PROOF', windowsBound: true },
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    desktopCommanderLaneReceipt: commanderReceipt({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-windows-capable-fallback-unavailable'));
 });
 
 test('Lane 6 routes a source-only repair from the exact-head local lifeboat receipt without Forge sidecar M2/M3', () => {
@@ -480,3 +548,217 @@ test('a lane worker can publish its fresh capacity receipt to the canonical fabr
   assert.equal(persisted.capacityReceipt.route, 'CHATGPT_GITHUB');
   assert.equal(persisted.mergeAuthority, false);
 });
+
+
+test('quarantined Codex surface routes the same mission through proven GitHub capacity', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    blockedAdapters: ['codex'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+  assert.equal(result.adapter, 'chatgpt-github');
+  assert.equal(result.dispatchAllowed, true);
+  assert.deepEqual(result.blockedAdapters, ['codex']);
+});
+
+test('quarantined GitHub writer is skipped in favour of the already-proven Forge lifeboat', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    githubLaneReceipt: githubReceipt({ p95StartLatencySeconds: 1 }),
+    forgeLaneReceipt: lifeboatReceipt(),
+    blockedAdapters: ['chatgpt-github'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.workerId, FORGE_LIFEBOAT_WORKER_ID);
+  assert.equal(result.dispatchAllowed, true);
+  assert.deepEqual(result.blockedAdapters, ['chatgpt-github']);
+});
+
+test('quarantining every currently proven writer holds only capacity rather than widening authority', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    forgeLaneReceipt: lifeboatReceipt(),
+    blockedAdapters: ['codex', 'chatgpt-github', 'foundry-forge'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('execution-surface-quarantine-active'));
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+test('capacity receipts match canonical GitHub repository identity case-insensitively', () => {
+  const receipt = lifeboatReceipt(SOURCE_HEAD, {
+    repository: 'Cheekyfellastef/stephan-os',
+  });
+  const candidateMission = mission({
+    repository: 'cheekyfellastef/stephan-os',
+    allowedFiles: ['docs/architecture/canary.md'],
+  });
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: candidateMission,
+    codexStatus: null,
+    githubLaneReceipt: null,
+    forgeLaneReceipt: receipt,
+    forgeSidecar: null,
+  });
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.selectedCapacityReceiptId, receipt.receiptId);
+});
+
+test('local Forge compatibility retains the actual raw scope bound and task class', () => {
+  assert.deepEqual(FORGE_LIFEBOAT_LOCAL_TASK_CLASSES, ['FOCUSED_REPAIR']);
+  assert.equal(FORGE_LIFEBOAT_MAX_ALLOWED_FILES, 4);
+  for (let count = 0; count <= 18; count++) {
+    const allowedFiles = Array.from({ length: count }, (_, i) => `shared/agents/file${i}.mjs`);
+    const candidate = mission({ currentPhase: 'AGENT_IMPLEMENTATION', allowedFiles });
+    const before = JSON.stringify(candidate);
+    const projected = projectForgeLifeboatSourceCompatibilityV1(candidate);
+    assert.equal(projected.compatible, count >= 1 && count <= 4, `raw scope count ${count}`);
+    assert.equal(projected.allowedFileCount, count);
+    assert.equal(JSON.stringify(candidate), before, 'projection cannot rewrite source permissions');
+  }
+  const fiveScopes = ['a.mjs', 'a.mjs/**', 'b.mjs', 'b.mjs/**', 'b.mjs'];
+  for (const currentPhase of ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']) {
+    assert.equal(projectForgeLifeboatSourceCompatibilityV1(mission({ currentPhase, allowedFiles: fiveScopes }),
+      { taskClass: 'FOCUSED_REPAIR' }).compatible, false, 'class override or duplicate paths cannot shrink native scope');
+  }
+  for (const allowedFiles of [undefined, null, 'a.mjs', [''], [null]]) {
+    assert.equal(projectForgeLifeboatSourceCompatibilityV1(mission({ allowedFiles })).compatible, false);
+  }
+  assert.equal(projectForgeLifeboatSourceCompatibilityV1(mission(), { taskClass: 'MULTI_MODULE_IMPLEMENTATION' }).compatible, false);
+  assert.equal(projectForgeLifeboatSourceCompatibilityV1(mission({ requiredEvidence: ['Battle Bridge proof'] }),
+    { taskClass: 'FOCUSED_REPAIR' }).compatible, false);
+});
+
+test('shared compatibility agrees with the actual worker preclaim gate and compiled native scope bound', async () => {
+  const worker = await readFile(new URL('../../scripts/mission-orchestrator-worker.mjs', import.meta.url), 'utf8');
+  const start = worker.indexOf('async function processFixedSourceTaskInWorker(options) {');
+  const end = worker.indexOf('  const resource=()=>', start);
+  assert.ok(start >= 0 && end > start, 'inspect only the actual existing preclaim gate');
+  const gate = worker.slice(start, end) + "return {processed:false,reason:'consumer-envelope-admitted'};\n}";
+  for (const currentPhase of ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']) {
+    for (let count = 0; count <= 18; count++) {
+      const candidate = mission({ currentPhase, allowedFiles: Array.from({ length: count }, (_, i) => `shared/agents/file${i}.mjs`) });
+      const context = vm.createContext({ fixedSourceGrantClass: () => true,
+        readMissionRecord: async () => ({ state: candidate }), projectMissionControllerTaskV1, CODEX_TASK_CLASS });
+      vm.runInContext(gate + '\nglobalThis.check = processFixedSourceTaskInWorker;', context);
+      const observed = await context.check({ actionGrant: { missionId: candidate.missionId } });
+      assert.equal(projectForgeLifeboatSourceCompatibilityV1(candidate).compatible,
+        observed.reason === 'consumer-envelope-admitted', `${currentPhase}/${count}`);
+    }
+  }
+  const native = await readFile(new URL('../../scripts/windows/SovereignFixedRuntimeSourceV1.cs', import.meta.url), 'utf8');
+  const bound = native.match(/\(\(object\[\]\)pathsValue\)\.Length>(\d+)/);
+  assert.ok(bound, 'compiled source binding must retain its explicit independent scope bound');
+  assert.equal(Number(bound[1]), FORGE_LIFEBOAT_MAX_ALLOWED_FILES);
+});
+
+test('cached multi-module local Forge advertising cannot select a consumer that rejects the task', () => {
+  for (const currentPhase of ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']) {
+    for (const count of [5, 18]) {
+      const result = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD,
+        mission: mission({ currentPhase, allowedFiles: Array.from({ length: count }, (_, i) => `shared/agents/file${i}.mjs`) }),
+        codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+        forgeLaneReceipt: lifeboatReceipt(),
+      });
+      assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+      assert.equal(result.dispatchAllowed, false);
+    }
+  }
+  const result = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD,
+    mission: mission(), task: { taskClass: 'MULTI_MODULE_IMPLEMENTATION' },
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }), forgeLaneReceipt: lifeboatReceipt() });
+  assert.equal(result.dispatchAllowed, false);
+});
+
+test('focused local Forge keeps one through four raw scopes despite old extra advertised classes', () => {
+  for (let count = 1; count <= 4; count++) {
+    const result = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD,
+      mission: mission({ currentPhase: 'AGENT_IMPLEMENTATION', allowedFiles: Array.from({ length: count }, (_, i) => `shared/agents/file${i}.mjs`) }),
+      codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }), forgeLaneReceipt: lifeboatReceipt() });
+    assert.equal(result.dispatchAllowed, true);
+    assert.equal(result.workerId, FORGE_LIFEBOAT_WORKER_ID);
+  }
+});
+
+function admittedForgeSidecar() {
+  const canonical = value => value === null || typeof value !== 'object' ? JSON.stringify(value)
+    : Array.isArray(value) ? `[${value.map(canonical).join(',')}]`
+      : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  const seal = core => ({ ...core, payloadSha256: createHash('sha256').update(canonical(core)).digest('hex') });
+  const tree = 'c'.repeat(40);
+  return { goalId: '#1671', repository: REPOSITORY, canonicalMainHead: SOURCE_HEAD,
+    canonicalMainTree: tree, mirrorHead: SOURCE_HEAD, mirrorTree: tree, sourceReady: true,
+    m2Receipt: seal({ schemaVersion: 'stephanos.forge-shadow-m2-runtime-receipt.v1', receiptId: 'forge-m2-runtime-001',
+      repository: REPOSITORY, sourceHead: SOURCE_HEAD, sourceTree: tree, mirrorHead: SOURCE_HEAD, mirrorTree: tree,
+      operation: 'INSTALL_FORGE_SHADOW_M2', state: 'DONE', finalVerdict: 'FORGE_SHADOW_M2_READY',
+      completedAt: '2026-08-10T11:59:00Z', proofRefs: ['receipts/forge/m2.json'] }),
+    m3RuntimeReceipt: seal({ schemaVersion: 'stephanos.forge-shadow-m3-runner-runtime-receipt.v1', receiptId: 'forge-m3-runtime-001',
+      repository: REPOSITORY, sourceHead: SOURCE_HEAD, sourceTree: tree, artifactSetDigest: `sha256:${'e'.repeat(64)}`,
+      runnerIdentities: ['stephanos-forge-linux-runner-01', 'stephanos-forge-windows-proof-runner-01'],
+      linuxReviewRunnerConnected: true, windowsProofRunnerConnected: true, teardownComplete: true,
+      zeroResidualRegistration: true, zeroResidualCredential: true, zeroResidualWorkspace: true, canCarryRealWork: true,
+      finalVerdict: 'FORGE_SHADOW_M3_RUNNER_RUNTIME_READY', completedAt: '2026-08-10T11:59:00Z', proofRefs: ['receipts/forge/m3.json'] }),
+    evidenceRefs: ['receipts/forge/m2.json', 'receipts/forge/m3.json'] };
+}
+
+test('local Forge cannot borrow sidecar authority while a distinct qualified Forge worker retains multi-module routing', () => {
+  const input = { nowUtc: NOW, sourceHead: SOURCE_HEAD,
+    mission: mission({ currentPhase: 'AGENT_IMPLEMENTATION', allowedFiles: Array.from({ length: 6 }, (_, i) => `shared/agents/file${i}.mjs`) }),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }), forgeSidecar: admittedForgeSidecar() };
+  const other = routeMissionControllerCapacity({ ...input, forgeLaneReceipt: forgeReceipt() });
+  assert.equal(other.dispatchAllowed, true, 'the sidecar fixture must actually qualify the distinct worker');
+  assert.equal(other.workerId, 'stephanos-forge-builder-01');
+  const local = routeMissionControllerCapacity({ ...input, forgeLaneReceipt: forgeReceipt({ workerId: FORGE_LIFEBOAT_WORKER_ID }) });
+  assert.equal(local.dispatchAllowed, false);
+  assert.equal(local.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  const github = routeMissionControllerCapacity({ ...input, forgeLaneReceipt: lifeboatReceipt(), githubLaneReceipt: githubReceipt() });
+  assert.equal(github.dispatchAllowed, true);
+  assert.equal(github.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+});
+
+test('elastic resolution cannot trim a padded local Forge identity into a wider source consumer', () => {
+  const wide = mission({ currentPhase: 'AGENT_IMPLEMENTATION',
+    allowedFiles: Array.from({ length: 18 }, (_, i) => `shared/agents/file${i}.mjs`) });
+  for (const workerId of [FORGE_LIFEBOAT_WORKER_ID, ` ${FORGE_LIFEBOAT_WORKER_ID} `, `\t${FORGE_LIFEBOAT_WORKER_ID}\n`]) {
+    const capacity = { forgeSidecar: admittedForgeSidecar(), forgeLaneReceipt: forgeReceipt({ workerId }) };
+    const direct = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD, mission: wide,
+      codexStatus: stalledForIdentityRegression(), ...capacity });
+    assert.equal(direct.dispatchAllowed, false);
+    assert.deepEqual(resolveElasticExternalCapacityCandidates(wide, capacity, SOURCE_HEAD, NOW), []);
+  }
+  const genuine = resolveElasticExternalCapacityCandidates(wide,
+    { forgeSidecar: admittedForgeSidecar(), forgeLaneReceipt: forgeReceipt() }, SOURCE_HEAD, NOW);
+  assert.equal(genuine.length, 1);
+  assert.equal(genuine[0].workerId, 'stephanos-forge-builder-01');
+
+  const focused = mission({ currentPhase: 'AGENT_IMPLEMENTATION' });
+  const capacity = { forgeLaneReceipt: lifeboatReceipt(SOURCE_HEAD, { workerId: ` ${FORGE_LIFEBOAT_WORKER_ID} ` }) };
+  const direct = routeMissionControllerCapacity({ nowUtc: NOW, sourceHead: SOURCE_HEAD, mission: focused,
+    codexStatus: stalledForIdentityRegression(), ...capacity });
+  assert.equal(direct.dispatchAllowed, true);
+  assert.equal(direct.workerId, FORGE_LIFEBOAT_WORKER_ID, 'the local route emits the same canonical identity consumed downstream');
+  const admitted = resolveElasticExternalCapacityCandidates(focused, capacity, SOURCE_HEAD, NOW);
+  assert.equal(admitted.length, 1);
+  assert.equal(admitted[0].workerId, FORGE_LIFEBOAT_WORKER_ID);
+});
+
+function stalledForIdentityRegression() {
+  return codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' });
+}

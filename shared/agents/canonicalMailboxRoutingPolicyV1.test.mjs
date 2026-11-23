@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest, RETIRED_CANONICAL_MAILBOX_ISSUES } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -17,7 +18,7 @@ test('active routing is admitted only through the exact canonically derived refe
   assert.equal(admitted.hardCodedActiveIssueAllowed, false);
 
   const forged = evaluateCanonicalMailboxReference({
-    issueNumber: 2158,
+    issueNumber: activeMailboxIssueForTest,
     usage: 'runtime-routing',
     authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE,
   });
@@ -50,21 +51,20 @@ test('canonical active authority cannot be transferred by spread, reflection or 
   assert.equal(evaluateCanonicalMailboxReference(derived).ok, true);
 });
 
-test('retired mailbox identity can remain history but cannot become active routing', () => {
-  const history = evaluateCanonicalMailboxReference({
-    issueNumber: 1507,
-    usage: 'historical',
-  });
-  assert.equal(history.ok, true);
-  assert.equal(history.historicalReferenceAllowed, true);
+test('retired mailbox identities can remain history but cannot become active routing', () => {
+  for (const issueNumber of RETIRED_CANONICAL_MAILBOX_ISSUES) {
+    const history = evaluateCanonicalMailboxReference({ issueNumber, usage: 'historical' });
+    assert.equal(history.ok, true);
+    assert.equal(history.historicalReferenceAllowed, true);
 
-  const active = evaluateCanonicalMailboxReference({
-    issueNumber: 1507,
-    usage: 'workflow-guard',
-    authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE,
-  });
-  assert.equal(active.ok, false);
-  assert.equal(active.blocker, 'RETIRED_MAILBOX_ACTIVE_REFERENCE_FORBIDDEN');
+    const active = evaluateCanonicalMailboxReference({
+      issueNumber,
+      usage: 'workflow-guard',
+      authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE,
+    });
+    assert.equal(active.ok, false);
+    assert.equal(active.blocker, 'RETIRED_MAILBOX_ACTIVE_REFERENCE_FORBIDDEN');
+  }
 });
 
 test('foreign active mailbox identity fails closed even when the caller copies the authority label', () => {
@@ -75,7 +75,7 @@ test('foreign active mailbox identity fails closed even when the caller copies t
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'CANONICAL_MAILBOX_ACTIVE_REFERENCE_MISMATCH');
-  assert.equal(result.expectedIssueNumber, 2158);
+  assert.equal(result.expectedIssueNumber, activeMailboxIssueForTest);
 });
 
 test('canonical active reference helper refuses non-active usage', () => {
@@ -87,7 +87,7 @@ test('batch audit preserves historical references while surfacing forged active 
   const audit = auditCanonicalMailboxReferences([
     { issueNumber: 1507, usage: 'provenance' },
     canonicalActiveMailboxReference('operator-runbook-active'),
-    { issueNumber: 2158, usage: 'workflow-guard', authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE },
+    { issueNumber: activeMailboxIssueForTest, usage: 'workflow-guard', authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE },
   ]);
   assert.equal(audit.ok, false);
   assert.equal(audit.blockerCount, 1);

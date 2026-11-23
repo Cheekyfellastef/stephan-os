@@ -1,0 +1,429 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  OPENCLAW_TASK_CLASS,
+  OPENCLAW_UPDATE_CAPABILITY_ORIGIN,
+  OPENCLAW_UPDATE_DISPOSITION,
+  buildOpenClawUpdateCapabilityLedgerV1,
+} from './openClawUpdateCapabilityLedgerV1.mjs';
+
+import {
+  OPENCLAW_STAGED_UPDATE_SCHEMA,
+  OPENCLAW_STAGED_UPDATE_STATUS,
+} from './openClawStagedUpdateV1.mjs';
+import {
+  OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS,
+  evaluateOpenClawUpdateCapabilityCandidateV1,
+} from './openClawUpdateCapabilityCandidateGateV1.mjs';
+
+
+function baseCapability(overrides = {}) {
+  return {
+    capabilityId: 'openclaw.gateway-provider',
+    purpose: 'Provide the canonical OpenClaw Gateway provider surface.',
+    currentImplementation: 'stephanos.gateway-provider.v1',
+    candidateImplementation: 'stephanos.gateway-provider.v1',
+    origin: OPENCLAW_UPDATE_CAPABILITY_ORIGIN.STEPHANOS_EXTENSION,
+    candidateOrigin: OPENCLAW_UPDATE_CAPABILITY_ORIGIN.STEPHANOS_EXTENSION,
+    protected: true,
+    qualificationRefs: ['qualification:oc1'],
+    tests: ['test:gateway-provider'],
+    dependencies: ['capability:shared-workspace'],
+    migrationPolicy: 'Preserve unless a candidate proves the same bounded provider contract.',
+    replacementCriteria: 'Same or stronger bounded provider contract with dependent integrations passing.',
+    lastQualifiedVersion: '1.2.3',
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.PRESERVE,
+    evidenceRefs: ['proof:gateway-provider'],
+    affectedTaskClasses: [OPENCLAW_TASK_CLASS.OC1],
+    ...overrides,
+  };
+}
+
+function ledger(capabilities) {
+  return buildOpenClawUpdateCapabilityLedgerV1({
+    currentVersion: '1.2.3',
+    targetVersion: '1.3.0',
+    capabilities,
+  });
+}
+
+test('preserved protected capability across version requires qualification replay', () => {
+  const result = ledger([baseCapability()]);
+  assert.equal(result.verdict, 'CAPABILITY_LEDGER_READY_FOR_CANDIDATE_PROOF');
+  assert.equal(result.updateAllowed, true);
+  assert.deepEqual(result.blockers, []);
+  assert.equal(result.protectedCapabilityCount, 1);
+  assert.deepEqual(result.requiredQualificationReplay, [OPENCLAW_TASK_CLASS.OC1]);
+  assert.equal(result.authority.qualificationInvalidationRequired, true);
+  assert.equal(result.authority.updateExecutionAllowed, false);
+  assert.equal(result.authority.runtimeMutationAllowed, false);
+});
+
+test('migration requires candidate proof and marks affected task classes for replay', () => {
+  const result = ledger([baseCapability({
+    candidateImplementation: 'stephanos.gateway-provider.v2',
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+    evidenceRefs: ['proof:gateway-provider-v2'],
+    tests: ['test:gateway-provider-v2'],
+    affectedTaskClasses: [OPENCLAW_TASK_CLASS.OC1, OPENCLAW_TASK_CLASS.OC6],
+  })]);
+  assert.equal(result.updateAllowed, true);
+  assert.deepEqual(result.requiredQualificationReplay, [
+    OPENCLAW_TASK_CLASS.OC1,
+    OPENCLAW_TASK_CLASS.OC6,
+  ].sort());
+  assert.equal(result.authority.qualificationInvalidationRequired, true);
+});
+
+test('custom capability may be replaced by upstream only with upstream candidate and proof', () => {
+  const accepted = ledger([baseCapability({
+    candidateImplementation: 'openclaw.native-gateway-provider',
+    candidateOrigin: OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM,
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+    tests: ['test:native-gateway-provider'],
+    evidenceRefs: ['proof:native-gateway-provider'],
+  })]);
+  assert.equal(accepted.updateAllowed, true);
+  assert.deepEqual(accepted.requiredQualificationReplay, [OPENCLAW_TASK_CLASS.OC1]);
+
+  const blocked = ledger([baseCapability({
+    candidateImplementation: 'stephanos.gateway-provider.v2',
+    candidateOrigin: OPENCLAW_UPDATE_CAPABILITY_ORIGIN.STEPHANOS_EXTENSION,
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+  })]);
+  assert.equal(blocked.verdict, 'BLOCK_UPDATE');
+  assert.ok(blocked.blockers.includes('UPSTREAM_REPLACEMENT_ORIGIN_REQUIRED:openclaw.gateway-provider'));
+});
+
+test('protected BLOCK_UPDATE disposition fails closed', () => {
+  const result = ledger([baseCapability({
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.BLOCK_UPDATE,
+  })]);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('PROTECTED_CAPABILITY_BLOCKS_UPDATE:openclaw.gateway-provider'));
+});
+
+test('preserve cannot silently change implementation or origin', () => {
+  const result = ledger([baseCapability({
+    candidateImplementation: 'openclaw.native-gateway-provider',
+    candidateOrigin: OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM,
+  })]);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('PRESERVE_IDENTITY_CHANGED:openclaw.gateway-provider'));
+});
+
+test('candidate-changing dispositions require tests and evidence', () => {
+  const result = ledger([baseCapability({
+    candidateImplementation: 'stephanos.gateway-provider.v2',
+    updateDisposition: OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
+    tests: [],
+    evidenceRefs: [],
+  })]);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('CANDIDATE_TEST_PROOF_REQUIRED:openclaw.gateway-provider'));
+  assert.ok(result.blockers.includes('CANDIDATE_EVIDENCE_REQUIRED:openclaw.gateway-provider'));
+});
+
+test('duplicate capability identities fail closed', () => {
+  const result = ledger([
+    baseCapability(),
+    baseCapability({ purpose: 'Conflicting duplicate purpose.' }),
+  ]);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('DUPLICATE_CAPABILITY_ID:openclaw.gateway-provider'));
+});
+
+test('unknown fields are rejected rather than gaining hidden authority', () => {
+  const malformed = baseCapability();
+  malformed.executeUpdate = true;
+  const result = ledger([malformed]);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('CAPABILITY_SCHEMA_INVALID'));
+});
+
+test('unknown task classes are rejected', () => {
+  const result = ledger([baseCapability({ affectedTaskClasses: ['OC99_UNBOUNDED'] })]);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('AFFECTEDTASKCLASSES_ENTRY_INVALID:openclaw.gateway-provider'));
+});
+
+test('ledger itself is closed-world and requires at least one protected capability', () => {
+  const unknownTopLevel = buildOpenClawUpdateCapabilityLedgerV1({
+    currentVersion: '1.2.3',
+    targetVersion: '1.3.0',
+    capabilities: [baseCapability()],
+    approval: true,
+  });
+  assert.equal(unknownTopLevel.updateAllowed, false);
+  assert.deepEqual(unknownTopLevel.blockers, ['LEDGER_SCHEMA_INVALID']);
+
+  const unprotectedOnly = ledger([baseCapability({ protected: false })]);
+  assert.equal(unprotectedOnly.updateAllowed, false);
+  assert.ok(unprotectedOnly.blockers.includes('NO_PROTECTED_CAPABILITIES'));
+});
+
+test('accessor-bearing capability records are rejected without invoking getters', () => {
+  let getterCalled = false;
+  const capability = baseCapability();
+  Object.defineProperty(capability, 'purpose', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalled = true;
+      return 'unsafe';
+    },
+  });
+  const result = ledger([capability]);
+  assert.equal(getterCalled, false);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('CAPABILITY_SCHEMA_INVALID'));
+});
+
+test('sparse and accessor-bearing evidence arrays fail closed', () => {
+  const sparse = [];
+  sparse.length = 1;
+  const sparseResult = ledger([baseCapability({ evidenceRefs: sparse })]);
+  assert.equal(sparseResult.updateAllowed, false);
+  assert.ok(sparseResult.blockers.includes('EVIDENCEREFS_INVALID:openclaw.gateway-provider'));
+
+  let getterCalled = false;
+  const accessors = [];
+  Object.defineProperty(accessors, '0', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      getterCalled = true;
+      return 'proof:should-not-run';
+    },
+  });
+  accessors.length = 1;
+  const accessorResult = ledger([baseCapability({ evidenceRefs: accessors })]);
+  assert.equal(getterCalled, false);
+  assert.equal(accessorResult.updateAllowed, false);
+  assert.ok(accessorResult.blockers.includes('EVIDENCEREFS_INVALID:openclaw.gateway-provider'));
+});
+
+test('custom-prototype and revoked-proxy inputs fail closed without throwing', () => {
+  const customPrototype = Object.create({ inherited: true });
+  Object.assign(customPrototype, baseCapability());
+  const customResult = ledger([customPrototype]);
+  assert.equal(customResult.updateAllowed, false);
+  assert.ok(customResult.blockers.includes('CAPABILITY_SCHEMA_INVALID'));
+
+  const { proxy, revoke } = Proxy.revocable(baseCapability(), {});
+  revoke();
+  const revokedResult = ledger([proxy]);
+  assert.equal(revokedResult.updateAllowed, false);
+  assert.ok(revokedResult.blockers.includes('CAPABILITY_SCHEMA_INVALID'));
+});
+
+test('top-level accessor and hostile capability array fail closed without executing hidden behavior', () => {
+  let getterCalled = false;
+  const topLevel = {
+    currentVersion: '1.2.3',
+    targetVersion: '1.3.0',
+  };
+  Object.defineProperty(topLevel, 'capabilities', {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      return [baseCapability()];
+    },
+  });
+  const accessorResult = buildOpenClawUpdateCapabilityLedgerV1(topLevel);
+  assert.equal(getterCalled, false);
+  assert.deepEqual(accessorResult.blockers, ['LEDGER_SCHEMA_INVALID']);
+
+  const hostileArray = [baseCapability()];
+  hostileArray.extraAuthority = true;
+  const arrayResult = buildOpenClawUpdateCapabilityLedgerV1({
+    currentVersion: '1.2.3',
+    targetVersion: '1.3.0',
+    capabilities: hostileArray,
+  });
+  assert.equal(arrayResult.updateAllowed, false);
+  assert.ok(arrayResult.blockers.includes('CAPABILITIES_INVALID'));
+});
+
+
+test('cross-version PRESERVE with all empty refs fails closed', () => {
+  const result = ledger([baseCapability({ qualificationRefs: [], tests: [], evidenceRefs: [] })]);
+  assert.equal(result.updateAllowed, false);
+  for (const field of ['QUALIFICATION_REFS', 'TESTS', 'EVIDENCE_REFS']) assert.ok(result.blockers.includes(`PRESERVE_${field}_REQUIRED:openclaw.gateway-provider`));
+});
+test('cross-version PRESERVE without task classes fails closed', () => {
+  const result = ledger([baseCapability({ affectedTaskClasses: [] })]);
+  assert.equal(result.updateAllowed, false);
+  assert.ok(result.blockers.includes('PRESERVE_TASK_CLASSES_REQUIRED:openclaw.gateway-provider'));
+});
+test('same-version protected PRESERVE fails closed without existing qualification proof', () => {
+  for (const [field, code] of [
+    ['qualificationRefs', 'QUALIFICATION_REFS'],
+    ['tests', 'TESTS'],
+    ['evidenceRefs', 'EVIDENCE_REFS'],
+  ]) {
+    const result = buildOpenClawUpdateCapabilityLedgerV1({
+      currentVersion: '1.2.3',
+      targetVersion: '1.2.3',
+      capabilities: [baseCapability({ [field]: [] })],
+    });
+    assert.equal(result.updateAllowed, false, field);
+    assert.equal(result.verdict, 'BLOCK_UPDATE', field);
+    assert.ok(result.blockers.includes(`PRESERVE_${code}_REQUIRED:openclaw.gateway-provider`), field);
+    assert.deepEqual(result.requiredQualificationReplay, [], field);
+    assert.equal(result.authority.updateExecutionAllowed, false, field);
+  }
+});
+
+test('same-version PRESERVE with valid refs retains no replay', () => {
+  const result = buildOpenClawUpdateCapabilityLedgerV1({ currentVersion: '1.2.3', targetVersion: '1.2.3', capabilities: [baseCapability()] });
+  assert.equal(result.updateAllowed, true);
+  assert.deepEqual(result.requiredQualificationReplay, []);
+});
+
+test('protected capability blocks stale or future qualification versions', () => {
+  for (const lastQualifiedVersion of ['1.2.2', '1.3.0']) {
+    const result = ledger([baseCapability({ lastQualifiedVersion })]);
+    assert.equal(result.updateAllowed, false, lastQualifiedVersion);
+    assert.deepEqual(result.blockers, ['PROTECTED_CAPABILITY_QUALIFICATION_VERSION_MISMATCH:openclaw.gateway-provider']);
+  }
+});
+
+test('same-version PRESERVE blocks stale qualification', () => {
+  const result = buildOpenClawUpdateCapabilityLedgerV1({
+    currentVersion: '1.2.3',
+    targetVersion: '1.2.3',
+    capabilities: [baseCapability({ lastQualifiedVersion: '1.2.2' })],
+  });
+  assert.equal(result.updateAllowed, false);
+  assert.deepEqual(result.blockers, ['PROTECTED_CAPABILITY_QUALIFICATION_VERSION_MISMATCH:openclaw.gateway-provider']);
+});
+
+for (const updateDisposition of [
+  OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+  OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
+  OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+]) {
+  test(`protected ${updateDisposition} requires at least one affected task class`, () => {
+    const candidate = {
+      updateDisposition,
+      candidateImplementation: 'openclaw.gateway-provider.v2',
+      candidateOrigin: updateDisposition === OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM
+        ? OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM
+        : OPENCLAW_UPDATE_CAPABILITY_ORIGIN.STEPHANOS_EXTENSION,
+    };
+    const blocked = ledger([baseCapability({ ...candidate, affectedTaskClasses: [] })]);
+    assert.equal(blocked.updateAllowed, false);
+    assert.deepEqual(blocked.blockers, ['CANDIDATE_TASK_CLASSES_REQUIRED:openclaw.gateway-provider']);
+
+    const allowed = ledger([baseCapability(candidate)]);
+    assert.equal(allowed.updateAllowed, true);
+    assert.deepEqual(allowed.requiredQualificationReplay, [OPENCLAW_TASK_CLASS.OC1]);
+  });
+}
+
+test('unprotected capability metadata retains compatibility', () => {
+  const result = ledger([
+    baseCapability(),
+    baseCapability({
+      capabilityId: 'openclaw.optional-provider',
+      protected: false,
+      lastQualifiedVersion: '1.2.2',
+      updateDisposition: OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+      candidateImplementation: 'openclaw.optional-provider.v2',
+      affectedTaskClasses: [],
+    }),
+  ]);
+  assert.equal(result.updateAllowed, true);
+  assert.deepEqual(result.requiredQualificationReplay, [OPENCLAW_TASK_CLASS.OC1]);
+});
+
+
+test('canonical ledger producer binds PRESERVE replay obligations to the read-only candidate gate', () => {
+  // The actual ledger producer, not a handwritten consumer fixture, determines
+  // replay. A preflight can inspect that requirement but grants no update.
+  const stagedPreflight = (targetVersion) => ({
+    schema: OPENCLAW_STAGED_UPDATE_SCHEMA,
+    status: OPENCLAW_STAGED_UPDATE_STATUS.READY_TO_APPLY,
+    exactIdentity: {
+      sourceHead: 'a'.repeat(40),
+      currentVersion: '1.2.3',
+      targetVersion,
+    },
+    safety: {
+      mutationAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+    },
+  });
+  for (const [targetVersion, expectedReplay] of [
+    ['1.3.0', [OPENCLAW_TASK_CLASS.OC1]],
+    ['1.2.3', []],
+  ]) {
+    const produced = buildOpenClawUpdateCapabilityLedgerV1({
+      currentVersion: '1.2.3',
+      targetVersion,
+      capabilities: [baseCapability()],
+    });
+    assert.equal(produced.updateAllowed, true, targetVersion);
+    const candidate = evaluateOpenClawUpdateCapabilityCandidateV1({
+      stagedUpdate: stagedPreflight(targetVersion),
+      capabilityLedger: produced,
+      qualificationReplay: [],
+    });
+    assert.equal(candidate.status,
+      OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.PRE_UPDATE_CAPABILITY_GATE_READY,
+      targetVersion);
+    assert.deepEqual(candidate.requiredQualificationReplay, expectedReplay, targetVersion);
+    assert.equal(candidate.updatePromotionAllowed, false, targetVersion);
+    assert.equal(candidate.providerRoutingResumeAllowed, false, targetVersion);
+  }
+
+  const invalidLedger = buildOpenClawUpdateCapabilityLedgerV1({
+    currentVersion: '1.2.3',
+    targetVersion: '1.3.0',
+    capabilities: [baseCapability({ affectedTaskClasses: [] })],
+  });
+  assert.equal(invalidLedger.updateAllowed, false);
+  assert.ok(invalidLedger.blockers.includes('PRESERVE_TASK_CLASSES_REQUIRED:openclaw.gateway-provider'));
+  const refused = evaluateOpenClawUpdateCapabilityCandidateV1({
+    stagedUpdate: stagedPreflight('1.3.0'),
+    capabilityLedger: invalidLedger,
+    qualificationReplay: [],
+  });
+  assert.equal(refused.status, OPENCLAW_UPDATE_CAPABILITY_CANDIDATE_STATUS.BLOCK_UPDATE);
+  assert.equal(refused.updatePromotionAllowed, false);
+  assert.equal(refused.providerRoutingResumeAllowed, false);
+});
+
+test('protected implementation changes cannot discard existing qualification refs', () => {
+  for (const disposition of [
+    OPENCLAW_UPDATE_DISPOSITION.MIGRATE,
+    OPENCLAW_UPDATE_DISPOSITION.IMPROVE,
+    OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM,
+  ]) {
+    const change = {
+      candidateImplementation: 'openclaw.gateway-provider.v2',
+      candidateOrigin: disposition === OPENCLAW_UPDATE_DISPOSITION.REPLACE_WITH_UPSTREAM
+        ? OPENCLAW_UPDATE_CAPABILITY_ORIGIN.UPSTREAM
+        : OPENCLAW_UPDATE_CAPABILITY_ORIGIN.STEPHANOS_EXTENSION,
+      updateDisposition: disposition,
+    };
+    const valid = ledger([baseCapability(change)]);
+    assert.equal(valid.updateAllowed, true, disposition);
+    const missing = ledger([baseCapability({ ...change, qualificationRefs: [] })]);
+    assert.equal(missing.verdict, 'BLOCK_UPDATE', disposition);
+    assert.equal(missing.updateAllowed, false, disposition);
+    assert.ok(missing.blockers.includes(
+      'PROTECTED_CANDIDATE_QUALIFICATION_REFS_REQUIRED:openclaw.gateway-provider',
+    ), disposition);
+    assert.equal(missing.authority.updateExecutionAllowed, false, disposition);
+    const optional = ledger([
+      baseCapability(),
+      baseCapability({ ...change, protected: false, capabilityId: 'openclaw.optional-provider', qualificationRefs: [] }),
+    ]);
+    assert.equal(optional.updateAllowed, true, disposition);
+  }
+});

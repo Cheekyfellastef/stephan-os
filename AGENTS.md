@@ -32,7 +32,19 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - **Low risk:** documentation, fixtures, test-only changes, and non-authoritative presentation metadata. Require focused deterministic proof and exact-head delta verification.
 - **Standard risk:** ordinary source logic and shared projections. Require relevant complete tests and independent exact-head review.
 - **High risk:** security, approval, controller authority, credentials, runtime mutation, deployment, provider switching, spending, and destructive capability. Require specialist review, complete exact-head proof, and all operator gates.
-- Exact-head operator merge approval remains required unless a separately implemented, proven, and explicitly authorised standing-authority envelope says otherwise.
+- For work directly covered by an explicit operator request, the standing authorization below supplies operator merge consent; fresh exact-head evidence and every protected execution gate remain required.
+
+## Standing authorization for direct operator intent
+
+Operator order confirmed 16 November 2026: work built as a direct request of the operator's intent is already authorized. Carry that intent through to its verified outcome.
+
+- An explicit request authorizes the necessary in-scope investigation, prerequisites, repairs, implementation, testing, independent review, publication, ready transition, protected merge, installation, commissioning and outcome verification. Do not ask the operator to authorize those same steps again, or stop at a source change, queued handoff or merge when the requested outcome still needs work.
+- Authorization persists across turns, sessions, devices, providers and controllers. Preserve the original intent, scope, goal/mission identity and existing owner in canonical records; retrieve that evidence before treating authorization as missing. A new commit or source update within the same authorized scope requires fresh proof, not a fresh conversation approval.
+- Before a protected action, bind the original operator intent and its scope to the applicable current identities, affected paths, required review/proof and intended action in the existing canonical approval records, including repository, PR/branch and exact head/tree/base for source changes. Derive the current bounded approval packet from that standing intent and current evidence. Never present an old commit's approval or review receipt as proof for a different commit.
+- Use the existing qualified approval and execution routes to satisfy protected checks, including any required environment approval. Standing intent supplies operator consent; it does not manufacture a review, signature, lease, execution qualification or successful receipt. Keep independent review, source/custody exclusion, protected environments, resource limits and outcome proof intact; do not disable or weaken them to proceed.
+- Earlier explicit constraints remain binding until the operator changes them, including a no-reboot instruction, gaming/resource protections and preservation of existing owners. Do not infer unrelated work, destructive actions, new spending or credential authority that the request does not cover.
+- Ask a focused question only when a necessary next action needs genuinely new scope or authority, or a real external gate requires an operator action that cannot be fulfilled through an already authorized route. First finish the authorized preparation so the operator can assess the concrete action; name the exact missing authority or gate and its source. An already approved intent, changed session or missing client button is not a reason to ask again.
+- If a required proof or qualified route is unavailable, retain the same original intent and typed blocker, continue independent eligible work, and pursue the existing recovery/provider-neutral route. A blocked step is not completion of the parent outcome and is not permission to fabricate evidence or create a duplicate owner.
 
 ## Protected Command Deck rules
 - Treat composer/input/execute flow as protected surface.
@@ -85,6 +97,14 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - Controller/build-chat reporting must distinguish `CHATGPT_GITHUB_WRITE_BLOCKED` from global GitHub unavailability. When another qualified route exists, the expected posture is “same mission handed to provider-neutral continuity fabric,” not “programme blocked by GitHub.”
 
 
+## Sovereign Commander first-route continuity
+- Sovereign Commander is the durable, meter-free Battle Bridge control surface. Remote Desktop Commander is bootstrap/proving/break-glass only.
+- Before invoking a native Remote Desktop Commander tool, first map the requested semantic capability to the existing Sovereign Commander local MCP tool or guarded remote action. Missing local MCP exposure in the current ChatGPT surface is a transport limitation, not evidence that Sovereign Commander lacks the capability.
+- For broad Battle Bridge reachability/device/health checks from cloud ChatGPT, use the Sovereign `visibility-snapshot` fast-mailbox route first. Do not call Remote Desktop Commander `list_devices` merely to determine whether Battle Bridge or Sovereign Commander is online.
+- Prefer Sovereign local MCP `read_file`, `search_project`, `list_directory`, and `list_processes` on surfaces where those tools are connected. On cloud/mobile surfaces, use the narrow admitted Sovereign remote action such as `search-project`, `battle-bridge-observe`, `controller-lane-status`, `status-stephanos-core-daemon`, or `visibility-snapshot`; do not widen the public mailbox to arbitrary file or process output.
+- If Remote Desktop Commander is genuinely required as break-glass, record the semantic operation through canonical #2573 capability-parity observation and treat it as a gap only when no guarded Sovereign equivalent exists. Existing equivalents must classify as `PARITY_PRESENT`, not spawn duplicate capability work.
+- Preserve the Sovereign transport order: local/private MCP, Sovereign Relay fast carrier, scheduled guarded GitHub mailbox fallback, then optional reviewed transports, with Remote Desktop Commander last.
+
 ## Source artifact escrow continuity
 - When a source change already exists but every currently attempted publication route is unavailable, preserve the exact verified diff/commit/tree as a durable escrow artifact instead of rebuilding the change or asking the original executor to recreate it.
 - Reuse the existing `sourceArtifactEscrowContinuityV1` / source-publication continuity machinery. Bind escrow to repository, canonical owner, branch, exact base/head/tree/diff identity and proof; retire it only after canonical publication is independently proven.
@@ -106,10 +126,16 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - If no qualified alternative exists for that exact task class, park only that lane with a typed blocker and continue resource-disjoint eligible work.
 
 ## Protected ready-transition continuity
-- For authorised draft-to-ready transitions, prefer the existing canonical #2158 protected workflow-dispatch mailbox and `MARK_PROTECTED_PR_READY` route over any client-side GraphQL convenience mutation.
+- For authorised draft-to-ready transitions, prefer the existing current source-defined canonical protected workflow-dispatch mailbox and `MARK_PROTECTED_PR_READY` route over any client-side GraphQL convenience mutation.
 - Treat connected-client failures mentioning `Repository.fullDatabaseId` / `undefinedField` as a known client schema defect, not as evidence that GitHub or the protected ready route is unavailable.
 - Do not retry that broken client mutation, invent caller-supplied GraphQL, or create a second ready/merge mechanism. Use `protectedReadyExecutionRouteV1` to select the canonical route and fail closed if its exact identity, review, mailbox, or operator-authority predicates are missing.
 - The ready operation grants no merge, deployment, runtime, provider, credential, ruleset, or branch-mutation authority beyond the exact protected ready transition.
+
+## Handoff responsibility continuity
+- A layer that delegates or publishes work remains responsible until the downstream layer has produced durable pickup/claim evidence or the requested outcome is independently proven.
+- Queue publication, Shared Workspace handoff publication, route selection, scheduler selection, or a successful dispatch API call are intermediate states, never terminal completion by themselves.
+- While pickup is unproven, the existing controller/daemon must retain the same mission identity and continue retrying or escalating through already-qualified routes without creating a duplicate scheduler, controller, worker, lane, branch, PR, or mutation owner.
+- Valid terminal boundaries are limited to proven downstream pickup followed by normal outcome reconciliation, the requested outcome already being proven, an authentic operator-reserved gate, or evidence that no safe qualified route exists. Never translate silence, timeout, or an unclaimed queue item into completion.
 
 ## Professionalisation clause
 - Every programme goal must preserve or improve production-grade reliability, maintainability, operator trust, and reusable capability.

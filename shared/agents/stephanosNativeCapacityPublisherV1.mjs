@@ -1,5 +1,6 @@
 import { createHash, createPublicKey } from 'node:crypto';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile, rename, unlink } from 'node:fs/promises';
+import { inspectStephanosNativeCapacityGamingAdmissionV1 } from './stephanosNativeCapacityGamingAdmissionV1.mjs';
 import {
   createStephanosNativeCapacityReceipt,
   createStephanosNativeSourceAuthority,
@@ -14,7 +15,7 @@ import {
 export const STEPHANOS_NATIVE_CAPACITY_STATUS_ID = 'stephanos-native-capacity-current';
 export const STEPHANOS_NATIVE_CAPACITY_WORKER_ID = 'stephanos-native-battle-bridge';
 export const STEPHANOS_NATIVE_CAPACITY_QUALIFICATION_ID = 'native-source-qualification-v1';
-export const STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL = 'qwen:14b';
+export const STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL = 'qwen3.5:27b';
 export const STEPHANOS_NATIVE_CAPACITY_DEFAULT_ENDPOINT = 'http://127.0.0.1:11434';
 
 const SHA40 = /^[0-9a-f]{40}$/;
@@ -25,6 +26,18 @@ const QUALIFICATION_EXPECTED = Object.freeze({
   source: 'export const add=(a,b)=>a+b;',
   test: 'assert.equal(add(2,3),5);',
 });
+
+class GamingAdmissionHold extends Error {
+  constructor(admission) {
+    super(admission.reason);
+    this.admission = admission;
+  }
+}
+
+function requireGamingAdmission(options) {
+  const admission = inspectStephanosNativeCapacityGamingAdmissionV1(options);
+  if (!admission.ok) throw new GamingAdmissionHold(admission);
+}
 
 function text(value) { return typeof value === 'string' ? value.trim() : ''; }
 function hash(value) { return createHash('sha256').update(String(value), 'utf8').digest('hex'); }
@@ -46,8 +59,8 @@ function qualificationPrompt() {
     'You are qualifying for one bounded source-repair lane.',
     'Return JSON only with exactly two string fields named source and test.',
     'Repair this bug: export const add=(a,b)=>a-b;',
-    'The source field must contain the corrected one-line JavaScript source.',
-    'The test field must contain one Node assert line proving add(2,3) equals 5.',
+    'Derive the correction yourself. The source field must contain only the corrected one-line JavaScript source, minified with no spaces.',
+    'The test field must contain exactly one minified assert.equal call ending with a semicolon that proves add(2,3) returns 5.',
     'Do not add markdown, prose, imports, comments, or extra fields.',
   ].join('\n');
 }
@@ -98,6 +111,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
   }
 
   try {
+    requireGamingAdmission(options);
     const tags = await fetchJson(`${endpoint}/api/tags`, { method: 'GET' }, Math.min(timeoutMs, 10_000), fetchImpl);
     const inventory = (Array.isArray(tags.json?.models) ? tags.json.models : [])
       .map((item) => text(item?.name))
@@ -118,6 +132,8 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
     };
     const requestBytes = JSON.stringify(requestBody);
     const startedAtMs = nowMs();
+    // Inventory retrieval is awaited; startup permission cannot authorize this POST.
+    requireGamingAdmission(options);
     const chat = await fetchJson(`${endpoint}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -132,6 +148,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
     const ps = await fetchJson(`${endpoint}/api/ps`, { method: 'GET' }, Math.min(timeoutMs, 10_000), fetchImpl);
     const loaded = (Array.isArray(ps.json?.models) ? ps.json.models : []).find((item) => text(item?.name) === model);
     if (!loaded) return frozen({ ok: false, reason: 'native-model-load-unproven', executedModel });
+    requireGamingAdmission(options);
 
     const latencySeconds = Math.max(0, (Number(completedAtMs) - Number(startedAtMs)) / 1000);
     return frozen({
@@ -155,6 +172,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
       timeoutMs,
     });
   } catch (error) {
+    if (error instanceof GamingAdmissionHold) return error.admission;
     return frozen({
       ok: false,
       reason: error?.name === 'AbortError' ? 'native-model-probe-timeout' : 'native-model-probe-failed',
@@ -163,7 +181,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
   }
 }
 
-export async function publishStephanosNativeCapacityV1(options = {}) {
+async function publishQualifiedNativeCapacityV1(options = {}) {
   const observedAtUtc = text(options.observedAtUtc) || new Date().toISOString();
   const observedAtMs = timestamp(observedAtUtc);
   const repository = text(options.repository);
@@ -179,6 +197,8 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
 
   const cleared = await clearStephanosNativeCapacityStatus({ workspaceRoot, repoRoot });
   if (!cleared.ok) return frozen({ ok: false, reason: cleared.reason });
+  const checking=await publishStephanosNativeCapacityObservationV1(options,{phase:'CHECKING',reason:'native-capacity-probe-in-progress'});
+  if(!checking.ok)return frozen({ok:false,reason:'native-capacity-diagnostic-unwritable',cleared:true,diagnosticPublished:false});
 
   try {
     const privateKeyPem = text(options.privateKeyPem)
@@ -186,7 +206,10 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
     if (!privateKeyPem) return frozen({ ok: false, reason: 'native-capacity-signing-key-missing', cleared: true });
 
     const probe = await probeStephanosNativeOllamaV1(options);
-    if (!probe.ok) return frozen({ ok: false, reason: probe.reason, probe, cleared: true });
+    if (!probe.ok) return frozen({
+      ok: false, reason: probe.reason, probe, cleared: true,
+      ...(probe.finalVerdict ? { finalVerdict: probe.finalVerdict } : {}),
+    });
 
     if (typeof options.readQueue !== 'function') {
       return frozen({ ok: false, reason: 'native-capacity-queue-unproven', cleared: true });
@@ -258,6 +281,7 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
       { repoRoot, nowMs: observedAtMs },
     );
     if (!proofWrite.ok) return frozen({ ok: false, reason: `native-capacity-proof:${proofWrite.reason}`, cleared: true });
+    requireGamingAdmission(options);
 
     const expiresAtUtc = new Date(observedAtMs + 5 * 60 * 1000).toISOString();
     const payload = frozen({
@@ -320,9 +344,19 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
       workspaceRoot,
       ['status', `${STEPHANOS_NATIVE_CAPACITY_STATUS_ID}.json`],
       statusRecord,
-      { repoRoot, nowMs: observedAtMs },
+      {
+        repoRoot, nowMs: observedAtMs,
+        // The shared writer awaits directory, temporary-file and ancestor work.
+        // Re-read at every actual rename attempt, including Windows retries.
+        renameFn: (sourcePath, targetPath) => {
+          requireGamingAdmission(options);
+          return rename(sourcePath, targetPath);
+        },
+      },
     );
     if (!statusWrite.ok) return frozen({ ok: false, reason: `native-capacity-status:${statusWrite.reason}`, cleared: true });
+    // Revocation during the awaited rename must not leave available capacity.
+    requireGamingAdmission(options);
 
     return frozen({
       ok: true,
@@ -334,7 +368,58 @@ export async function publishStephanosNativeCapacityV1(options = {}) {
       expiresAtUtc,
     });
   } catch (error) {
-    await clearStephanosNativeCapacityStatus({ workspaceRoot, repoRoot }).catch(() => {});
-    return frozen({ ok: false, reason: 'native-capacity-publication-failed', errorCode: text(error?.code || error?.message).slice(0, 80), cleared: true });
+    const cleanup = await clearStephanosNativeCapacityStatus({ workspaceRoot, repoRoot })
+      .catch(() => ({ ok: false, reason: 'native-capacity-status-clear-failed' }));
+    const clearState = {
+      cleared: cleanup.ok === true,
+      ...(cleanup.ok ? {} : { cleanupReason: cleanup.reason }),
+    };
+    if (error instanceof GamingAdmissionHold) return frozen({ ...error.admission, ...clearState });
+    return frozen({ ok: false, reason: 'native-capacity-publication-failed', errorCode: text(error?.code || error?.message).slice(0, 80), ...clearState });
   }
+}
+
+// Advisory facts in the SAME canonical slot. No signed capacity or execution
+// authority can be derived from a checking/blocked/stopped observation.
+const NATIVE_DIAGNOSTIC_REASONS=new Set([
+  'native-capacity-probe-in-progress','native-capacity-publisher-stopped','native-capacity-canonical-reload-required',
+  'native-capacity-source-identity-read-failed','native-capacity-source-not-main','native-capacity-source-head-invalid',
+  'native-capacity-source-dirty','native-capacity-launch-head-mismatch','native-capacity-key-root-missing',
+  'native-capacity-signing-key-missing','native-capacity-signing-key-unavailable','native-capacity-publication-failed',
+  'native-local-transport-invalid','native-model-not-installed','native-model-substitution-detected',
+  'native-source-qualification-failed','native-model-load-unproven','native-model-probe-timeout','native-model-probe-failed',
+  'native-capacity-queue-unproven','native-capacity-queue-depth-invalid','native-capacity-signing-failed',
+  'native-source-authority-derivation-failed','native-capacity-proof-publication-failed','native-capacity-observation-unclassified',
+]);
+function diagnosticReason(reason){
+  if(typeof reason!=='string')return 'native-capacity-observation-unclassified';
+  if(NATIVE_DIAGNOSTIC_REASONS.has(reason))return reason;
+  if(/^native-capacity-gaming-(workspace-unproved|workspace-mismatch|prepare-pending|override-unproved|state-invalid|observation-stale|observation-future|permission-denied|clock-unproved|evidence-unavailable)$/.test(reason))return reason;
+  return reason.startsWith('native-capacity-proof:')?'native-capacity-proof-publication-failed':'native-capacity-observation-unclassified';
+}
+export async function publishStephanosNativeCapacityObservationV1(options={},observation={}){
+  const phase=observation.phase;
+  if(!['CHECKING','BLOCKED','STOPPED'].includes(phase)||typeof options.workspaceRoot!=='string'||typeof options.repoRoot!=='string'||!options.workspaceRoot||!options.repoRoot)
+    return frozen({ok:false,reason:'native-capacity-diagnostic-input-invalid'});
+  const reason=diagnosticReason(observation.reason),timestampUtc=new Date().toISOString();
+  const record=frozen({...createSharedWorkspaceStatusRecord({statusId:STEPHANOS_NATIVE_CAPACITY_STATUS_ID,
+    participantId:STEPHANOS_NATIVE_CAPACITY_WORKER_ID,timestampUtc,relatedIssue:'#2008',status:phase,
+    summary:'Native capacity '+phase.toLowerCase()+': '+reason+'. No execution authority.',proofRefs:[]}),
+    diagnostic:frozen({schemaVersion:'stephanos.native-capacity-observation.v1',phase,reason,
+      sourceHead:typeof options.sourceHead==='string'&&SHA40.test(options.sourceHead)?options.sourceHead:null,
+      expiresAtUtc:new Date(Date.parse(timestampUtc)+180000).toISOString(),qualificationProven:false}),
+    sourceMutationAllowed:false,supportedOperations:frozen([]),arbitraryCommandAllowed:false,
+    mergeAuthority:false,leaseSeizureAllowed:false,duplicateDispatchAllowed:false});
+  try{const written=await writeAtomicJson(options.workspaceRoot,['status',STEPHANOS_NATIVE_CAPACITY_STATUS_ID+'.json'],record,{repoRoot:options.repoRoot});
+    return frozen({ok:written.ok===true,reason:written.ok?'STEPHANOS_NATIVE_CAPACITY_OBSERVATION_PUBLISHED':'native-capacity-diagnostic-unwritable',...(written.ok?{statusRecord:record}:{})});
+  }catch{return frozen({ok:false,reason:'native-capacity-diagnostic-unwritable'});}
+}
+export async function publishStephanosNativeCapacityV1(options={}){
+  let result;try{result=await publishQualifiedNativeCapacityV1(options);}catch{return frozen({ok:false,reason:'native-capacity-status-clear-failed',diagnosticPublished:false});}
+  if(result.ok)return result;
+  // Never recursively depend on a status sink that just refused publication.
+  if(result.cleared!==true||result.reason==='native-capacity-diagnostic-unwritable'||result.reason.startsWith('native-capacity-status:'))
+    return frozen({...result,diagnosticPublished:false});
+  const diagnostic=await publishStephanosNativeCapacityObservationV1(options,{phase:'BLOCKED',reason:result.reason});
+  return frozen({...result,diagnosticPublished:diagnostic.ok,diagnosticReason:diagnostic.reason});
 }

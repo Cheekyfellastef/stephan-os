@@ -122,7 +122,7 @@ function reviewWindowsIngress(source, path, findings) {
     ["Get-NetTCPConnection -State Listen -LocalPort 18789", 'openclaw-port-ownership-proof-missing'],
     ["OPENCLAW_GATEWAY_PROCESS_OWNERSHIP_INVALID", 'openclaw-port-ownership-blocker-missing'],
     ["OPENCLAW_HOST_PROOF_ALREADY_CONSUMED", 'openclaw-proof-replay-protection-missing'],
-    ["[string]$task.Principal.LogonType -ne 'Interactive'", 'openclaw-task-logon-proof-missing'],
+    ["[string]$task.Principal.LogonType -ne 'S4U'", 'openclaw-task-logon-proof-missing'],
     ["[string]$task.Principal.RunLevel -ne 'Limited'", 'openclaw-task-runlevel-proof-missing'],
     ["[string]$task.Settings.MultipleInstances -ne 'IgnoreNew'", 'openclaw-task-overlap-proof-missing'],
     ["action = 'WAKE_CANONICAL_BATTLE_BRIDGE_DISPATCHER'", 'openclaw-ingress-action-not-fixed'],

@@ -22,7 +22,9 @@ test('protects the complete source-controlled Windows specialist boundary', () =
     'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
     'shared/agents/windowsAuthorityIgnitionConvergenceReviewV1.mjs',
     'shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs',
+    'shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1.mjs',
     'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
+    'shared/agents/windowsAuthorityVrResourceGovernorReviewV1.mjs',
     'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   ]);
 

@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -21,7 +22,7 @@ function command(overrides = {}) {
     requestId: 'starfield-vr-readiness-20260921',
     operation: STARFIELD_VR_READINESS_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: activeMailboxIssueForTest,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -75,6 +76,9 @@ test('fixed readiness operation proves ready through the validated Node executab
   const readinessCall = run.calls.at(-1);
   assert.equal(readinessCall.executable, POWERSHELL);
   assert.equal(readinessCall.options.shell, false);
+  assert.equal(readinessCall.args.includes('-ProfilePath'), true);
+  const profileIndex = readinessCall.args.indexOf('-ProfilePath');
+  assert.match(readinessCall.args[profileIndex + 1], /starfield-vr-launch-profile-mutar-openxr\.json$/i);
   assert.deepEqual(readinessCall.args.slice(-3), ['-ReadinessOnly', '-NodeExecutablePath', NODE]);
 });
 

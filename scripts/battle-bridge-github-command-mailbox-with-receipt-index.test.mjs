@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 
-import { runBattleBridgeGitHubCommandMailboxWithReceiptIndex } from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
+import { runBattleBridgeGitHubCommandMailboxWithReceiptIndex, safeMailboxRunnerExceptionBlocker } from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
+import { withMailboxActionEvidence } from '../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs';
 import {
   MAILBOX_OUTBOX_GUARD_LEASE_ENV,
   MAILBOX_OUTBOX_GUARD_LEASE_SCHEMA,
@@ -125,6 +126,80 @@ test('sidecar refreshes the authoritative Shared Workspace index before and afte
   assert.equal(result.destructiveGitAllowed, false);
   assert.equal(result.sourceMutationAccess, false);
 }));
+
+test('sidecar admits the persisted 162-run representation without changing custody or rotation state', async () => fixture(async ({ repoRoot, env }) => {
+  const cohort = JSON.parse(await readFile(new URL('../tests/fixtures/canonical-mailbox-rotation/historical-0b6-cohort.json', import.meta.url), 'utf8'));
+  const stamp = '2026-11-20T22:00:00.000Z';
+  // Pinned historical identities with a fixed test clock; this is a storage
+  // regression fixture, never a native receipt or a quiescence assertion.
+  const proofs = cohort.contracts.flatMap(contract => contract.runIds.map(id => {
+    const run = {
+      id, run_attempt: 1, head_sha: contract.head, path: contract.path,
+      status: 'queued', event: 'issue_comment', head_branch: 'main', workflow_id: contract.workflowId,
+      repository: { full_name: cohort.repository }, head_repository: { full_name: cohort.repository },
+      created_at: '2026-11-04T00:00:00.000Z', updated_at: '2026-11-04T00:00:00.000Z', conclusion: null,
+    };
+    return { run, runAfter: { ...run }, workflow: { path: contract.path, ref: contract.head, sha: contract.blob },
+      attempt: 1, jobs: { total_count: 0, jobs: [] }, startedAt: stamp, jobsObservedAt: stamp, observedAt: stamp };
+  }));
+  assert.equal(proofs.length, 162);
+  const requestId = 'state-boundary-fresh-request';
+  const accepted = { requestId, operation: 'READ_DEPLOYMENT_STATUS', state: 'ACCEPTED',
+    acceptedAt: stamp, heartbeatAt: stamp, expectedHead: 'a'.repeat(40) };
+  const state = {
+    consumedRequestIds: ['state-boundary-consumed-request'], acceptedRequestIds: [requestId], lastAcceptedReceipt: accepted,
+    pendingReceiptPublications: [{ publicationId: `${requestId}:ACCEPTED:${stamp}`, receipt: accepted }],
+    executionLedgerBootstrappedIssues: [1507, 3258],
+    mailboxRotation: { schemaVersion: 'stephanos.canonical-mailbox-rotation.v1', transitionId: 'state-boundary-rotation',
+      phase: 'DRAINING', predecessorIssue: 3258, successorIssue: 3552, barrierCommentId: 12345,
+      cutoverPrNumber: 1234, preparationHead: 'a'.repeat(40), cutoverHead: 'b'.repeat(40),
+      freezeRequestId: 'state-boundary-freeze-request', requestedAt: stamp, drained: false },
+    mailboxRotationActions: withMailboxActionEvidence({ complete: true, observedAt: stamp,
+      pendingRuns: proofs.map(proof => ({ id: proof.run.id, workflow: proof.run.path.split('/').at(-1), status: proof.run.status })) },
+    { proofs, collection: { startedAt: stamp, completedAt: stamp } }),
+  };
+  const statePath = join(env.STEPHANOS_SHARED_WORKSPACE_ROOT, 'github-command-mailbox', 'state.json');
+  const payload = `${JSON.stringify(state, null, 2)}\n`;
+  assert.ok(Buffer.byteLength(payload, 'utf8') > 256 * 1024);
+  await writeFile(statePath, payload, 'utf8');
+  let mailboxCalls = 0;
+  const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
+    platform: 'win32', sourceRepoRoot: repoRoot, canonicalRepoRoot: repoRoot, env,
+    now: () => new Date('2026-11-20T22:00:05.000Z'),
+    refreshIndex: async () => ({ ok: true, projection: { recentReceipts: [] } }),
+    runMailbox: async () => { mailboxCalls += 1; return { ok: true, verdict: 'NO_COMMAND_READY' }; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(mailboxCalls, 1);
+  assert.equal(result.acceptedRecovery.freshCount, 1);
+  assert.equal(result.acceptedRecovery.reconciledCount, 0);
+  assert.equal(result.acceptedRecovery.replayPerformed, false);
+  assert.equal(await readFile(statePath, 'utf8'), payload);
+}));
+
+test('sidecar shares the canonical state 32 MiB boundary and refuses overflow before polling', async () => {
+  for (const extraBytes of [0, 1]) await fixture(async ({ repoRoot, env }) => {
+    const state = { consumedRequestIds: ['state-boundary-consumed-request'], acceptedRequestIds: [], pendingReceiptPublications: [], padding: '' };
+    const limit = 32 * 1024 * 1024;
+    const emptyBytes = Buffer.byteLength(`${JSON.stringify(state)}\n`, 'utf8');
+    state.padding = 'x'.repeat(limit - emptyBytes + extraBytes);
+    const payload = `${JSON.stringify(state)}\n`;
+    assert.equal(Buffer.byteLength(payload, 'utf8'), limit + extraBytes);
+    const statePath = join(env.STEPHANOS_SHARED_WORKSPACE_ROOT, 'github-command-mailbox', 'state.json');
+    await writeFile(statePath, payload, 'utf8');
+    let mailboxCalls = 0, refreshCalls = 0;
+    const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
+      platform: 'win32', sourceRepoRoot: repoRoot, canonicalRepoRoot: repoRoot, env,
+      refreshIndex: async () => { refreshCalls += 1; return { ok: true, projection: { recentReceipts: [] } }; },
+      runMailbox: async () => { mailboxCalls += 1; return { ok: true, verdict: 'NO_COMMAND_READY' }; },
+    });
+    assert.equal(result.ok, extraBytes === 0);
+    assert.equal(result.blocker, extraBytes === 0 ? '' : 'MAILBOX_STATE_INVALID');
+    assert.equal(mailboxCalls, extraBytes === 0 ? 1 : 0);
+    assert.equal(refreshCalls, extraBytes === 0 ? 2 : 0);
+    assert.equal(await readFile(statePath, 'utf8'), payload);
+  });
+});
 
 test('sidecar projects bounded batch throughput and backpressure telemetry', async () => fixture(async ({ repoRoot, env }) => {
   const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
@@ -269,6 +344,28 @@ test('sidecar still refreshes the index after a mailbox exception and returns a 
   assert.equal(result.mailboxBlocker, 'MAILBOX_RUNNER_FAILED');
   assert.equal(result.indexBlocker, '');
   assert.equal(result.finalVerdict, 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED');
+}));
+
+test('sidecar preserves only safe uppercase runner exception codes', async () => fixture(async ({ repoRoot, env }) => {
+  assert.equal(safeMailboxRunnerExceptionBlocker(new Error('MAILBOX_ISSUE_READ_FAILED')), 'MAILBOX_ISSUE_READ_FAILED');
+  assert.equal(safeMailboxRunnerExceptionBlocker(new Error('C:/private secret=abc')), 'MAILBOX_RUNNER_FAILED');
+
+  const result = await runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
+    platform: 'win32',
+    sourceRepoRoot: repoRoot,
+    canonicalRepoRoot: repoRoot,
+    env,
+    refreshIndex: async () => ({
+      ok: true,
+      finalVerdict: 'MAILBOX_RECEIPT_INDEX_READY',
+      projection: { recentReceipts: [] },
+    }),
+    runMailbox: async () => { throw new Error('MAILBOX_ISSUE_READ_FAILED'); },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAILBOX_ISSUE_READ_FAILED');
+  assert.equal(result.mailboxBlocker, 'MAILBOX_ISSUE_READ_FAILED');
+  assert.equal(result.indexBlocker, '');
 }));
 
 test('Scheduled Task installer reports the fixed guard and its child sidecar while retaining bounded authority', async () => {

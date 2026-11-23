@@ -623,90 +623,82 @@ test('static server restart failure returns blocked repair packet behavior', asy
   );
 });
 
-test('served metadata mismatch blocks with repair packet when post-start verification runs', async () => {
+test('post-start verification is deferred until the replacement 4173 server is live', async () => {
   let healthCalls = 0;
-  await assert.rejects(
-    () => ensureLocalStaticServerRestartWithDeps({
-      expectedMetadata: {
-        runtimeMarker: 'marker-current',
-        gitCommit: 'new222',
-        buildTimestamp: '2026-06-22T00:00:00.000Z',
-        sourceFingerprint: 'fingerprint-current',
-      },
-      verifyServedAfterStart: true,
-      fetchFn: async (url) => {
-        if (String(url).includes('/__stephanos/health')) {
-          healthCalls += 1;
-          return {
-            ok: true,
-            json: async () => ({
-              runtimeMarker: 'marker-old',
-              gitCommit: 'old111',
-              buildTimestamp: '2026-06-21T00:00:00.000Z',
-              sourceFingerprint: 'fingerprint-old',
-            }),
-          };
-        }
-        return { ok: true, status: 202 };
-      },
-      log: () => {},
-    }),
-    /served-runtime-metadata-mismatch/
-  );
+  const report = await ensureLocalStaticServerRestartWithDeps({
+    expectedMetadata: {
+      runtimeMarker: 'marker-current',
+      gitCommit: 'new222',
+      buildTimestamp: '2026-06-22T00:00:00.000Z',
+      sourceFingerprint: 'fingerprint-current',
+    },
+    verifyServedAfterStart: true,
+    fetchFn: async (url) => {
+      if (String(url).includes('/__stephanos/health')) {
+        healthCalls += 1;
+        return {
+          ok: true,
+          json: async () => ({
+            runtimeMarker: 'marker-old',
+            gitCommit: 'old111',
+            buildTimestamp: '2026-06-21T00:00:00.000Z',
+            sourceFingerprint: 'fingerprint-old',
+          }),
+        };
+      }
+      return { ok: true, status: 202 };
+    },
+    log: () => {},
+  });
 
-  assert.equal(healthCalls, 2);
+  assert.equal(healthCalls, 1);
+  assert.equal(report.serverStopped, true);
+  assert.equal(report.postStartVerificationRequested, true);
+  assert.equal(report.postStartVerificationDeferred, true);
 });
 
 
-test('static server restart blocks when metadata matches but module MIME checks fail', async () => {
-  const logs = [];
+test('static server restart does not probe replacement MIME before the serve handoff', async () => {
   let restartCalls = 0;
   let healthCalls = 0;
-  await assert.rejects(
-    () => ensureLocalStaticServerRestartWithDeps({
-      expectedMetadata: {
-        runtimeMarker: 'marker-current',
-        gitCommit: 'new222',
-        buildTimestamp: '2026-06-22T00:00:00.000Z',
-        sourceFingerprint: 'fingerprint-current',
-      },
-      verifyServedAfterStart: true,
-      fetchFn: async (url, options = {}) => {
-        const target = String(url);
-        if (target.includes('/__stephanos/health')) {
-          healthCalls += 1;
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({
-              runtimeMarker: 'marker-current',
-              gitCommit: 'new222',
-              buildTimestamp: '2026-06-22T00:00:00.000Z',
-              sourceFingerprint: 'fingerprint-current',
-            }),
-          };
-        }
-        if ((options.method || 'GET') === 'POST' && target.includes('/__stephanos/restart')) {
-          restartCalls += 1;
-          return { ok: true, status: 202, json: async () => ({ accepted: true }) };
-        }
-        if (target.includes('/shared/runtime/runtimeStatusModel.mjs')) {
-          return { ok: true, status: 200, headers: { get: () => 'text/javascript; charset=utf-8' } };
-        }
-        if (target.includes('/shared/runtime/stephanosLocalUrls.mjs')) {
-          return { ok: true, status: 200, headers: { get: () => 'application/octet-stream' } };
-        }
-        throw new Error(`unexpected fetch ${target}`);
-      },
-      log: (message) => logs.push(message),
-    }),
-    /served-runtime-module-mime-mismatch/,
-  );
+  let mimeCalls = 0;
+  const report = await ensureLocalStaticServerRestartWithDeps({
+    expectedMetadata: {
+      runtimeMarker: 'marker-current',
+      gitCommit: 'new222',
+      buildTimestamp: '2026-06-22T00:00:00.000Z',
+      sourceFingerprint: 'fingerprint-current',
+    },
+    verifyServedAfterStart: true,
+    fetchFn: async (url, options = {}) => {
+      const target = String(url);
+      if (target.includes('/__stephanos/health')) {
+        healthCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            runtimeMarker: 'marker-current',
+            gitCommit: 'new222',
+            buildTimestamp: '2026-06-22T00:00:00.000Z',
+            sourceFingerprint: 'fingerprint-current',
+          }),
+        };
+      }
+      if ((options.method || 'GET') === 'POST' && target.includes('/__stephanos/restart')) {
+        restartCalls += 1;
+        return { ok: true, status: 202, json: async () => ({ accepted: true }) };
+      }
+      if (target.includes('/shared/runtime/')) mimeCalls += 1;
+      throw new Error(`unexpected fetch ${target}`);
+    },
+    log: () => {},
+  });
 
   assert.equal(restartCalls, 1);
-  assert.equal(healthCalls, 2);
-  assert.match(logs.join('\n'), /servedRuntimeMatchesExpectedDistMetadata":false/);
-  assert.match(logs.join('\n'), /served-runtime-module-mime-mismatch/);
+  assert.equal(healthCalls, 1);
+  assert.equal(mimeCalls, 0);
+  assert.equal(report.postStartVerificationDeferred, true);
 });
 
 test('approved local merge recovery still hands off to static server restart helper', async () => {
@@ -882,6 +874,7 @@ test('ignition status evaluator admits only the exact canonical ignored local-ru
   const approved = [
     '.stephanos/local-state-checkpoints/',
     'package-lock.json',
+    'VR-Research-Lab/internal/',
     'stephanos-server/data/durable-memory.json',
     'stephanos-server/data/local-rag/',
     'stephanos-server/data/provider-secrets.json',
@@ -1010,7 +1003,7 @@ test('ignition dirt classifier maps required categories', () => {
 
 
 
-test('ignition keeps root-level OpenClaw workspace files hard-blocked until housekeep can preserve-move them', () => {
+test('ignition keeps the path classifier conservative while untracked OpenClaw workspace dirt is runtime-only', () => {
   const rootOpenClawPaths = [
     '.openclaw',
     'COMMANDS.md',
@@ -1027,13 +1020,14 @@ test('ignition keeps root-level OpenClaw workspace files hard-blocked until hous
   ];
 
   for (const path of rootOpenClawPaths) {
-    assert.equal(classifyIgnitionDirtPath(path), 'HARD_BLOCK', `${path} remains root hard-blocked`);
+    assert.equal(classifyIgnitionDirtPath(path), 'HARD_BLOCK', `${path} remains conservative outside status-aware housekeeping`);
   }
 
   const rootStatusPaths = rootOpenClawPaths.map((path) => (path === '.openclaw' || path === 'memory') ? `?? ${path}/` : `?? ${path}`);
   const evaluation = evaluateGitStatusForIgnition(rootStatusPaths.join('\n'));
-  assert.equal(evaluation.forbiddenOrUnknownEntries.length, rootOpenClawPaths.length);
-  assert.equal(evaluation.meaningfulEntries.length, rootOpenClawPaths.length);
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(evaluation.runtimeStateEntries.length, rootOpenClawPaths.length);
 });
 
 test('ignition allows OpenClaw files only under sanctioned runtime workspace', () => {
@@ -1101,10 +1095,10 @@ test('housekeep auto-cleans allowlisted root runtime data and stays READY', () =
   ]);
 });
 
-test('supervisor preservation mode never moves root OpenClaw data or cleans tracked, untracked, or generated runtime paths', () => {
+test('supervisor preservation mode migrates misplaced OpenClaw dirt while preserving all other runtime dirt', () => {
   const steps = [];
   const moveRequests = [];
-  assert.throws(() => runIgnitionHousekeep({
+  runIgnitionHousekeep({
     dryRun: false,
     compact: true,
     preserveRuntimeDirt: true,
@@ -1124,11 +1118,16 @@ test('supervisor preservation mode never moves root OpenClaw data or cleans trac
     runStepFn: (label, command, args) => steps.push({ label, command, args }),
     moveRootOpenClawWorkspaceDirtFn: ({ paths }) => {
       moveRequests.push(...paths);
-      return { destinationRoot: 'should-not-run', migrationDirectory: null, moved: [], skipped: [] };
+      return {
+        destinationRoot: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-test',
+        migrationDirectory: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-test',
+        moved: paths.map((path) => ({ path, destinationPath: `C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-test/${path}` })),
+        skipped: [],
+      };
     },
-  }), /housekeep blocked/);
+  });
 
-  assert.deepEqual(moveRequests, []);
+  assert.deepEqual(moveRequests, ['MEMORY.md']);
   assert.deepEqual(steps, []);
 });
 
@@ -1147,6 +1146,7 @@ test('supervisor preservation mode carries canonical ignored local-runtime truth
           stdout: [
             '!! .stephanos/build-concierge/',
             '!! .stephanos/local-state-checkpoints/',
+            '!! VR-Research-Lab/local-manifests/',
             '!! package-lock.json',
             '!! stephanos-server/data/durable-memory.json',
             '!! stephanos-server/data/local-rag/',
@@ -1173,6 +1173,18 @@ test('supervisor preservation mode carries canonical ignored local-runtime truth
   assert.equal(status.ignitionSourceDirtCount, 0);
   assert.equal(status.ignitionHardBlockCount, 0);
   assert.equal(status.ignitionRuntimePreservationEnabled, true);
+});
+
+test('registered VR local manifests are approved ignored local evidence and remain aggregate-scanned', () => {
+  const status = '!! VR-Research-Lab/local-manifests/\n';
+  const evaluation = evaluateGitStatusForIgnition(status);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(evaluation.ignoredLocalRuntimeEntries.length, 1);
+  assert.deepEqual(
+    collectIgnoredRuntimeAggregatePaths(status),
+    ['VR-Research-Lab/local-manifests/'],
+  );
 });
 
 test('housekeeping still blocks tracked and untracked lookalikes of ignored local-runtime paths', () => {
@@ -1324,7 +1336,7 @@ test('ignored runtime aggregate scan fails closed at its deterministic work budg
   assert.equal(reads, 4);
 });
 
-test('housekeep dry-run classifies known OpenClaw workspace dirt without weakening hard-block', () => {
+test('housekeep dry-run classifies known OpenClaw workspace dirt as auto-migratable runtime state', () => {
   const logs = [];
   const originalLog = console.log;
   console.log = (message) => logs.push(String(message));
@@ -1333,7 +1345,7 @@ test('housekeep dry-run classifies known OpenClaw workspace dirt without weakeni
       dryRun: true,
       compact: true,
       captureStepFn: (label) => {
-        if (label === 'git-status') return { stdout: '?? .openclaw/\n?? COMMANDS.md\n?? MEMORY.md\n?? exec_output.txt\n?? workspace_contents.txt\n?? HEARTBEAT.md\n?? stephanos-ui/src/App.jsx\n', stderr: '' };
+        if (label === 'git-status') return { stdout: '?? .openclaw/\n?? COMMANDS.md\n?? MEMORY.md\n?? exec_output.txt\n?? workspace_contents.txt\n?? HEARTBEAT.md\n', stderr: '' };
         if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
         throw new Error(`unexpected capture label: ${label}`);
       },
@@ -1343,7 +1355,7 @@ test('housekeep dry-run classifies known OpenClaw workspace dirt without weakeni
     console.log = originalLog;
   }
   assert.ok(logs.includes('[HOUSEKEEP] root OpenClaw workspace dirt detected'));
-  assert.ok(logs.includes('[HOUSEKEEP] root OpenClaw files still block ignition'));
+  assert.ok(logs.includes('[HOUSEKEEP] root OpenClaw files will be safely preserved and moved during ignition'));
   assert.ok(logs.some((line) => line.includes('Stephanos-openclaw-workspace')));
   assert.ok(logs.some((line) => line.startsWith('[HOUSEKEEP] copyable migration command: $workspace = Join-Path')));
   const statusLine = logs.find((line) => line.startsWith('[HOUSEKEEP] status='));
@@ -1351,14 +1363,65 @@ test('housekeep dry-run classifies known OpenClaw workspace dirt without weakeni
   const status = JSON.parse(statusLine.replace('[HOUSEKEEP] status=', ''));
   assert.equal(status.openClawWorkspaceHygieneStatus, 'blocked-openclaw-workspace-dirt');
   assert.equal(status.openClawWorkspaceDirtDetected, 'yes');
-  assert.deepEqual(status.openClawWorkspaceDirtPaths, ['.openclaw', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt', 'HEARTBEAT.md']);
-  assert.equal(status.openClawWorkspaceBlocksIgnition, 'yes');
+  assert.deepEqual(status.openClawWorkspaceDirtPaths, ['.openclaw', 'COMMANDS.md', 'HEARTBEAT.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt']);
+  assert.equal(status.openClawWorkspaceBlocksIgnition, 'no');
   assert.match(status.openClawWorkspaceRecommendedCleanup, /Move-Item/);
   assert.match(status.openClawWorkspaceRecommendedCleanup, /Stephanos-openclaw-workspace/);
-  assert.equal(status.ignitionStatus, 'BLOCKED');
+  assert.equal(status.ignitionStatus, 'READY');
 });
 
 
+
+
+test('untracked OpenClaw child state is runtime-only source truth and not source dirt', () => {
+  const assessment = evaluateGitStatusForIgnition('?? .openclaw/workspace-state.json\n');
+  assert.equal(assessment.meaningfulEntries.length, 0);
+  assert.equal(assessment.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(assessment.runtimeStateEntries.length, 1);
+  assert.equal(assessment.runtimeStateEntries[0].category, 'runtime-state');
+  assert.deepEqual(assessment.runtimeStateEntries[0].paths, ['.openclaw/workspace-state.json']);
+});
+
+test('supervisor-preserve housekeep auto-migrates OpenClaw child state without cleaning other runtime dirt', () => {
+  const logs = [];
+  const movedRequests = [];
+  const steps = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      preserveRuntimeDirt: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return { stdout: '?? .openclaw/workspace-state.json\n', stderr: '' };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: (label, command, args) => steps.push({ label, command, args }),
+      moveRootOpenClawWorkspaceDirtFn: ({ paths }) => {
+        movedRequests.push(...paths);
+        return {
+          destinationRoot: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260927-210704',
+          migrationDirectory: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260927-210704',
+          moved: [{ path: '.openclaw', destinationPath: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260927-210704/.openclaw' }],
+          skipped: [],
+        };
+      },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(movedRequests, ['.openclaw']);
+  assert.deepEqual(steps, []);
+  const statusLine = logs.find((line) => line.startsWith('[HOUSEKEEP] status='));
+  const status = JSON.parse(statusLine.replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'READY');
+  assert.equal(status.ignitionHardBlockCount, 0);
+  assert.equal(status.ignitionOpenClawWorkspaceMoved, 1);
+  assert.deepEqual(status.ignitionOpenClawWorkspaceMovedPaths, ['.openclaw']);
+  assert.equal(status.ignitionRuntimePreservationEnabled, true);
+});
 
 
 test('housekeep repair preserves and moves root OpenClaw workspace dirt directories and files without deletion', () => {

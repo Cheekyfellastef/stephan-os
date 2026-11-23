@@ -6,10 +6,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import {
+  STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL,
   clearStephanosNativeCapacityStatus,
   publishStephanosNativeCapacityV1,
+  publishStephanosNativeCapacityObservationV1,
 } from '../shared/agents/stephanosNativeCapacityPublisherV1.mjs';
 import { readMissionWorkerQueue } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
+import { summarizeNativePublisherDirt } from './stephanos-native-capacity-publisher-source-gate.mjs';
 
 export const STEPHANOS_NATIVE_CAPACITY_KEY_ID = 'stephanos-native-capacity-key-v1';
 export const STEPHANOS_NATIVE_CAPACITY_REFRESH_MS = 60_000;
@@ -85,16 +88,19 @@ export function inspectStephanosNativeCapacitySourceIdentity(options = {}) {
   try {
     const branchResult = runGit(['branch', '--show-current']);
     const headResult = runGit(['rev-parse', 'HEAD']);
-    const dirtResult = runGit(['status', '--porcelain=v1', '--untracked-files=no']);
+    const dirtResult = runGit(['status', '--porcelain=v1', '--untracked-files=all']);
     if (branchResult?.status !== 0 || headResult?.status !== 0 || dirtResult?.status !== 0) {
       return Object.freeze({ ok: false, reason: 'native-capacity-source-identity-read-failed' });
     }
     const branch = text(branchResult.stdout);
     const sourceHead = text(headResult.stdout).toLowerCase();
-    const trackedDirt = text(dirtResult.stdout);
+    const dirtLines = String(dirtResult.stdout || '').split(/\r?\n/).filter((line) => line.trim());
+    const dirtSummary = summarizeNativePublisherDirt(dirtLines);
     if (branch !== 'main') return Object.freeze({ ok: false, reason: 'native-capacity-source-not-main', branch, sourceHead });
     if (!SHA40.test(sourceHead)) return Object.freeze({ ok: false, reason: 'native-capacity-source-head-invalid', branch, sourceHead: '' });
-    if (trackedDirt) return Object.freeze({ ok: false, reason: 'native-capacity-source-dirty', branch, sourceHead });
+    // Generated dist/runtime churn must not starve the signed native worker,
+    // but tracked or untracked real source dirt still fails closed.
+    if (dirtSummary.blocksSync) return Object.freeze({ ok: false, reason: 'native-capacity-source-dirty', branch, sourceHead });
     const expectedHead = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase();
     if (expectedHead && expectedHead !== sourceHead) {
       return Object.freeze({ ok: false, reason: 'native-capacity-launch-head-mismatch', branch, sourceHead, expectedHead });
@@ -116,7 +122,7 @@ function runtimeOptions(env, identity, privateKeyPem, now = new Date()) {
     privateKeyPem,
     observedAtUtc: now.toISOString(),
     endpoint: text(env.STEPHANOS_NATIVE_OLLAMA_ENDPOINT) || 'http://127.0.0.1:11434',
-    model: text(env.STEPHANOS_NATIVE_CAPACITY_MODEL) || 'qwen:14b',
+    model: text(env.STEPHANOS_NATIVE_CAPACITY_MODEL) || STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL,
     env,
     readQueue: readMissionWorkerQueue,
     queueRoot: text(env.STEPHANOS_MISSION_WORKER_QUEUE_DIR),
@@ -146,17 +152,23 @@ export async function runStephanosNativeCapacityPublisher(options = {}) {
   const refreshMs = Math.max(Number.parseInt(text(env.STEPHANOS_NATIVE_CAPACITY_REFRESH_MS) || String(STEPHANOS_NATIVE_CAPACITY_REFRESH_MS), 10) || STEPHANOS_NATIVE_CAPACITY_REFRESH_MS, 15_000);
   const initialIdentity = inspectStephanosNativeCapacitySourceIdentity({ env, spawnSyncFn: options.spawnSyncFn });
   if (!initialIdentity.ok) {
+    await publishStephanosNativeCapacityObservationV1({workspaceRoot:canonicalWorkspaceRoot(env),repoRoot:canonicalRepositoryRoot(env),sourceHead:initialIdentity.sourceHead},{phase:'BLOCKED',reason:initialIdentity.reason});
     stderr.write(`${JSON.stringify({ finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_BLOCKED', reason: initialIdentity.reason })}\n`);
     return 1;
   }
   const launchHead = initialIdentity.sourceHead;
-  const keys = await ensureStephanosNativeCapacityKeyPair({ env });
+  const diagnostic=(phase,reason,sourceHead=launchHead)=>publishStephanosNativeCapacityObservationV1({
+    workspaceRoot:initialIdentity.workspaceRoot,repoRoot:initialIdentity.repoRoot,sourceHead},{phase,reason});
+  const checking=await diagnostic('CHECKING','native-capacity-probe-in-progress');
+  if(!checking.ok){stderr.write(JSON.stringify({finalVerdict:'STEPHANOS_NATIVE_CAPACITY_BLOCKED',reason:'native-capacity-diagnostic-unwritable'})+'\n');return 1;}
+  let keys;try{keys=await ensureStephanosNativeCapacityKeyPair({env});}catch{keys={ok:false,reason:'native-capacity-signing-key-unavailable'};}
   if (!keys.ok) {
+    await diagnostic('BLOCKED',keys.reason);
     stderr.write(`${JSON.stringify({ finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_BLOCKED', reason: keys.reason })}\n`);
     return 1;
   }
 
-  let stopping = false;
+  let stopping = false;let terminalReason='native-capacity-publisher-stopped';
   const stop = () => { stopping = true; };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
@@ -169,6 +181,7 @@ export async function runStephanosNativeCapacityPublisher(options = {}) {
           repoRoot: identity.repoRoot || initialIdentity.repoRoot,
         }).catch(() => {});
         const reason = identity.ok ? 'native-capacity-canonical-reload-required' : identity.reason;
+        terminalReason=reason;
         stderr.write(`${JSON.stringify({ finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_RELOAD_REQUIRED', reason, launchHead, observedHead: identity.sourceHead || '' })}\n`);
         return STEPHANOS_NATIVE_CAPACITY_RELOAD_EXIT_CODE;
       }
@@ -181,8 +194,9 @@ export async function runStephanosNativeCapacityPublisher(options = {}) {
     } while (!stopping);
     return 0;
   } finally {
-    if (!once || stopping) {
+    if (!once || stopping || terminalReason!=='native-capacity-publisher-stopped') {
       await clearStephanosNativeCapacityStatus({ workspaceRoot: initialIdentity.workspaceRoot, repoRoot: initialIdentity.repoRoot }).catch(() => {});
+      await diagnostic(terminalReason==='native-capacity-publisher-stopped'?'STOPPED':'BLOCKED',terminalReason);
     }
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);

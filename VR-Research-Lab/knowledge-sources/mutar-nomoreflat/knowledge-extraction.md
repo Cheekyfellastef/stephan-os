@@ -71,3 +71,20 @@ Reusable knowledge includes OpenXR lifecycle integration, configuration, control
 ## Evidence boundary
 
 The two pinned repositories are MIT-licensed. Every additional Mutar repository or release must receive its own licence and provenance check before source is copied or adapted.
+
+## 2026-10-03 source intake expansion
+
+The Mutar family is now backed by a licence-gated local source lock and sync path rather than documentation alone.
+
+Pinned reusable lanes:
+
+- Mutar `starfield2vr` master, including full git history.
+- Mutar `anvilengine2vr`.
+- Alex7722's MIT Starfield fork, 56 commits ahead of the pinned Mutar master at intake, retained as an experimental comparison lane.
+- gsaw0's MIT Starfield stability fork and paired MIT `vrframework`.
+
+The Alex fork is particularly relevant to current headset evidence because its history contains substantial Creation Engine camera work plus native-stereo/DLSS experiments that were later retired. Stephanos should mine the *reasons those experiments failed* as aggressively as successful code paths.
+
+`elliotttate/vrframework` is registered as methodology-only because its repository licence is not sufficiently asserted for source reuse. Its public engineering history can still be used to generate independently authored hypotheses and tests.
+
+Exact pins and the reuse boundary live in `VR-Research-Lab/reference-source-lock.json`. Reusable source is hydrated only into the ignored `VR-Research-Lab/internal/reference-sources` cache by `scripts/sync-vr-reference-sources.ps1`.
