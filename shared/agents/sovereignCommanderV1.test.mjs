@@ -405,7 +405,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['visibility-snapshot', /sovereign-commander-visibility-snapshot\.mjs$/i, 30000],
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
-    ['status-sovereign-mailbox-lifeboat', /status-sovereign-mailbox-lifeboat-v1\.ps1$/i, 15000],
+    ['status-sovereign-mailbox-lifeboat', /status-battle-bridge-recovery-mesh\.ps1$/i, 15000],
     ['repair-control-plane', /sovereign-commander-control-plane-repair\.mjs$/i, 180000],
     ['goal-discovery-heartbeat', /battle-bridge-goal-discovery-heartbeat\.mjs$/i, 60000],
     ['fleet-goal-supervisor', /sovereign-commander-fleet-goal-supervisor\.mjs$/i, 60000],
