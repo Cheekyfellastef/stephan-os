@@ -25,26 +25,31 @@ function Read-BoundedObservation([string]$Path) {
     } catch { return $null }
 }
 function Fixed-TaskObservation([string]$Name) {
-    try {
-        $found = Get-ScheduledTask -TaskName $Name -ErrorAction Stop
-        $stat = Get-ScheduledTaskInfo -TaskName $Name -ErrorAction Stop
+    $found = $null
+    try { $found = Get-ScheduledTask -TaskName $Name -TaskPath '\' -ErrorAction Stop }
+    catch {
+        # Get-ScheduledTask errors do not prove that a task is absent.
+        # Keep the native writer/installer in HOLD rather than claiming false absence.
         return [ordered]@{
-            installed = $true
-            enabled = [bool]$found.Settings.Enabled
-            state = [string]$found.State
-            lastResult = [int64]$stat.LastTaskResult
-            lastRunAtUtc = if ($stat.LastRunTime.Year -gt 2000) { $stat.LastRunTime.ToUniversalTime().ToString('o') } else { '' }
-            exactTaskIdentityProven = $false
-        }
-    } catch {
-        return [ordered]@{
-            installed = $false
-            enabled = $false
+            installed = $null
+            enabled = $null
             state = 'UNPROVEN'
-            lastResult = -1
+            lastResult = $null
             lastRunAtUtc = ''
             exactTaskIdentityProven = $false
         }
+    }
+    $status = $null
+    try { $status = Get-ScheduledTaskInfo -TaskName $Name -TaskPath '\' -ErrorAction Stop } catch {}
+    return [ordered]@{
+        installed = $true
+        enabled = if ($null -ne $found.Settings) { [bool]$found.Settings.Enabled } else { $null }
+        state = [string]$found.State
+        lastResult = if ($null -ne $status) { [int64]$status.LastTaskResult } else { $null }
+        lastRunAtUtc = if ($null -ne $status -and $status.LastRunTime.Year -gt 2000) {
+            $status.LastRunTime.ToUniversalTime().ToString('o')
+        } else { '' }
+        exactTaskIdentityProven = $false
     }
 }
 function Safe-Code([object]$Record, [string]$Name) {
