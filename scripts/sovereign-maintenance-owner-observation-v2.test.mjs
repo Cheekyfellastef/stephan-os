@@ -200,6 +200,8 @@ function Get-StephanosCanonicalNodeImageHashV1 { return ('b'*64) }
 $script:row=[pscustomobject]@{Name='node.exe';ProcessId=10;CreationDate=[datetime]::UtcNow.AddMinutes(-1);ExecutablePath=$null;
  CommandLine='"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-commander-http.mjs"'}
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'})
+$script:tailRow=[pscustomobject]@{Name='tailscaled.exe';ProcessId=20;CreationDate=[datetime]::UtcNow.AddMinutes(-2);
+ ExecutablePath='C:\Program Files\Tailscale\tailscaled.exe'}
 $script:queryFailure=''
 function Get-CimInstance {
  param($Namespace,$ClassName,$Filter)
@@ -209,8 +211,10 @@ function Get-CimInstance {
    if($script:queryFailure -eq 'listener'){throw 'PRIVATE_ERROR'}
    return $script:connections
  }
- if($ClassName -cne 'Win32_Process' -or $Filter -cne 'ProcessId=10'){throw 'WRONG_PROCESS_QUERY'}
+ if($ClassName -cne 'Win32_Process'){throw 'WRONG_PROCESS_QUERY'}
  if($script:queryFailure -eq 'process'){throw 'PRIVATE_ERROR'}
+ if($Filter -ceq 'ProcessId=20'){return $script:tailRow}
+ if($Filter -cne 'ProcessId=10'){throw 'WRONG_PROCESS_QUERY'}
  return $script:row
 }
 function Assert-Held([string]$expected) {
@@ -233,6 +237,31 @@ $script:row.ProcessId=11; Assert-Held 'OWNER_PROCESS_UNPROVEN'; $script:row.Proc
 $script:connections=@(); Assert-Held 'OWNER_LISTENER_UNPROVEN'
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='0.0.0.0'}); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},[pscustomobject]@{OwningProcess=11;LocalAddress='::1'}); Assert-Held 'OWNER_LISTENER_UNPROVEN'
+# Genuine Tailscale Serve uses distinct tailnet-specific sockets, not 127.0.0.1.
+$script:connections=@(
+ [pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='100.116.99.92'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='fd7a:115c:a1e0::f01:63ab'}
+)
+$tailValid=Get-SovereignMaintenanceNativeOwnerV2
+if($tailValid.pid -ne 10 -or $tailValid.imageSha256 -cne ('b'*64)){throw 'TAILSCALE_LOOPBACK_OWNER_NOT_BOUND'}
+$script:tailRow.Name='imposter.exe'; Assert-Held 'OWNER_LISTENER_UNPROVEN'; $script:tailRow.Name='tailscaled.exe'
+$script:tailRow.ExecutablePath='C:\Users\Public\tailscaled.exe'; Assert-Held 'OWNER_LISTENER_UNPROVEN'
+$script:tailRow.ExecutablePath='C:\Program Files\Tailscale\tailscaled.exe'
+$script:tailRow.CreationDate=$null; Assert-Held 'OWNER_LISTENER_UNPROVEN'
+$script:tailRow.CreationDate=[datetime]::UtcNow.AddMinutes(-2)
+$script:connections=@(
+ [pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='192.168.1.17'}
+); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
+$script:connections=@(
+ [pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='0.0.0.0'}
+); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
+$script:connections=@(
+ [pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='fd7a:115c:a1e1::1'}
+); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'})
 $script:queryFailure='listener'; Assert-Held 'OWNER_CIM_LISTENER_QUERY_FAILED'
 $script:queryFailure='process'; Assert-Held 'OWNER_CIM_PROCESS_QUERY_FAILED'
