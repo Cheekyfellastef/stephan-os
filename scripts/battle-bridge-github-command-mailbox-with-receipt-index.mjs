@@ -13,7 +13,7 @@ import {
   runBattleBridgeGitHubCommandMailbox,
   serializeBoundedReceiptJson,
 } from './battle-bridge-github-command-mailbox.mjs';
-import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+import { readJsonObject, verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import {
   createWindowsSafeMailboxReceiptFilename,
   getReadableMailboxReceiptFilenames,
@@ -273,7 +273,10 @@ export function reconcileStaleAcceptedMailboxReceipts({
     });
   }
 
-  const state = readBoundedJsonFile(paths.statePath);
+  // Canonical state shares the parent guard's 32 MiB bound and file-identity
+  // checks. Individual receipt files retain their separate 256 KiB boundary.
+  let state = null;
+  try { state = readJsonObject(paths.statePath); } catch {}
   if (!state) {
     return Object.freeze({
       ok: false,

@@ -32,9 +32,16 @@ export function collectChangedJavaScriptFiles({
   if (bytes.length && bytes[bytes.length - 1] !== 0) {
     throw new Error('CHANGED_SOURCE_DIFF_PATH_ENCODING_INVALID');
   }
+  // Reject lossy path decoding; U+FFFD and a leading BOM may be real filename data.
+  let decoded;
+  try {
+    decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new Error('CHANGED_SOURCE_DIFF_PATH_ENCODING_INVALID');
+  }
   return Object.freeze(
     [...new Set(
-      bytes.toString('utf8')
+      decoded
         .split('\0')
         .filter((path) => path && SOURCE_EXTENSION.test(path)),
     )].sort(),

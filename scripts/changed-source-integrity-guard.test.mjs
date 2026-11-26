@@ -1,11 +1,12 @@
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   collectChangedJavaScriptFiles,
+  runChangedSourceIntegrityGuard,
   validateJavaScriptFiles,
 } from '../.github/scripts/changed-source-integrity-guard.mjs';
 
@@ -95,4 +96,35 @@ test('leading-dash changed JavaScript paths use genuine Git discovery and Node s
   const result = validateJavaScriptFiles(discovered, { cwd: root });
   assert.equal(result.ok, true, JSON.stringify(result.failures));
   assert.deepEqual(result.checked, discovered);
+});
+
+test('invalid UTF-8 raw Git paths cannot alias valid replacement-character filenames', { skip: process.platform === 'win32' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'stephanos-source-integrity-utf8-'));
+  const git = (...args) => execFileSync('git', args, { cwd: root });
+  const commit = (message) => git('-c', 'user.name=CI Fixture', '-c', 'user.email=ci-fixture@example.invalid', 'commit', '-qm', message);
+  try {
+    git('init', '-q');
+    writeFileSync(join(root, 'bad\uFFFD.js'), 'const good = 1;\n');
+    git('add', '--', '.');
+    commit('baseline');
+    const rawPath = Buffer.concat([Buffer.from(root + '/bad'), Buffer.from([0xff]), Buffer.from('.js')]);
+    writeFileSync(rawPath, 'const broken = ;\n');
+    git('add', '--', '.');
+    commit('invalid UTF-8 changed filename');
+    const result = runChangedSourceIntegrityGuard({ cwd: root, baseRef: 'HEAD~1' });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'CHANGED_SOURCE_DIFF_READ_FAILED');
+    assert.match(result.failures[0].detail, /CHANGED_SOURCE_DIFF_PATH_ENCODING_INVALID/);
+    assert.deepEqual(result.checked, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('valid Unicode, replacement character, leading BOM and newline remain exact filenames', () => {
+  const names = ['\uFEFFleading.js', 'bad\uFFFD.js', 'café.mjs', 'line\nbreak.cjs'];
+  const discovered = collectChangedJavaScriptFiles({
+    execGit: () => Buffer.from(names.join('\0') + '\0', 'utf8'),
+  });
+  assert.deepEqual(discovered, [...names].sort());
 });
