@@ -12,3 +12,12 @@ runtime/openclaw-workspace/
 
 VR-Research-Lab/internal/
 VR-Research-Lab/local-sources.md
+
+# Build artifacts (generated dist files)
+apps/stephanos/dist/
+
+# Runtime memory logs
+memory/
+
+# Mission runner runtime configuration (host-specific paths, generated during recovery)
+shared/mission-runner/
