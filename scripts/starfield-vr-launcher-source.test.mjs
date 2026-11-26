@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+// Exercise isolated native C++23 preflight through the existing hosted VR test suite.
+import './starfield-vr-aer-native-build-readiness.test.mjs';
+
 const launcherUrl = new URL('./windows/launch-starfield-vr.ps1', import.meta.url);
 const performanceModeUrl = new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url);
 const audioEndpointUrl = new URL('./windows/starfield-vr-audio-endpoint.ps1', import.meta.url);
@@ -208,7 +211,7 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
 
   assert.match(splash, /STABILIZED AER \/ AUTO RECORD \(REQUIRED\)/);
   assert.match(splash, /Launch Stabilized MutaR/);
-  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$mutarPackageStaged\)/);
+  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$mutarPackageStaged -and \$monitorState\.DurableCustodyReleased\)/);
   assert.match(splash, /\$aerReadyAfterSlot = Test-AerObserveReady[\s\S]*?Start-AerObserveProcess/);
   assert.match(splash, /\$aerObserveCheckbox\.Enabled = \$false/);
   assert.match(splash, /-Mode 'AER_OBSERVE'/);

@@ -242,9 +242,9 @@ test('canonical scheduler owns priority, resource-disjoint admission and capacit
 
   await t.test('active ownership prevents a conflicting candidate from entering the canonical projection', () => {
     const active = portfolioItem(1700, {
-      state:'ACTIVE', activePr:2700, resourceIds:['repo:shared/agents/owned.mjs'],
+      state:'ACTIVE', activePr:2700, resourceIds:['repo:cheekyfellastef/stephan-os:path:shared/agents/owned.mjs'],
     });
-    const selected = portfolioItem(1737, { resourceIds:['repo:shared/agents/owned.mjs'] });
+    const selected = portfolioItem(1737, { resourceIds:['repo:cheekyfellastef/stephan-os:path:shared/agents/owned.mjs'] });
     const result = planFoundryParallelProductionAcceleration({ activeResourceIds:[] }, host({
       schedulerSource:scheduler({ active:[active], selected:[selected] }),
     }));
@@ -254,8 +254,8 @@ test('canonical scheduler owns priority, resource-disjoint admission and capacit
 
   await t.test('pairwise resource overlap admits only the canonical first owner', () => {
     const selected = [
-      portfolioItem(1737, { operatorPriority:true, resourceIds:['repo:shared'] }),
-      portfolioItem(1738, { resourceIds:['repo:shared'] }),
+      portfolioItem(1737, { operatorPriority:true, resourceIds:['repo:cheekyfellastef/stephan-os'] }),
+      portfolioItem(1738, { resourceIds:['repo:cheekyfellastef/stephan-os'] }),
     ];
     const result = planFoundryParallelProductionAcceleration({}, host({
       schedulerSource:scheduler({ selected }),

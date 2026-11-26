@@ -204,13 +204,17 @@ function missionSpecificCapacityRouting(
   if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) {
     return capacityRouting;
   }
+  // Even when enumeration finds no candidate, action composition must use the
+  // controller's current source identity, never a stale capacity snapshot head.
+  const routedSourceHead = sha(sourceRevision);
+  const currentCapacityRouting = freeze({ ...capacityRouting, sourceHead: routedSourceHead });
   const candidates = resolveCapacityCandidates(
     mission,
-    capacityRouting,
+    currentCapacityRouting,
     sourceRevision,
     nowUtc,
   );
-  if (!Array.isArray(candidates) || candidates.length === 0) return capacityRouting;
+  if (!Array.isArray(candidates) || candidates.length === 0) return currentCapacityRouting;
 
   let nativeRoutingCandidate = capacityRouting.nativeRoutingCandidate ?? null;
   let forgeLaneReceipt = capacityRouting.forgeLaneReceipt ?? null;
@@ -243,16 +247,13 @@ function missionSpecificCapacityRouting(
     }
   }
 
-  const routedSourceHead = sha(sourceRevision) || sha(capacityRouting.sourceHead);
   if (
     nativeRoutingCandidate === (capacityRouting.nativeRoutingCandidate ?? null)
     && forgeLaneReceipt === (capacityRouting.forgeLaneReceipt ?? null)
-    && (!routedSourceHead || routedSourceHead === sha(capacityRouting.sourceHead))
-  ) return capacityRouting;
+  ) return currentCapacityRouting;
 
   return freeze({
-    ...capacityRouting,
-    ...(routedSourceHead ? { sourceHead: routedSourceHead } : {}),
+    ...currentCapacityRouting,
     ...(nativeRoutingCandidate ? { nativeRoutingCandidate } : {}),
     ...(forgeLaneReceipt ? { forgeLaneReceipt } : {}),
   });
@@ -1020,6 +1021,34 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     const receipt = createCycleReceipt(result, null, nowUtc);
     const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
     return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+  }
+
+  // An unresolved Core maintenance attempt is an authority hold for this
+  // controller's affected admission/release phases. Keep incident learning and
+  // proof publication alive, but do not enter goal creation, closure, orphan
+  // recovery, lane finalization, capacity routing or grant issuance. This
+  // option only removes authority; no caller-supplied value can grant it.
+  if (options.maintenanceContinuationHold != null && options.maintenanceContinuationHold !== false) {
+    const candidate = options.maintenanceContinuationHold?.blocker;
+    const blocker = typeof candidate === 'string' && /^[A-Z][A-Z0-9_]{1,159}$/.test(candidate)
+      ? candidate : 'CORE_REPAIR_CONTINUATION_UNPROVEN';
+    let learningPromotion;
+    try {
+      learningPromotion = await requiredFunction(deps.promoteIncidentLessons, 'promoteIncidentLessons')({
+        ...serviceOptions, repoRoot: serviceOptions.repoRoot || process.cwd(), maxPromotions: 2,
+      });
+    } catch {
+      learningPromotion = freeze({ ok: false, reason: 'LEARNING_PROMOTION_FAILED_SOFT',
+        finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED' });
+    }
+    const result = holdResult(blocker, { observedAtUtc: nowUtc, sourceRevision });
+    const receipt = createCycleReceipt(result, null, nowUtc);
+    const receiptPublication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
+    const heartbeatPublication = await publishHeartbeat(heartbeatInput({
+      state: 'HOLD', sourceRevision, nowUtc, blockers: [blocker],
+    }), serviceOptions);
+    return freeze({ ...result, learningPromotion, cycleReceipt: receipt, receiptPublication,
+      heartbeatPublication, maintenanceContinuationHeld: true });
   }
 
   let outcomeOwnershipSeedPublication = null;

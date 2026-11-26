@@ -1,5 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { formatAuthenticatedReviewDiffV1 } from '../shared/agents/sovereignAuthenticatedReviewDiffV1.mjs';
+import { prepareSovereignCompleteReviewCandidateV1, COMPLETE_HIGH_RISK_REVIEW_LIMITS_V1 }
+  from '../shared/agents/sovereignHighRiskReviewCandidateV1.mjs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { resolveBattleBridgeGitExecution, resolveBattleBridgePhysicalPathV1, validateBattleBridgeLocalGitConfiguration } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import {
   captureHighRiskAdvisorySnapshotV1 as capture,
   localHighRiskModelV1 as localHighRiskModelActual,
@@ -7,6 +16,8 @@ import {
   HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS,
   observeHighRiskOllamaDigestV1,
   runSovereignHighRiskAdvisoryV1 as runRaw,
+  localCompleteHighRiskModelV1,
+  observeCompleteHighRiskOllamaDigestV1,
 } from './sovereign-high-risk-advisory-v1.mjs';
 
 // Existing inference fixtures use the reviewed daemon protocol; dedicated
@@ -107,6 +118,7 @@ test('exact-head Git snapshot pins actual executable and high-risk policy bytes'
       spawn:(executable,args,options)=>{
         assert.equal(executable,'/usr/bin/git');
         assert.equal(options.shell,false);
+        assert.equal(options.cwd, '/verified/repo', 'relative Git file reads must stay in canonical root');
         assert.equal(options.env.GIT_EXEC_PATH,undefined);
         assert.ok(args.includes('--git-dir=/verified/repo/.git'));
         assert.ok(args.includes('--work-tree=/verified/repo'));
@@ -417,4 +429,329 @@ test('high-risk runner preserves fixed protocol refusals and suppresses arbitrar
     assert.equal(result.specialistAuthority,false);
     assert.equal(JSON.stringify(result).includes('private provider error payload'),false);
   }
+});
+
+function completeSnapshot(contents={
+  'shared/agents/producer.mjs':'export const threshold = 1000;\n',
+  'shared/agents/consumer.mjs':'import { threshold } from "./producer.mjs";\nacceptMilliseconds(threshold);\n',
+}) {
+  const blobs=new Map(),after=new Map();
+  for(const [path,content]of Object.entries(contents)){
+    const bytes=Buffer.from(content),sha=createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');
+    blobs.set(sha,bytes);after.set(path,{mode:'100644',sha});
+  }
+  const rendered=formatAuthenticatedReviewDiffV1({base:BASE,head:SHA,before:new Map(),after,blobs,
+    authenticatedObjectIds:['commit:'+BASE,'commit:'+SHA,'tree:'+'e'.repeat(40),
+      ...[...blobs.keys()].map(value=>'blob:'+value)]});
+  return {...fixedSnapshot(),...rendered,baseTree:'e'.repeat(40),sourceTree:'f'.repeat(40)};
+}
+function apiResponse(url,body,options={}) {
+  const response=new Response(typeof body==='string'?body:JSON.stringify(body),options);
+  Object.defineProperty(response,'url',{value:url});return response;
+}
+function completeApi(packet,overrides={}) {
+  const calls=[],state={tags:0,ps:0,generationStarted:false};
+  const response=JSON.stringify({reviewId:packet.reviewId,fullDiffSha256:packet.fullDiffSha256,
+    reviewedPathsSha256:packet.reviewedPathsSha256,verdict:'clean',findings:[]});
+  const selector='sha256:'+modelPin+':local';
+  const fetchImpl=async(url,options)=>{
+    calls.push({url,options});
+    assert.equal(options.redirect,'error');assert(options.signal instanceof AbortSignal);
+    if(overrides.any){const alternate=await overrides.any(url,options,state);if(alternate)return alternate;}
+    if(url.endsWith('/api/tags')){
+      state.tags++;return apiResponse(url,{models:[{name:'qwen:14b',digest:overrides.digest?.(state)||modelPin}]});
+    }
+    if(url.endsWith('/api/version'))return apiResponse(url,{version:overrides.version||'0.40.0'});
+    if(url.endsWith('/api/show')){
+      assert.deepEqual(JSON.parse(options.body),{model:selector});
+      return apiResponse(url,overrides.info||{capabilities:['completion'],model_info:{
+        'general.architecture':'qwen2','qwen2.context_length':131072}});
+    }
+    if(url.endsWith('/api/ps')){
+      state.ps++;
+      const models=overrides.models?overrides.models(state):state.generationStarted
+        ?[{digest:modelPin,context_length:8192}]:[];
+      return apiResponse(url,{models});
+    }
+    if(url.endsWith('/api/generate')){
+      state.generationStarted=true;
+      const request=JSON.parse(options.body);
+      assert.equal(request.prompt,packet.prompt);assert.equal(request.model,selector);
+      assert.equal(request.raw,true);assert.equal(request.truncate,false);assert.equal(request.shift,false);
+      assert.equal(request.keep_alive,0);assert.equal(request.stream,false);
+      assert.deepEqual(request.options,{temperature:0,num_ctx:8192,num_predict:2048});
+      if(overrides.generate)return overrides.generate(url,options,state,response);
+      return apiResponse(url,{model:selector,done:true,done_reason:'stop',response,
+        prompt_eval_count:Math.ceil(packet.promptBytes/3),eval_count:120,...overrides.reply});
+    }
+    assert.fail('unregistered transport '+url);
+  };
+  return {fetchImpl,calls,state,response};
+}
+function completeSettings(api,overrides={}) {
+  let poll,stopped=0;
+  return {options:{fetchImpl:api.fetchImpl,platform:'win32',gamingGuard:(_env,options)=>{
+    assert.equal(options.platform,'win32');return {ok:true};},
+    startPolling:(callback,interval)=>{assert.equal(interval,500);poll=callback;return 71;},
+    stopPolling:id=>{assert.equal(id,71);stopped++;},...overrides},
+    poll:()=>poll?.(),stopped:()=>stopped};
+}
+const completePacket=snapshot=>({...prepareSovereignCompleteReviewCandidateV1(snapshot),modelDigestSha256:modelPin});
+
+test('complete production transport sends one full prompt with enforced no-truncation and actual 8K context readback',async()=>{
+  const packet=completePacket(completeSnapshot()),api=completeApi(packet),settings=completeSettings(api);
+  const result=await localCompleteHighRiskModelV1(packet.prompt,packet,{...ENV,
+    OLLAMA_HOST:'https://untrusted.invalid',STEPHANOS_REVIEW_CONTEXT:'1048576',
+    STEPHANOS_REVIEW_RESIDENT_CONTEXT_APPROVED:'true'},settings.options);
+  assert.equal(result.reviewId,packet.reviewId);assert.equal(result.response,api.response);
+  assert.equal(result.executionObservation.contextTokens,8192);
+  assert.equal(result.executionObservation.observedContextTokens,8192);
+  assert.equal(result.executionObservation.contextAdmission,'FIXED_8K_BASELINE');
+  assert.equal(result.executionObservation.residencyCustodyObserved,false);
+  assert.equal(result.executionObservation.actualPromptTokens,Math.ceil(packet.promptBytes/3));
+  assert(result.executionObservation.gamingCheckCount>=2);
+  assert.equal(result.executionObservation.gamingInterruptedCount,0);assert.equal(settings.stopped(),1);
+  assert.equal(api.calls.filter(row=>row.url.endsWith('/api/generate')).length,1);
+  assert(api.calls.every(row=>row.url.startsWith('http://127.0.0.1:11434/api/')));
+});
+
+test('installed complete-mode runner preserves full source bindings and emits only bounded observations',async()=>{
+  const snapshot=completeSnapshot(),packet=completePacket(snapshot),api=completeApi(packet),settings=completeSettings(api);
+  let reads=0,published;
+  const result=await runRaw({env:ENV,root:'/test/repo',reviewMode:'complete-diff',
+    snapshot:()=>{reads++;return snapshot;},
+    observeModel:(model,options)=>observeCompleteHighRiskOllamaDigestV1(model,{...options,fetchImpl:api.fetchImpl}),
+    invokeModel:()=>assert.fail('complete mode cannot substitute the legacy chunk engine'),
+    invokeCompleteModel:(prompt,review,options)=>localCompleteHighRiskModelV1(prompt,review,ENV,{...settings.options,...options}),
+    publish:async(_root,_segments,record)=>{published=record;return {ok:true};},
+  });
+  assert.equal(reads,2);assert.equal(result.status,'HIGH_RISK_LOCAL_CANDIDATE_READY');
+  assert.equal(result.reviewMode,'complete-diff');assert.equal(result.completeCrossFileReviewObserved,true);
+  assert.equal(result.reviewedDiffBytes,snapshot.fullDiffBytes);assert.equal(result.reviewedPathCount,2);
+  assert.equal(result.reviewedChunkCount,0);assert.equal(result.specialistAuthority,false);
+  assert.equal(result.mergeAuthority,false);assert.equal(result.publicationOk,true);
+  assert.equal(published.status,'HELD');assert.equal(published.highRiskAdvisory.completeCrossFileReviewObserved,true);
+  assert.equal(published.highRiskAdvisory.independentAttestationProven,false);
+  assert.equal(JSON.stringify(result).includes(snapshot.diff),false);
+  assert.equal(JSON.stringify(published).includes(snapshot.diff),false);
+  assert(Buffer.byteLength(JSON.stringify(result))<65536);
+});
+
+test('full source metadata and after-inference source changes cannot be replaced by clean model prose',async()=>{
+  const snapshot=completeSnapshot(),packet=completePacket(snapshot);
+  for(const patch of [{baseTree:'0'.repeat(40)},{sourceTree:'1'.repeat(40)},
+    {sourceEvidence:snapshot.sourceEvidence.map((row,i)=>i?row:{...row,newContentSha256:'0'.repeat(64)})},
+    {fullDiffBytes:snapshot.fullDiffBytes+1}]){
+    const api=completeApi(packet),settings=completeSettings(api);let reads=0;
+    const result=await runRaw({env:ENV,root:'/test/repo',reviewMode:'complete-diff',
+      snapshot:()=>reads++===0?snapshot:{...snapshot,...patch},
+      observeModel:(model,options)=>observeCompleteHighRiskOllamaDigestV1(model,{...options,fetchImpl:api.fetchImpl}),
+      invokeCompleteModel:(prompt,review,options)=>localCompleteHighRiskModelV1(prompt,review,ENV,{...settings.options,...options}),
+      publish:async()=>({ok:true}),
+    });
+    assert.equal(result.reason,'REVIEW_SOURCE_CHANGED_DURING_INFERENCE');
+    assert.equal(result.completeCrossFileReviewObserved,false);assert.equal(result.completeReviewExecution,null);
+    assert.equal(result.reviewedDiffBytes,0);
+  }
+});
+
+test('a 435KB complete prompt never cold-loads or trusts a purported resident large-context caller flag',async()=>{
+  const snapshot=completeSnapshot({'scripts/starfield.mjs':'// complete bounded line\n'.repeat(19000)});
+  const packet=completePacket(snapshot);assert(packet.promptBytes>435000);let called=0;
+  await assert.rejects(localCompleteHighRiskModelV1(packet.prompt,{
+    ...packet,residentContextApproved:true,contextTokens:524288,
+  },{...ENV,STEPHANOS_REVIEW_RESIDENT_CONTEXT_APPROVED:'true'},{
+    gamingGuard:()=>({ok:true}),fetchImpl:()=>{called++;assert.fail('large allocation must not be attempted');},
+  }),/COMPLETE_REVIEW_LARGE_CONTEXT_CUSTODY_UNPROVEN/);
+  assert.equal(called,0);
+});
+
+test('unknown Ollama feature protocols never receive a full source prompt',async()=>{
+  const packet=completePacket(completeSnapshot());
+  for(const version of ['0.39.9','0.40.0-rc.1','0.41.0','unknown']){
+    const api=completeApi(packet,{version}),settings=completeSettings(api);
+    await assert.rejects(localCompleteHighRiskModelV1(packet.prompt,packet,ENV,settings.options),
+      /LOCAL_OLLAMA_DIGEST_PROTOCOL_UNSUPPORTED/);
+    assert.equal(api.calls.some(row=>row.url.endsWith('/api/generate')),false);
+    assert.equal(settings.stopped(),1);
+  }
+});
+
+test('full inference holds for inadequate model capability, wrong running context and ambiguous resident digest',async()=>{
+  const packet=completePacket(completeSnapshot());
+  for(const config of [
+    {info:{capabilities:['completion'],model_info:{'general.architecture':'qwen2','qwen2.context_length':4096}}},
+    {info:{capabilities:['completion'],model_info:{'qwen2.context_length':8192}}},
+    {models:state=>state.generationStarted?[{digest:modelPin,context_length:4096}]:[]},
+    {models:()=>[{digest:modelPin,context_length:8192},{digest:modelPin,context_length:8192}]},
+    {models:()=>[]},
+  ]){
+    const api=completeApi(packet,config),settings=completeSettings(api);
+    await assert.rejects(localCompleteHighRiskModelV1(packet.prompt,packet,ENV,settings.options),
+      /COMPLETE_REVIEW_(MODEL_CONTEXT_UNPROVEN|RUNNING_CONTEXT_CHANGED|RUNNING_CONTEXT_AMBIGUOUS|RUNNING_CONTEXT_UNPROVEN)/);
+    assert.equal(settings.stopped(),1);
+  }
+});
+
+test('full inference rejects truncated, remote, aliased or unmeasured model completion',async()=>{
+  const packet=completePacket(completeSnapshot());
+  for(const reply of [{done_reason:'length'},{done:false},{model:'qwen:14b'},{remote_host:''},
+    {context:[]},{debug_info:{}},{prompt_eval_count:undefined},{prompt_eval_count:packet.promptBytes+1},
+    {eval_count:undefined},{eval_count:2049},{response:'x'.repeat(12289)}]){
+    const api=completeApi(packet,{reply}),settings=completeSettings(api);
+    await assert.rejects(localCompleteHighRiskModelV1(packet.prompt,packet,ENV,settings.options),
+      /COMPLETE_REVIEW_COMPLETION_UNPROVEN/);
+  }
+});
+
+test('full inference model drift before or after generation cannot retain a complete candidate',async()=>{
+  const packet=completePacket(completeSnapshot());
+  for(const changeAt of [2,3]){
+    const api=completeApi(packet,{digest:state=>state.tags===changeAt?'e'.repeat(64):modelPin});
+    const settings=completeSettings(api);
+    await assert.rejects(localCompleteHighRiskModelV1(packet.prompt,packet,ENV,settings.options),
+      /COMPLETE_REVIEW_MODEL_DIGEST_CHANGED/);
+    assert.equal(api.calls.filter(row=>row.url.endsWith('/api/generate')).length,changeAt===2?0:1);
+  }
+});
+
+test('full inference cancels active generation when the actual gaming adapter refuses',async()=>{
+  const packet=completePacket(completeSnapshot());let game=false,settings;
+  const api=completeApi(packet,{generate:async(url,_options,_state,response)=>{
+    game=true;settings.poll();return apiResponse(url,{model:'sha256:'+modelPin+':local',done:true,
+      done_reason:'stop',response,prompt_eval_count:100,eval_count:100});
+  }});
+  settings=completeSettings(api,{gamingGuard:()=>({ok:!game})});
+  await assert.rejects(localCompleteHighRiskModelV1(packet.prompt,packet,ENV,settings.options),
+    /HIGH_RISK_GAMING_RESOURCE_PROTECTED/);
+  assert.equal(settings.stopped(),1);
+});
+
+test('streaming byte limits refuse overflowing and compressed responses before retaining output',async()=>{
+  const packet=completePacket(completeSnapshot());
+  for(const encoding of ['', 'gzip']){
+    let cancelled=0;
+    const api=completeApi(packet,{generate:async url=>{
+      const stream=new ReadableStream({start(controller){controller.enqueue(new Uint8Array(65537));},
+        cancel(){cancelled++;}});
+      const response=new Response(stream,{headers:encoding?{'content-encoding':encoding,'content-length':'50'}:{}});
+      Object.defineProperty(response,'url',{value:url});return response;
+    }}),settings=completeSettings(api);
+    await assert.rejects(localCompleteHighRiskModelV1(packet.prompt,packet,ENV,settings.options),
+      /COMPLETE_REVIEW_RESPONSE_UNBOUNDED/);
+    assert.equal(cancelled,1);assert.equal(settings.stopped(),1);
+  }
+});
+
+test('the aggregate abort covers stalled metadata headers and streamed generation bodies',async()=>{
+  const packet=completePacket(completeSnapshot());
+  for(const stage of ['headers','body']){
+    const controller=new AbortController();let cancelled=0;
+    const api=completeApi(packet,{any:stage==='headers'?async url=>{
+      if(!url.endsWith('/api/show'))return null;
+      queueMicrotask(()=>controller.abort());return new Promise(()=>{});
+    }:undefined,generate:stage==='body'?async url=>{
+      const response=new Response(new ReadableStream({start(){queueMicrotask(()=>controller.abort());},
+        cancel(){cancelled++;}}));Object.defineProperty(response,'url',{value:url});return response;
+    }:undefined}),settings=completeSettings(api,{signal:controller.signal});
+    await assert.rejects(localCompleteHighRiskModelV1(packet.prompt,packet,ENV,settings.options),
+      /COMPLETE_REVIEW_AGGREGATE_DEADLINE/);
+    assert.equal(settings.stopped(),1);
+    if(stage==='body')assert.equal(cancelled,1);
+  }
+});
+
+
+test('Windows canonical high-risk snapshot uses authenticated private worktree isolation', {
+  skip: process.platform !== 'win32', timeout: 60000,
+}, t => {
+  const parent = mkdtempSync(join(resolveBattleBridgePhysicalPathV1(tmpdir()), 'stephanos-highrisk-win-git-'));
+  const root = join(parent, 'main');
+  mkdirSync(root);
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const gitExecution = resolveBattleBridgeGitExecution({ platform: 'win32' });
+  const git = args => {
+    const result = spawnSync(gitExecution.executable, [
+      ...gitExecution.fixedConfigArgs, '-C', root, ...args,
+    ], { cwd: root, env: gitExecution.environment, shell: false,
+      windowsHide: true, encoding: 'utf8', timeout: 15000, maxBuffer: 1024 * 1024 });
+    assert.equal(result.status, 0, String(result.stderr || result.error?.message));
+    return result.stdout.trim();
+  };
+  git(['init', '-b', 'main']);
+  git(['remote', 'add', 'origin', 'https://github.com/Cheekyfellastef/stephan-os.git']);
+  // Exact source-byte fixtures must not depend on Windows runner autocrlf.
+  git(['config', 'core.autocrlf', 'false']);
+  writeFileSync(join(root, '.gitattributes'), '*.mjs -text\n');
+  for (const name of HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS) {
+    const target = join(root, name);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, 'fixed fixture ' + name + '\n');
+  }
+  git(['add', '.']);
+  git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '-m', 'baseline']);
+  const base = git(['rev-parse', 'HEAD']);
+  writeFileSync(join(root, 'README.md'), 'current fixture head\n');
+  git(['add', 'README.md']);
+  git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+    'commit', '-m', 'review']);
+  const head = git(['rev-parse', 'HEAD']);
+  for (const name of HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS) {
+    assert.equal(git(['hash-object', '--no-filters', '--', name]),
+      git(['rev-parse', 'HEAD:' + name]),
+      'test source bytes must equal tracked Git objects before private probing');
+  }
+  git(['config', 'extensions.worktreeConfig', 'true']);
+  git(['worktree', 'add', '-b', 'fixture-linked', join(parent, 'linked')]);
+  const existingWorktreeMetadata = readFileSync(join(root, '.git', 'worktrees', 'linked', 'gitdir'));
+  const originalConfig = readFileSync(join(root, '.git', 'config'));
+  const originalIndex = readFileSync(join(root, '.git', 'index'));
+  // The original main worktree carries hostile per-worktree options. The
+  // qualified private context must not consult them for any Git operation.
+  const localWorktreeConfig = join(root, '.git', 'config.worktree');
+  const foreign = '[core]\n\tfsmonitor = /bad/helper\n[remote "origin"]\n\turl = https://attacker.invalid/alternate\n';
+  writeFileSync(localWorktreeConfig, foreign);
+  const caseEnv = {
+    STEPHANOS_REVIEW_EXACT_HEAD: head,
+    STEPHANOS_REVIEW_EXACT_BASE: base,
+    STEPHANOS_REVIEW_EXACT_BRANCH: 'main',
+    STEPHANOS_REVIEW_REPOSITORY: 'Cheekyfellastef/stephan-os',
+    STEPHANOS_REVIEW_PR: '3499', STEPHANOS_REVIEW_ISSUE: '1574',
+    STEPHANOS_REVIEW_SESSION: 'local-windows-review',
+    STEPHANOS_REVIEW_IMPLEMENTER_SESSION: 'source-implementer',
+    STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: 'canonical-programme-builder',
+  };
+  let verifiedSourceDiff = false;
+  const result = capture(caseEnv, {
+    platform: 'win32', root, spawn: spawnSync,
+    resolveGit: () => gitExecution,
+    captureDiff: ({ git: reviewedGit }) => {
+      assert.equal(reviewedGit.executable, gitExecution.executable);
+      assert.equal(reviewedGit.fixedConfigArgs.some(arg =>
+        arg.startsWith('--git-dir=') && !arg.endsWith('/main/.git')), true);
+      assert.equal(reviewedGit.fixedConfigArgs.some(arg => arg === '--work-tree=' + root), true);
+      verifiedSourceDiff = true;
+      return { changedFiles: ['README.md'], diff: 'fixture-reviewed-diff',
+        reviewedObjectClosureSha256: 'c'.repeat(64) };
+    },
+  });
+  assert.equal(verifiedSourceDiff, true);
+  assert.equal(result.sourceHead, head);
+  assert.equal(result.baseSha, base);
+  assert.equal(result.branch, 'main');
+  assert.deepEqual(result.changedFiles, ['README.md']);
+  assert.deepEqual(readFileSync(join(root, '.git', 'config')), originalConfig);
+  assert.deepEqual(readFileSync(join(root, '.git', 'index')), originalIndex);
+  assert.deepEqual(readFileSync(join(root, '.git', 'worktrees', 'linked', 'gitdir')), existingWorktreeMetadata);
+  assert.equal(readFileSync(localWorktreeConfig, 'utf8'), foreign);
+  // A source file changed outside the HEAD cannot be promoted to reviewed.
+  writeFileSync(join(root, 'scripts', 'sovereign-high-risk-advisory-v1.mjs'),
+    'changed source outside reviewed HEAD\n');
+  assert.throws(() => capture(caseEnv, { platform: 'win32', root, spawn: spawnSync,
+    resolveGit: () => gitExecution, captureDiff: () => {
+      throw Error('DIFF_MUST_NOT_RUN_AFTER_DIRT');
+    },
+  }), /DIRTY_REVIEW_CHECKOUT|CANONICAL_GIT_PROBE_/);
+  assert.deepEqual(readFileSync(join(root, '.git', 'config')), originalConfig);
 });

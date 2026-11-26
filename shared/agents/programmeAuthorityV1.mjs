@@ -196,7 +196,7 @@ function parkedCriticalBacklogIssueNumbers(conveyor = {}) {
   const decision = text(conveyor?.decision).toUpperCase();
   const parkedRelease = conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
     && conveyor?.validation?.valid === true
-    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY'].includes(decision)
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'PARKED_ACCEPTANCE_ONLY'].includes(decision)
     && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
     && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
     && Array.isArray(conveyor?.remainingItemIds)
@@ -207,6 +207,7 @@ function parkedCriticalBacklogIssueNumbers(conveyor = {}) {
     ...list(conveyor?.parkedMissionIds),
     ...list(conveyor?.parkedApprovalMissionIds),
     ...list(conveyor?.parkedBlockedMissionIds),
+    ...list(conveyor?.parkedAcceptanceMissionIds),
   ].map((value) => text(value)).filter(Boolean));
   return new Set(missionIds.flatMap((missionId) => criticalBacklogMissionIssueNumbers(missionId)));
 }
@@ -1168,6 +1169,13 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       resourceIds: ownValueOr(record, 'resourceIds', []),
       priority: Number.isFinite(record.priority) ? record.priority : 0,
       criticalPathWeight: Number.isFinite(record.criticalPathWeight) ? record.criticalPathWeight : 0,
+      goalClass: text(record.goalClass, 'DURABLE_GOAL').toUpperCase(),
+      createdAt: ownValueOr(record, 'createdAt', null),
+      automationDebtWeight: Number.isFinite(record.automationDebtWeight) ? record.automationDebtWeight : 0,
+      recurrenceCount: Number.isFinite(record.recurrenceCount) ? record.recurrenceCount : 0,
+      operatorToilWeight: Number.isFinite(record.operatorToilWeight) ? record.operatorToilWeight : 0,
+      blastRadiusWeight: Number.isFinite(record.blastRadiusWeight) ? record.blastRadiusWeight : 0,
+      effortWeight: Number.isFinite(record.effortWeight) ? record.effortWeight : 0,
       reversibility: text(record.reversibility, 'UNKNOWN').toUpperCase(),
       route: ownValueOr(record, 'route', 'WAITING_FOR_EXTERNAL_CONDITION'),
       activePr: prAliases.value,
@@ -1325,6 +1333,13 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       resourceIds: ownValueOr(existing, 'resourceIds', []),
       priority: existing?.priority ?? 0,
       criticalPathWeight: existing?.criticalPathWeight ?? 0,
+      goalClass: existing?.goalClass ?? 'DURABLE_GOAL',
+      createdAt: existing?.createdAt ?? null,
+      automationDebtWeight: existing?.automationDebtWeight ?? 0,
+      recurrenceCount: existing?.recurrenceCount ?? 0,
+      operatorToilWeight: existing?.operatorToilWeight ?? 0,
+      blastRadiusWeight: existing?.blastRadiusWeight ?? 0,
+      effortWeight: existing?.effortWeight ?? 0,
       reversibility: existing?.reversibility ?? 'UNKNOWN',
       route: existing
         ? ownValueOr(existing, 'route', 'WAITING_FOR_EXTERNAL_CONDITION')
@@ -1505,7 +1520,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     && conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
     && conveyor?.validation?.valid === true
     && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
-    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'PARKED_ACCEPTANCE_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
     && conveyor?.finalVerdict === (
       conveyor?.decision === 'BACKLOG_COMPLETE'
         ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'
@@ -1603,7 +1618,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     ));
   const legacyCapacityReleasedForElasticSelection = selectedReadyElasticCandidate
     && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
-    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'PARKED_ACCEPTANCE_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
     && conveyor?.finalVerdict === (
       conveyor?.decision === 'BACKLOG_COMPLETE'
         ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'

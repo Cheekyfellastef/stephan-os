@@ -30,3 +30,6 @@ jobs:
       - name: Portable advisory contracts on Windows
         if: runner.os == 'Windows'
         run: node --test --test-skip-pattern="exact-head Git snapshot|physical gaming-governor" scripts/sovereign-high-risk-advisory-v1.test.mjs
+      - name: Starfield AER ValidateOnly disposable-file nonmutation regression on Windows
+        if: runner.os == 'Windows'
+        run: node --test shared/agents/starfieldAerValidateOnlyNonmutation.test.mjs

@@ -6,14 +6,18 @@ import { atomicWriteJson, readJsonObject } from './battle-bridge-github-command-
 import { MAILBOX_ROTATION_REQUEST_ID, mailboxRotationDigest } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { projectControlTowerRequestObservationV1, projectControlTowerLedgerObservationV1,
   controlTowerBuildObservationUnresolvedV1, createControlTowerRequestObservationV1 } from '../shared/agents/controlTowerRequestObservationV1.mjs';
-import { CONTROL_TOWER_BUILD_OPERATION } from '../shared/agents/controlTowerBuildRequestV1.mjs';
+import { CONTROL_TOWER_BUILD_OPERATION, parseControlTowerRequestIdV1 } from '../shared/agents/controlTowerBuildRequestV1.mjs';
 const SCHEMA = 'stephanos.mailbox-execution-ledger-entry.v1';
 const INVENTORY_MAX_ENTRIES = 8192;
 const ENTRY_MAX_BYTES = 4096;
 const DISCOVERY_BATCH_SIZE = 128;
 const DISCOVERY_MAX_DURATION_MS = 10_000;
+// Read-only historical inventory may require two full verified directory passes.
+// Never extend the exclusive BUILD reservation deadline beyond the original cap.
+const DISCOVERY_READ_ONLY_MAX_DURATION_MS = 30_000;
 const CONTROL_TOWER_IDENTITY = ['requestId', 'runId', 'runAttempt', 'operation', 'sourceHead',
-  'artifactId', 'artifactSha256', 'commandDigest', 'createdAtUtc', 'expiresAtUtc', 'acceptedAtUtc'];
+  'artifactId', 'artifactSha256', 'commandDigest', 'createdAtUtc', 'expiresAtUtc', 'acceptedAtUtc',
+  'ownerCommentId', 'ownerCommentIssueNumber', 'ownerCommentSha256'];
 const observationHashValid = observation => !observation?.controlSystemStatus
   || observation.observationProofHash === createHash('sha256')
     .update(JSON.stringify(observation.controlSystemStatus)).digest('hex');
@@ -190,7 +194,9 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
   }
 
   async function scanControlTower({ nowMs = Date.now(), batchSize = DISCOVERY_BATCH_SIZE,
-      maxDurationMs = DISCOVERY_MAX_DURATION_MS, maxEntries } = {}, admission = null) {
+      maxDurationMs, maxEntries } = {}, admission = null) {
+      const durationLimitMs = admission ? DISCOVERY_MAX_DURATION_MS : DISCOVERY_READ_ONLY_MAX_DURATION_MS;
+      maxDurationMs ??= durationLimitMs;
       let latestBuildRequestObservation = null, latestControlSystemObservation = null, unresolved = null;
       let count = 0, batchWork = 0, reservationAttempted = false, admittedAt, clockSampledAt;
       const command = admission ? JSON.parse(JSON.stringify(admission.command)) : null;
@@ -290,7 +296,7 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
           if (maxEntries !== undefined && ++count > maxEntries) bound();
           const record = readEntry(entry.path, entry.before);
           if (!same(entry.before, inspectEntry(entry.path))) unproven();
-          if (/^control-tower-build-[1-9][0-9]{0,15}-1$/.test(record.requestId)) {
+          if (parseControlTowerRequestIdV1(record.requestId)) {
             const observed = observeControlTowerRecord(record, { nowMs });
             if (!observed) unproven();
             if (observed.operation === 'OBSERVE_CONTROL_SYSTEM')
@@ -318,7 +324,7 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
       };
       try {
         if (!Number.isFinite(nowMs) || !Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 4096
-          || !Number.isSafeInteger(maxDurationMs) || maxDurationMs < 1 || maxDurationMs > DISCOVERY_MAX_DURATION_MS
+          || !Number.isSafeInteger(maxDurationMs) || maxDurationMs < 1 || maxDurationMs > durationLimitMs
           || (maxEntries !== undefined && (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 4096)))
           unproven();
         if (admission && (command?.operation !== CONTROL_TOWER_BUILD_OPERATION || command.issueNumber !== 2315
@@ -357,6 +363,23 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
         // file check. This remains an observation, not global serialization
         // against arbitrary actors bypassing the original ledger write API.
         for (const shard of shards) verifyShard(shard);
+        // Directory timestamps are not an adequate membership witness on every
+        // filesystem. Re-enumerate the root without yielding, so a previously
+        // unseen shard cannot be silently omitted from a positive read-only
+        // snapshot even if its parent metadata appears unchanged.
+        const finalShards = [], finalHandle = opendirSync(root, { bufferSize: 256 });
+        try {
+          let entry;
+          while ((entry = finalHandle.readSync())) {
+            budget();
+            if (finalShards.length >= 256 || !/^[a-f0-9]{2}$/.test(entry.name)
+              || !entry.isDirectory() || entry.isSymbolicLink()) unproven();
+            finalShards.push(entry.name);
+          }
+        } finally { finalHandle.closeSync(); }
+        finalShards.sort();
+        if (finalShards.length !== shards.length
+          || finalShards.some((name, index) => name !== shards[index])) unproven();
         directory(root);
         for (const path of directories.keys()) { budget(); inspectDirectory(path); }
         budget();

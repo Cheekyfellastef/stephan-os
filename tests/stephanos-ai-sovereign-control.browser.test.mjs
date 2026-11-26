@@ -24,7 +24,7 @@ async function startServer() {
   return { origin: 'http://127.0.0.1:' + server.address().port,
     close: () => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }) };
 }
-function response(operation = 'OBSERVE_CONTROL_SYSTEM') {
+function response(operation = 'OBSERVE_CONTROL_SYSTEM', requestId = 'control-tower-build-123-1') {
   const now = Date.now();
   return { success: true, output_text: 'Commander is reachable; its repair loop has no next cycle scheduled. No action has been submitted.',
     data: {
@@ -34,7 +34,7 @@ function response(operation = 'OBSERVE_CONTROL_SYSTEM') {
         schemaVersion: 'stephanos.sovereign-control-conversation.v1', observedAtUtc: new Date(now).toISOString(),
         responseSource: 'CANONICAL_CONTROL_OBSERVATIONS', readOnly: true, modelInvoked: false,
         nativeActionSubmitted: false, directParticipantDispatchProven: false,
-        controlTower: { latestRequestObservation: { requestId: 'control-tower-build-123-1', state: 'RESERVED', historical: true } },
+        controlTower: { latestRequestObservation: { requestId, state: 'RESERVED', historical: true } },
         handoff: { state: 'NOT_SUBMITTED', requestSubmitted: false, executionAuthority: false,
           authenticatedOwnerSubmissionRequired: true, singleAuthenticatedRunRequired: true, reusableAuthority: false,
           operation, workflowUrl: CONTROL_WORKFLOW_URL, workflowRef: 'main', workflowInputs: { operation },
@@ -53,16 +53,25 @@ test('desktop control conversations keep prompt intent, provenance and unresolve
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const requests = [], errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.route('http://localhost:8787/**', async route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
-      requests.push({ url: route.request().url(), body: route.request().postDataJSON() });
-      return route.fulfill({ json: response(), headers: { 'access-control-allow-origin': '*' } });
-    });
-    await page.route('http://127.0.0.1:8787/**', async route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
-      requests.push({ url: route.request().url(), body: route.request().postDataJSON() });
-      return route.fulfill({ json: response(), headers: { 'access-control-allow-origin': '*' } });
-    });
+    // Probes are GETs, not user chat operations or native actions.
+    const backendFixture = async route => {
+      const request = route.request(), method = request.method();
+      const pathname = new URL(request.url()).pathname;
+      const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
+      if (method === 'OPTIONS') return route.fulfill({ status: 204, headers });
+      if (method === 'GET' && pathname === '/api/health')
+        return route.fulfill({ json: { status: 'ok' }, headers });
+      if (method === 'GET' && pathname === '/api/ai/shared-thread')
+        return route.fulfill({ json: { success: true, data: {
+          ok: true, threadId: 'shared-stephanos-chat', turns: [], totalRetained: 0,
+        } }, headers });
+      assert.equal(method, 'POST');
+      assert.equal(pathname, '/api/ai/chat');
+      requests.push({ url: request.url(), body: request.postDataJSON() });
+      return route.fulfill({ json: response('OBSERVE_CONTROL_SYSTEM', 'control-tower-comment-700-1'), headers });
+    };
+    await page.route('http://localhost:8787/**', backendFixture);
+    await page.route('http://127.0.0.1:8787/**', backendFixture);
     await page.goto(server.origin + '/apps/stephanos-ai/index.html');
     await page.getByRole('button', { name: /Control Tower.*Control status/ }).click();
     await page.locator('#prompt').fill('/sovereign inspect the native control system');
@@ -73,6 +82,7 @@ test('desktop control conversations keep prompt intent, provenance and unresolve
     assert.equal(requests[0].body.runtimeContext.participantTarget, 'control-tower');
     await expect(page.locator('.message.assistant .meta')).toContainText('Stephanos control');
     await expect(page.getByLabel('Sovereign control receipt')).toContainText('Accepted · outcome unproven');
+    await expect(page.getByLabel('Sovereign control receipt')).toContainText('control-tower-comment-700-1');
     await expect(page.getByLabel('Sovereign control receipt')).toContainText('Prepared · not submitted');
     await expect(page.locator('#presenceTruth')).toContainText('native action not submitted');
     await expect(page.getByRole('link', { name: 'Open authorised Control Tower' })).toHaveAttribute('href', CONTROL_WORKFLOW_URL);
@@ -100,9 +110,21 @@ test('phone can select Control Tower and a delayed reply cannot mark another tar
     const pending = new Promise(resolve => { release = resolve; });
     const seen = new Promise(resolve => { started = resolve; });
     await page.route(/http:\/\/(localhost|127\.0\.0\.1):8787\//, async route => {
-      if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
-      started(); await pending;
-      return route.fulfill({ json: response(), headers: { 'access-control-allow-origin': '*' } });
+      const request = route.request(), method = request.method();
+      const pathname = new URL(request.url()).pathname;
+      const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
+      if (method === 'OPTIONS') return route.fulfill({ status: 204, headers });
+      if (method === 'GET' && pathname === '/api/health')
+        return route.fulfill({ json: { status: 'ok' }, headers });
+      if (method === 'GET' && pathname === '/api/ai/shared-thread')
+        return route.fulfill({ json: { success: true, data: {
+          ok: true, threadId: 'shared-stephanos-chat', turns: [], totalRetained: 0,
+        } }, headers });
+      assert.equal(method, 'POST');
+      assert.equal(pathname, '/api/ai/chat');
+      started();
+      await pending;
+      return route.fulfill({ json: response(), headers });
     });
     await page.goto(server.origin + '/apps/stephanos-ai/index.html');
     await page.getByLabel('Conversation target').selectOption('control-tower');
