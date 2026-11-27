@@ -100,3 +100,122 @@ test('repository instructions make route discovery mandatory and gh absence rout
   assert.match(instructions, /Fail over without rebuilding the source change/);
   assert.match(instructions, /SOURCE_PUBLICATION_CAPACITY_UNAVAILABLE/);
 });
+
+test('Git-invalid refname components are not publication-ready',()=>{
+ for(const branch of ['feature/foo.lock','feature/foo.','feature/./foo','feature/.hidden','feature/a/.','feature/a.lock/foo',
+  'feature/task.LOCK','feature/task.Lock','feature/foo.LOCK/child','feature/foo.Lock/child','feature/foo.lOcK']){
+  const a={...artifact,branch};
+  const result=buildSourcePublicationContinuityV1({workspace,artifact:a,nowUtc:NOW,capabilities:{[SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit({branch})}});
+  assert.equal(result.blocker,SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID,branch);
+  assert.equal(result.routeReady,false,branch);
+  assert.equal(result.mutationAllowed,false);
+ }
+ for(const branch of ['feature/valid-thing','feature/foo.locking','feature/fix_v1','feature/task.LOCKed']){
+  const a={...artifact,branch};
+  const result=buildSourcePublicationContinuityV1({workspace,artifact:a,nowUtc:NOW,capabilities:{[SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit({branch})}});
+  assert.equal(result.selectedRoute,SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT,branch);
+  assert.equal(result.mutationAllowed,false);
+ }
+});
+
+test('malformed failed-route histories fail closed before route selection',()=>{
+ const poisoned=JSON.parse('{"toString":null}');
+ for(const failedRoutes of [[poisoned],[21],['UNRECOGNISED_ROUTE'],'AUTHENTICATED_GIT']){
+  const r=buildSourcePublicationContinuityV1({workspace,artifact,nowUtc:NOW,failedRoutes,capabilities:{[SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit()}});
+  assert.equal(r.blocker,SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);assert.equal(r.routeReady,false);assert.equal(r.mutationAllowed,false);
+ }
+});
+test('malformed artifact, timestamp and null request return typed holds',()=>{
+ const poisoned=JSON.parse('{"toString":null}');
+ for(const override of [{artifact:{...artifact,branch:poisoned}},{nowUtc:poisoned}]){
+  const r=buildSourcePublicationContinuityV1({workspace,artifact,nowUtc:NOW,...override});
+  assert.equal(r.blocker,SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID);assert.equal(r.mutationAllowed,false);
+ }
+ assert.equal(buildSourcePublicationContinuityV1(null).blocker,SOURCE_PUBLICATION_BLOCKER.DISCOVERY_REQUIRED);
+});
+test('poisoned Git capability receipt preserves valid GitHub App fallback',()=>{
+ const poisoned=JSON.parse('{"toString":null}');
+ for(const bad of [{operations:[poisoned]},{operations:['PUSH_EXACT_SOURCE_COMMIT',19]},{exactBase:poisoned},{observedAtUtc:poisoned}]){
+  const r=buildSourcePublicationContinuityV1({workspace,artifact,nowUtc:NOW,existingBranch:true,capabilities:{
+   [SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]:localGit(bad),
+   [SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]:githubApp({operations:['CREATE_BLOBS','CREATE_TREE','CREATE_COMMIT','UPDATE_BRANCH_REF']})
+  }});
+  assert.equal(r.selectedRoute,SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);assert.equal(r.mutationAllowed,false);
+ }
+});
+
+test('rejects Git pseudo-ref collisions and protected-branch namespace children', () => {
+  const blocked = [
+    'HEAD', 'head', 'FETCH_HEAD', 'MERGE_HEAD', 'REVERT_HEAD',
+    'BISECT_HEAD', 'AUTO_MERGE', 'ORIG_HEAD', 'CHERRY_PICK_HEAD',
+    'REBASE_HEAD', 'main', 'master', 'main/sub', 'main/sub/child',
+    'master/sub', 'master/sub/child', 'MAIN/sub', 'Master/sub', 'Refs/heads/main',
+  ];
+  for (const branch of blocked) {
+    const item = { ...artifact, branch };
+    const result = buildSourcePublicationContinuityV1({
+      workspace, artifact: item, nowUtc: NOW,
+      capabilities: { [SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]: localGit({ branch }) },
+    });
+    assert.equal(result.blocker, SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID, branch);
+    assert.equal(result.routeReady, false, branch);
+    assert.equal(result.mutationAllowed, false, branch);
+  }
+  for (const branch of ['feature/HEAD', 'feature/FETCH_HEAD', 'agent/normal',
+    'mainstream/a', 'masterpiece/a', 'feature/foo.locking', 'agent/review-throughput-v1']) {
+    const item = { ...artifact, branch };
+    const result = buildSourcePublicationContinuityV1({
+      workspace, artifact: item, nowUtc: NOW,
+      capabilities: { [SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT]: localGit({ branch }) },
+    });
+    assert.equal(result.selectedRoute, SOURCE_PUBLICATION_ROUTE.AUTHENTICATED_GIT, branch);
+    assert.equal(result.mutationAllowed, false, branch);
+  }
+});
+
+test('new branches require create-ref, existing branches require update-ref',()=>{
+ const core=['CREATE_BLOBS','CREATE_TREE','CREATE_COMMIT'];
+ const get=(ops,existing)=>buildSourcePublicationContinuityV1({workspace,artifact,nowUtc:NOW,existingBranch:existing,capabilities:{[SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP]:githubApp({operations:[...core,...ops]})}});
+ assert.equal(get(['UPDATE_BRANCH_REF'],false).routeReady,false);
+ assert.equal(get(['UPDATE_BRANCH_REF'],false).blocker,SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);
+ assert.equal(get(['CREATE_BRANCH_REF'],false).selectedRoute,SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);
+ assert.equal(get(['CREATE_BRANCH_REF'],true).routeReady,false);
+ assert.equal(get(['UPDATE_BRANCH_REF'],true).selectedRoute,SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP);
+ for(const exists of [false,true])assert.equal(get(['CREATE_BRANCH_REF','UPDATE_BRANCH_REF'],exists).routeReady,true);
+});
+test('raw artifact branch and capability receipt branch must match byte-exact',()=>{
+ const route=SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP;
+ const get=(a,r)=>buildSourcePublicationContinuityV1({workspace,artifact:{...artifact,branch:a},nowUtc:NOW,capabilities:{[route]:githubApp({branch:r,operations:['CREATE_BLOBS','CREATE_TREE','CREATE_COMMIT','CREATE_BRANCH_REF']})}});
+ assert.equal(get(artifact.branch,artifact.branch).routeReady,true);
+ for(const b of [artifact.branch+' ',' '+artifact.branch,artifact.branch+'\t']){
+  const r=get(b,artifact.branch);assert.equal(r.blocker,SOURCE_PUBLICATION_BLOCKER.ARTIFACT_INVALID);assert.equal(r.mutationAllowed,false);
+  const q=get(artifact.branch,b);assert.equal(q.blocker,SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);assert.equal(q.routeReady,false);assert.equal(q.mutationAllowed,false);
+ }
+});
+
+test('capability operations must match raw authority bytes, not trimmed aliases', () => {
+ const route=SOURCE_PUBLICATION_ROUTE.CONNECTED_GITHUB_APP;
+ const core=['CREATE_BLOBS','CREATE_TREE','CREATE_COMMIT','UPDATE_BRANCH_REF'];
+ const run=(operations)=>buildSourcePublicationContinuityV1({
+  workspace,artifact,nowUtc:NOW,existingBranch:true,
+  capabilities:{[route]:githubApp({operations})},
+ });
+ assert.equal(run(core).routeReady,true);
+ for(const operations of [
+  [' CREATE_BLOBS',...core.slice(1)],
+  [core[0],'CREATE_TREE ',...core.slice(2)],
+  [core[0],core[1],'CREATE_COMMIT\t',core[3]],
+  [...core.slice(0,3),'UPDATE_BRANCH_REF '],
+  [...core.slice(0,3),'UPDATE_BRANCH_REF\n'],
+  [...core.slice(0,3),'UPDATE_BRANCH_REF\t'],
+  [...core.slice(0,3),'  UPDATE_BRANCH_REF'],
+  ['CREATE_BLOBS\n',...core.slice(1)],
+  [...core,' CREATE_BLOBS'],
+ ]){
+  const actual=run(operations);
+  assert.equal(actual.routeReady,false,JSON.stringify(operations));
+  assert.equal(actual.blocker,SOURCE_PUBLICATION_BLOCKER.PROBES_PENDING);
+  assert.equal(actual.mutationAllowed,false);
+ }
+ assert.equal(run([...core,'READ_ONLY_PROBE']).routeReady,true);
+});
