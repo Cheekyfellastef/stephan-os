@@ -203,7 +203,8 @@ async function admitCanonicalUpdateRuntime({ repoRoot, sync, spawnSyncFn, adopti
     // Auxiliary control-plane failure occurs after canonical refresh settles.
     // The producer can report its separate blocker without a latest-refresh
     // row, but only when the independently read canonical debt is fully paid.
-    const settledAuxiliary = proof.classification === classifications[1] && afterEvidence.paid === true;
+    const settledAuxiliary = (proof.classification === classifications[1]
+      || (scoped && proof.controlPlaneDegraded === true)) && afterEvidence.paid === true;
     const reportsMatch = settledAuxiliary
       ? proof.refreshBlocker === proof.controlPlaneBlocker
         && (proof.refreshObligations === null || sameFrame(proof.refreshObligations, obligations))

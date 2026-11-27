@@ -104,7 +104,7 @@ function Get-StephanosCoreProcessObservation {
                         try {
                             $sourceDigest = ([BitConverter]::ToString($digest.ComputeHash($canonicalBytes))).Replace('-', '').ToLowerInvariant()
                         } finally { $digest.Dispose() }
-                        if ($sourceDigest -cne 'd3c82d73d6d1354864e006179a4e3840294fc738b84c731305d3154a027bf956') {
+                        if ($sourceDigest -cne '0bfa5fccae2375f0f5d509530083de2bdfcd10814b795160e40a813bd2d25b40') {
                             throw 'CORE_PROCESS_NATIVE_HELPER_SOURCE_UNPROVEN'
                         }
                         . ([ScriptBlock]::Create($canonicalSource))

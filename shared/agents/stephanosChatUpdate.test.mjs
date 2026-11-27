@@ -356,6 +356,27 @@ test('three-app scoped startup cross-checks exact canonical optional debt withou
   }
 });
 
+test('three-app scoped startup accepts settled auxiliary control-plane failure but rejects an unrelated blocker',async()=>{
+  const actual=await actualCanonicalAdoptionFixture(['docs/actual-auxiliary-hold.md'],
+    {auxiliaryFailure:true,startupScope:'THREE_APP_DESKTOP_STARTUP'});
+  assert.equal(actual.producer.ok,true);
+  assert.equal(actual.proof.ok,true);
+  assert.equal(actual.proof.classification,'IGNITION_SYNC_PREFLIGHT_PASS_THREE_APP_STARTUP');
+  assert.equal(actual.proof.controlPlaneDegraded,true);
+  assert.equal(actual.proof.refreshBlocker,actual.proof.controlPlaneBlocker);
+  assert.equal(actual.proof.startupAdmission.mandatoryRemaining.length,0);
+  for(const forged of [false,true]){
+    const proof=JSON.parse(JSON.stringify(actual.proof));
+    if(forged) proof.refreshBlocker='UNRELATED_BLOCKER';
+    const {result,calls}=await adoptionFixture({adoptionEvidenceReader:actual.reader,spawn:{stageReply:script=>
+      script==='battle-bridge-post-sync-refresh.mjs'?refreshReply(actual.producer):preflightReply(proof)}});
+    assert.equal(result.ok,!forged);
+    assert.equal(supervisorCount(calls),forged?0:1);
+    if(forged) assert.equal(result.blocker,'CHAT_UPDATE_CANONICAL_PREFLIGHT_REPORT_MISMATCH');
+    else assert.equal(result.desktopIgnitionReadiness,'UNPROVEN');
+  }
+});
+
 test('three-app scoped preflight cannot forge source, residual debt, scope or admission',async()=>{
   const actual=await actualCanonicalAdoptionFixture(['plugins/sovereign-commander/plugin.json'],
     {startupScope:'THREE_APP_DESKTOP_STARTUP'});
