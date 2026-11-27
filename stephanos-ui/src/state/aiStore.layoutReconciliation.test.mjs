@@ -27,13 +27,33 @@ test('reconciliation avoids duplicate missionConsolePanel entries', () => {
 });
 
 
-test('uiLayout forces protected AI Core intake panes open when persisted pane order omitted them', () => {
+test('protected AI Core restores legacy panes while Command Deck honours persisted collapse state', () => {
   assert.match(source, /shouldForceMissionConsoleOpen = !persistedPaneOrderIncludesPane\(persistedSession, 'missionConsolePanel'\)/m);
   assert.match(source, /shouldForceAiCoreMissionConsoleOpen = !persistedPaneOrderIncludesPane\(persistedSession, 'aiCoreMissionConsolePanel'\)/m);
   assert.match(source, /aiCoreMissionConsolePanel: true/m);
-  assert.match(source, /commandDeck: true/m);
-  assert.match(source, /function normalizeUiLayout[\s\S]*commandDeck: true/m);
-  assert.match(source, /if \(panelId === 'commandDeck'\) \{[\s\S]*isOpen = true/m);
+  assert.match(source, /commandDeck: true/m); // Open by default, not permanently forced open.
+
+  const layoutNormalizer = source.match(/function normalizeUiLayout\(value = \{\}\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  const panelSetter = source.match(/const setPanelState = useCallback\(\(panelId, isOpen, source = 'unknown'\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+  assert.ok(layoutNormalizer, 'layout normalizer is present');
+  assert.ok(panelSetter, 'panel state setter is present');
+  assert.doesNotMatch(layoutNormalizer, /commandDeck:\s*true/, 'restoring layout must preserve commandDeck: false');
+  assert.doesNotMatch(panelSetter, /if \(panelId === 'commandDeck'\)[\s\S]*?isOpen = true/, 'clicking the Command Deck chevron must not force it open');
+  assert.match(panelSetter, /\[panelId\]: resolvedOpen/, 'panel state persists the requested open or closed value');
+  assert.match(source, /setPanelState\(panelId, \(prev\) => !prev, source\)/, 'toggle flips the current persisted state');
+});
+
+test('Command Deck answer history fills its parent and remains scrollable', () => {
+  const styles = fs.readFileSync(path.join(thisDirPath, '../styles.css'), 'utf8');
+  const panel = fs.readFileSync(path.join(thisDirPath, '../components/AIConsole.jsx'), 'utf8');
+  assert.match(panel, /data-testid="command-deck-body"/);
+  assert.match(panel, /data-testid="command-deck-answer-history"/);
+  assert.match(panel, /isOpen=\{safeUiLayout\.commandDeck !== false\}/);
+  assert.match(panel, /onToggle=\{\(\) => togglePanel\('commandDeck'\)\}/);
+  assert.match(styles, /\.mission-console-shell > \.mission-console-pane\[data-testid="command-deck-body"\] \{[^}]*width:\s*100%;/);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history \{[^}]*width:\s*100%;/);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history \{[^}]*box-sizing:\s*border-box;/);
+  assert.match(styles, /\.mission-console-pane__body\.mission-console__history \{[^}]*overflow-y:\s*auto;/);
 });
 
 test('persisted pane order reconciliation keeps commandDeck at the top for Universal Intake reachability', () => {
