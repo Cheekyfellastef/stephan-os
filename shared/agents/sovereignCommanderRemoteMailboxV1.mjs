@@ -89,6 +89,10 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'preservation-converge-pr-branch',
 ]);
 
+export function strictNativeFailureExitStatusV1(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+}
+
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const PROOF_HASH_PATTERN = /^[0-9a-f]{64}$/i;
 const ALLOWED_FIELDS = new Set([
@@ -148,9 +152,15 @@ function validateRemoteControllerActivity(value) {
   if (value.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1') {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_SCHEMA_INVALID', { requested: true });
   }
+  if (typeof value.controllerId !== 'string') {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID', { requested: true });
+  }
   const controllerId = text(value.controllerId);
   if (!CANONICAL_CONTROLLER_IDS.has(controllerId)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID', { requested: true });
+  }
+  if (typeof value.runId !== 'string') {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID', { requested: true });
   }
   const runId = text(value.runId);
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(runId)) {
@@ -158,6 +168,9 @@ function validateRemoteControllerActivity(value) {
   }
   if (typeof value.observedEnabled !== 'boolean') {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ENABLEMENT_INVALID', { requested: true });
+  }
+  if (typeof value.executionState !== 'string') {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID', { requested: true });
   }
   const executionState = text(value.executionState).toUpperCase();
   if (!CONTROLLER_ACTIVITY_EXECUTION_STATES.has(executionState)) {
@@ -172,9 +185,9 @@ function validateRemoteControllerActivity(value) {
     const candidate = normalized[key];
     const legacyCountCandidate = typeof candidate === 'number'
       ? candidate
-      : (typeof candidate === 'string' && /^\\d+$/.test(candidate.trim()) ? Number(candidate) : null);
+      : (typeof candidate === 'string' && /^[0-9]+$/.test(candidate.trim()) ? Number(candidate) : null);
     if (Number.isSafeInteger(legacyCountCandidate) && legacyCountCandidate >= 0 && legacyCountCandidate <= 15) {
-      if (normalized[countKey] !== undefined && Number(normalized[countKey]) !== legacyCountCandidate) {
+      if (normalized[countKey] !== undefined && normalized[countKey] !== legacyCountCandidate) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
       }
       normalized[countKey] = legacyCountCandidate;
@@ -192,10 +205,15 @@ function validateRemoteControllerActivity(value) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID', { requested: true });
   }
   const laneCounts = [normalized.activeLaneCount, normalized.parkedLaneCount].filter((item) => item !== undefined);
-  if (laneCounts.some((item) => !Number.isSafeInteger(Number(item)) || Number(item) < 0 || Number(item) > 15)) {
+  if (laneCounts.some((item) => !Number.isSafeInteger(item) || item < 0 || item > 15)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
   }
-  const materialActionsSucceeded = Number(normalized.materialActionsSucceeded ?? 0);
+  const materialActionsSucceeded = normalized.materialActionsSucceeded === undefined
+    ? 0 : normalized.materialActionsSucceeded;
+  if (!Number.isSafeInteger(materialActionsSucceeded)
+    || materialActionsSucceeded < 0 || materialActionsSucceeded > 100_000) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
+  }
   const materialLaneCount = Array.isArray(normalized.materialLanes) ? normalized.materialLanes.length : 0;
   const proofRefCount = Array.isArray(normalized.proofRefs) ? normalized.proofRefs.length : 0;
   if ((materialActionsSucceeded > 0 || materialLaneCount > 0) && proofRefCount === 0) {
@@ -205,8 +223,15 @@ function validateRemoteControllerActivity(value) {
     value.materialActionsSucceeded, value.goalsAdvanced, value.sourceChanges,
     value.reviewsAdvanced, value.mergesCompleted, value.safeEligibleWorkRemaining,
   ].filter((item) => item !== undefined);
-  if (counts.some((item) => !Number.isSafeInteger(Number(item)) || Number(item) < 0 || Number(item) > 100_000)) {
+  if (counts.some((item) => !Number.isSafeInteger(item) || item < 0 || item > 100_000)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
+  }
+  // Outcome counters are completed-material claims, not status-only telemetry.
+  // They must not bypass proof by reporting zero material actions and lanes.
+  const materialOutcomeClaimed = ['goalsAdvanced', 'sourceChanges', 'reviewsAdvanced', 'mergesCompleted']
+    .some((key) => (normalized[key] ?? 0) > 0);
+  if (materialOutcomeClaimed && materialActionsSucceeded === 0 && materialLaneCount === 0) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED', { requested: true });
   }
   return Object.freeze({
     ok: true,
@@ -317,7 +342,7 @@ function run(spawnSyncFn, executable, args, options = {}) {
     ...options,
   });
   return Object.freeze({
-    ok: !result?.error && Number(result?.status) === 0,
+    ok: !result?.error && result?.status === 0,
     status: Number.isInteger(result?.status) ? result.status : null,
     stdout: String(result?.stdout || ''),
     stderr: String(result?.stderr || ''),
@@ -1368,8 +1393,9 @@ export function safeCpuPressureSnapshotProjection(value = {}, processId = '') {
     || parsed.secretMaterialIncluded !== false
     || parsed.unknownMeansGreen !== false
     || parsed.finalVerdict !== 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED') return null;
-  const sampleSeconds = Number(parsed.sampleSeconds);
-  const processorCount = Number(parsed.processorCount);
+  // Do not coerce missing, string or boolean native process evidence into numbers.
+  const sampleSeconds = parsed.sampleSeconds;
+  const processorCount = parsed.processorCount;
   const capturedAt = text(parsed.capturedAtUtc);
   if (!Number.isFinite(Date.parse(capturedAt))
     || !Number.isFinite(sampleSeconds) || sampleSeconds < 4 || sampleSeconds > 20
@@ -1377,18 +1403,18 @@ export function safeCpuPressureSnapshotProjection(value = {}, processId = '') {
     || !Array.isArray(parsed.rows) || parsed.rows.length > 20) return null;
   const safeRows = [];
   for (const row of parsed.rows) {
-    const pid = Number(row?.pid);
-    const parentPid = Number(row?.parentPid);
+    const pid = row?.pid;
+    const parentPid = row?.parentPid;
     const processName = text(row?.processName);
     const startedAtUtc = text(row?.startedAtUtc);
     const script = text(row?.script);
-    const cpuPercent = row?.cpuPercent === null ? null : Number(row?.cpuPercent);
+    const cpuPercent = row?.cpuPercent;
     if (!Number.isSafeInteger(pid) || pid < 1 || pid > 2_147_483_647
       || !Number.isSafeInteger(parentPid) || parentPid < 0 || parentPid > 2_147_483_647
       || !CPU_SNAPSHOT_PROCESS_NAMES.has(processName.toLowerCase())
       || (startedAtUtc && !Number.isFinite(Date.parse(startedAtUtc)))
       || (script && !CPU_SNAPSHOT_SCRIPT_NAMES.has(script.toLowerCase()))
-      || (cpuPercent !== null && (!Number.isFinite(cpuPercent) || cpuPercent < 0 || cpuPercent > 100))
+      || (cpuPercent !== null && (typeof cpuPercent !== 'number' || !Number.isFinite(cpuPercent) || cpuPercent < 0 || cpuPercent > 100))
       || typeof row?.sampleMatched !== 'boolean') return null;
     safeRows.push(Object.freeze({
       pid,
@@ -1448,11 +1474,10 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     const ms = Date.parse(candidate);
     return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
   };
-  const bounded = (input, max = 1_000_000) => {
-    if (input === null || input === undefined || input === '') return null;
-    const number = Number(input);
-    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
-  };
+  const bounded = (input, max = 1_000_000) => (
+    typeof input === 'number' && Number.isSafeInteger(input)
+      && input >= 0 && input <= max ? input : null
+  );
   const safeState = (input, max = 160) => {
     const candidate = text(input).toUpperCase().slice(0, max);
     return /^[A-Z0-9._:-]{0,160}$/.test(candidate) ? candidate : '';
@@ -2045,8 +2070,8 @@ function safeControllerActivityPublicationProjection(value = {}, processId = '')
   const statusId = text(parsed?.statusId);
   const proofId = text(parsed?.proofId);
   const executionState = text(parsed?.executionState).toUpperCase();
-  const materialLaneCount = Number(parsed?.materialLaneCount);
-  const materialActionsSucceeded = Number(parsed?.materialActionsSucceeded);
+  const materialLaneCount = parsed?.materialLaneCount;
+  const materialActionsSucceeded = parsed?.materialActionsSucceeded;
   if (!parsed
     || parsed.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1'
     || parsed.ok !== true
@@ -2251,7 +2276,7 @@ function safeMaintenanceFailureProjection(value = {}, expectedAction = '') {
   });
 }
 
-function safeStarfieldVrResourcePreflightProjection(value = {}) {
+export function safeStarfieldVrResourcePreflightProjection(value = {}) {
   const failureEnvelope = findFailedMaintenanceExecutionEnvelope(value);
   const executionEnvelope = findMaintenanceExecutionEnvelope(value);
   const source = Object.keys(failureEnvelope).length > 0
@@ -2260,7 +2285,9 @@ function safeStarfieldVrResourcePreflightProjection(value = {}) {
   const structured = source?.structuredContent && typeof source.structuredContent === 'object'
     ? source.structuredContent
     : {};
-  const status = Number(structured?.status);
+  const rawStatus = structured?.status;
+  // A missing, boolean or textual native child status is not proof of exit zero.
+  const status = Number.isSafeInteger(rawStatus) ? rawStatus : null;
   const stdout = String(structured?.stdout || '').trim();
   const stderr = String(structured?.stderr || '').trim();
   let parsed = null;
@@ -2972,7 +2999,7 @@ export function inspectCanonicalGitWorktreeConfigV1({
       maxBuffer: 64 * 1024,
     });
     return Object.freeze({
-      ok: !result?.error && Number(result?.status) === 0,
+      ok: !result?.error && result?.status === 0,
       status: Number.isInteger(result?.status) ? result.status : null,
       stdout: String(result?.stdout || ''),
       deadlineExceeded: false,
@@ -3168,7 +3195,7 @@ export function repairCanonicalGitWorktreeConfigV1({
       maxBuffer: 64 * 1024,
     });
     return Object.freeze({
-      ok: !result?.error && Number(result?.status) === 0,
+      ok: !result?.error && result?.status === 0,
       status: Number.isInteger(result?.status) ? result.status : null,
       stdout: String(result?.stdout || ''),
     });
@@ -4159,7 +4186,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && (actionId !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
         && runtimeProofComplete
         && browserObservationComplete
-        && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
+        && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true)
+        && (actionId !== 'reconcile-remote-commander-parity'
+          || projection.capabilityParity?.canonicalOwnerGoal === '#2573');
       if (!proofComplete) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
           stepIndex: index,
@@ -4170,6 +4199,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           processIdMatch: projection.processId === actionId,
           successfulStatus: projection.status === 0,
           runtimeProof: projection.runtimeProof,
+          capabilityParityPresent: projection.capabilityParity?.canonicalOwnerGoal === '#2573',
           browserObservation: projection.browserObservation,
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
@@ -4395,7 +4425,15 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const publication = projection.controllerActivityPublication;
     const requested = shape.command.controllerActivity;
     const requestedMaterialLaneCount = Array.isArray(requested?.materialLanes) ? requested.materialLanes.length : 0;
-    const requestedMaterialActionsSucceeded = Number(requested?.materialActionsSucceeded ?? 0);
+    const requestedMaterialActionsSucceeded = requested?.materialActionsSucceeded ?? 0;
+    // A material completion needs evidence that THIS run's proof was written.
+    // A canonical status ID cannot substitute for missing or foreign proof.
+    const materialProofRequired = requestedMaterialActionsSucceeded > 0 || requestedMaterialLaneCount > 0;
+    const proofRunFragment = (requested?.runId || '').replace(/^-+|-+$/g, '') || 'unknown';
+    const requestedProofId = 'controller-' + requested?.controllerId?.slice(0, 12) + '-run-' + proofRunFragment;
+    const publicationProofBound = materialProofRequired
+      ? publication?.proofWritten === true && publication?.proofId === requestedProofId
+      : publication?.proofWritten === false && publication?.proofId === '';
     const publicationProofComplete = projection.ok === true
       && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
       && PROOF_HASH_PATTERN.test(projection.proofHash)
@@ -4403,6 +4441,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && projection.status === 0
       && publication?.ok === true
       && publication?.statusWritten === true
+      && publication?.statusId === `controller-${requested?.controllerId}-activity`
+      && publicationProofBound
       && publication?.controllerId === requested?.controllerId
       && publication?.runId === requested?.runId
       && publication?.executionState === requested?.executionState
@@ -5005,7 +5045,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED';
     const failureEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
     const failedProcessId = text(failureEnvelope?.command?.plan?.processId);
-    const failedStatus = Number(failureEnvelope?.structuredContent?.status);
+    const failedStatus = strictNativeFailureExitStatusV1(failureEnvelope?.structuredContent?.status);
     const boundedFailureProven = preflight?.ok === false
       && failureEnvelope?.ok === false
       && failureEnvelope?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
@@ -5069,7 +5109,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED';
     const failureEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
     const failedProcessId = text(failureEnvelope?.command?.plan?.processId);
-    const failedStatus = Number(failureEnvelope?.structuredContent?.status);
+    const failedStatus = strictNativeFailureExitStatusV1(failureEnvelope?.structuredContent?.status);
     const boundedFailureProven = acceptance?.ok === false
       && acceptance.finalVerdict === 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED'
       && failureEnvelope?.ok === false
@@ -5202,15 +5242,36 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && runtimeProofComplete
     && observationComplete
     && (!browserObservationRequired || browserObservationCompleteForAction(projection.browserObservation))
-    && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
+    && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true)
+    && (shape.command.remoteAction !== 'reconcile-remote-commander-parity'
+      || projection.capabilityParity?.canonicalOwnerGoal === '#2573');
   if (!proofComplete) {
+    // Closed diagnostic only: exact execution proof still fails. The GitHub
+    // byte-budget compressor retains finalVerdict but can omit executionBlocker.
+    // Both carry the same fixed non-secret reason, never native stdout/stderr.
+    const receiptFailure = projection.processId && projection.processId !== shape.command.remoteAction
+      ? 'COMMANDER_ACTION_PROCESS_ID_MISMATCH'
+      : projection.ok !== true || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+        ? 'COMMANDER_ACTION_COMPLETION_UNVERIFIED'
+        : !PROOF_HASH_PATTERN.test(projection.proofHash)
+          ? 'COMMANDER_ACTION_PROOF_HASH_MISSING'
+          : !projection.processId
+            ? 'COMMANDER_ACTION_PROCESS_ID_UNVERIFIED'
+            : !Number.isSafeInteger(projection.status)
+              ? 'COMMANDER_ACTION_EXIT_UNVERIFIED'
+              : projection.status !== 0
+                ? 'COMMANDER_ACTION_NATIVE_EXIT_NONZERO'
+                : 'COMMANDER_ACTION_TYPED_PROOF_UNVERIFIED';
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
       remoteAction: shape.command.remoteAction,
+      finalVerdict: receiptFailure,
+      executionBlocker: receiptFailure,
       proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
       processIdMatch: projection.processId === shape.command.remoteAction,
       successfulStatus: projection.status === 0,
       runtimeProof: projection.runtimeProof,
       observation: projection.observation,
+      capabilityParityPresent: projection.capabilityParity?.canonicalOwnerGoal === '#2573',
       browserObservation: projection.browserObservation,
       publicReceiptSafe: true,
       secretMaterialReturned: false,

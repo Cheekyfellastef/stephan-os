@@ -6,6 +6,7 @@ import {
   OPENCLAW_PROVIDER_POOL_SUCCESSOR_SPECIALIST_PATHS_V1,
   OPENCLAW_UPDATE_PREFLIGHT_SUCCESSOR_SPECIALIST_PATHS_V1,
   OPENCLAW_OC2_SUCCESSOR_SPECIALIST_PATHS_V1,
+  OPENCLAW_SHARED_CONVERSATION_PR3563_SPECIALIST_PATHS_V1,
   analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1,
 } from './openClawBuilderProviderSpecialistReviewSuccessorV1.mjs';
 
@@ -647,3 +648,101 @@ test('OC2 successor specialist still rejects actual spawnSyncFn aliasing with de
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
 });
 }
+
+const SHARED_CONVERSATION_BRANCH = 'fix/1506-openclaw-shared-conversation-native-20261121';
+const SHARED_CONVERSATION_PATH = 'integrations/openclaw/stephanos-builder-provider/index.js';
+
+function sharedConversationAnalysis() {
+  return {
+    findings: [{ severity: 'P0', code: 'unsupported-high-risk-surface', path: SHARED_CONVERSATION_PATH }],
+  };
+}
+
+function sharedConversationIndex(overrides = '') {
+  return [
+    "const SHARED_CONVERSATION_METHOD = 'stephanos-builder-provider.sharedConversation';",
+    "const SHARED_CONVERSATION_SCHEMA = 'stephanos.openclaw-shared-conversation-gateway.v1';",
+    "const SHARED_CONVERSATION_KEYS = Object.freeze([",
+    "  'schemaVersion', 'requestId', 'messageId', 'threadId', 'turnId',",
+    "  'relatedIssue', 'text', 'issuedAtUtc', 'expiresAtUtc',",
+    "]);",
+    "const SHARED_SECRET = /PRIVATE KEY|ghp_|sk-/i;",
+    "function receiveOpenClawSharedConversationTurn(params = {}, context = {}, now = Date.now()) {",
+    "  const deny = () => ({ arbitraryShellAllowed: false, sourceMutationAllowed: false, mergeAuthority: false });",
+    "  if (Object.keys(params).sort().join(',') !== [...SHARED_CONVERSATION_KEYS].sort().join(',')) return deny();",
+    "  if (params.text.length > 1200 || SHARED_SECRET.test(params.text)) return deny();",
+    "  const issued = Date.parse(params.issuedAtUtc), expiry = Date.parse(params.expiresAtUtc);",
+    "  if (expiry - issued > 30 * 60_000) return deny();",
+    "  if (context.executingInsideOpenClawGateway !== true || context.pluginId !== 'stephanos-builder-provider'",
+    "      || context.method !== SHARED_CONVERSATION_METHOD || !/^openclaw-gateway:[1-9][0-9]*$/.test(context.providerInstance || '')) return deny();",
+    "  return { executionSurface: 'openclaw-gateway-plugin',",
+    "    replyText: 'OpenClaw Gateway received the shared conversation turn. Native assistant reasoning is not yet qualified by this handshake.',",
+    "    sourceHeadProven: false, modelResponseProven: false,",
+    "    arbitraryShellAllowed: false, sourceMutationAllowed: false, mergeAuthority: false };",
+    "}",
+    "function gatewayContext(method) { return { method }; }",
+    "function register(api) {",
+    "  api.registerGatewayMethod(OPENCLAW_OC1_GATEWAY_METHOD, async () => ({}), { scope: 'operator.write' });",
+    "  api.registerGatewayMethod(OPENCLAW_OC2_GATEWAY_METHOD, async () => ({}), { scope: 'operator.write' });",
+    "  api.registerGatewayMethod(SHARED_CONVERSATION_METHOD, async (params) => receiveOpenClawSharedConversationTurn(params, gatewayContext(SHARED_CONVERSATION_METHOD)), { scope: 'operator.read' });",
+    "}",
+    overrides,
+  ].join('\n');
+}
+
+function sharedConversationReview(content = sharedConversationIndex(), inputOverrides = {}) {
+  return analyzeOpenClawBuilderProviderSpecialistReviewSuccessorV1({
+    repository: REPOSITORY,
+    prNumber: 3563,
+    branch: SHARED_CONVERSATION_BRANCH,
+    sourceHead: HEAD,
+    baseSha: BASE,
+    lineageEvidence: lineage(),
+    analysis: sharedConversationAnalysis(),
+    sources: [source(SHARED_CONVERSATION_PATH, content)],
+    ...inputOverrides,
+  });
+}
+
+test('PR #3563 specialist admits only the exact shared-conversation Gateway path and zero-authority handshake', () => {
+  assert.deepEqual(OPENCLAW_SHARED_CONVERSATION_PR3563_SPECIALIST_PATHS_V1, [SHARED_CONVERSATION_PATH]);
+  const result = sharedConversationReview();
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.equal(result.finalVerdict, 'OPENCLAW_SHARED_CONVERSATION_PR3563_SPECIALIST_CLEAN');
+});
+
+test('PR #3563 specialist refuses wrong identity, escalation estate, lineage, and source evidence', () => {
+  for (const overrides of [
+    { prNumber: 3564 },
+    { branch: 'fix/other' },
+    { analysis: { findings: [] } },
+    { lineageEvidence: lineage({ liveMainAfterSha: '3'.repeat(40) }) },
+    { sources: [] },
+  ]) {
+    const result = sharedConversationReview(sharedConversationIndex(), overrides);
+    if (overrides.prNumber || overrides.branch || overrides.analysis) assert.equal(result.eligible, false);
+    else {
+      assert.equal(result.eligible, true);
+      assert.equal(result.clean, false);
+    }
+  }
+});
+
+test('PR #3563 specialist rejects permission, model-proof, mutation, process, and registration widening', () => {
+  const variants = [
+    sharedConversationIndex().replace("{ scope: 'operator.read' }", "{ scope: 'operator.write' }"),
+    sharedConversationIndex().replace('modelResponseProven: false', 'modelResponseProven: true'),
+    sharedConversationIndex().replace('sourceMutationAllowed: false, mergeAuthority: false };', 'sourceMutationAllowed: true, mergeAuthority: false };'),
+    sharedConversationIndex('spawn(userExecutable, userArgs);'),
+    sharedConversationIndex().replace(
+      "  api.registerGatewayMethod(SHARED_CONVERSATION_METHOD, async (params) => receiveOpenClawSharedConversationTurn(params, gatewayContext(SHARED_CONVERSATION_METHOD)), { scope: 'operator.read' });",
+      "  api.registerGatewayMethod(SHARED_CONVERSATION_METHOD, async (params) => receiveOpenClawSharedConversationTurn(params, gatewayContext(SHARED_CONVERSATION_METHOD)), { scope: 'operator.read' });\\n  api.registerGatewayMethod('unexpected.method', async () => ({}), { scope: 'operator.read' });",
+    ),
+  ];
+  for (const content of variants) {
+    const result = sharedConversationReview(content);
+    assert.equal(result.eligible, true);
+    assert.equal(result.clean, false);
+  }
+});

@@ -14,8 +14,10 @@ import { executeMailboxRotationOnHost, readMailboxAuthorityLiteral } from './can
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
 import { evaluateMailboxRotationSyncPreflight } from './canonical-mailbox-rotation-sync-preflight-v1.mjs';
 import { assertMailboxRotationWorkflowAdmission, readMailboxWorkflowGitHub } from './canonical-mailbox-workflow-admission-v1.mjs';
-import { serializeBoundedReceiptJson, prepareMailboxRotationPoll } from './battle-bridge-github-command-mailbox.mjs';
-import { buildBattleBridgeGitHubCommandReceipt } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
+import { serializeBoundedReceiptJson, prepareMailboxRotationPoll,
+  prepareBoundedMailboxRotationCancelPoll } from './battle-bridge-github-command-mailbox.mjs';
+import { buildBattleBridgeGitHubCommandReceipt, executeBattleBridgeGitHubCommand,
+  selectBattleBridgeGitHubCommandBatch } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { createTrustedMailboxReceiptIndexFromGitHubComments } from '../shared/agents/mailboxReceiptIndexGitHubMirror.mjs';
 import { classifyPostSyncRefresh } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import { LEGACY_PUBLICATION_CONTRACTS, withMailboxActionEvidence, mailboxActionEvidenceSummary } from '../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs';
@@ -138,6 +140,44 @@ test('selection consults tombstones and keeps late commands observable instead o
   assert.equal(result.consumedRequestIds.has(cmd.requestId),true);
   assert.deepEqual(result.deferredRequestIds,['late-request-001']);
 });
+
+test('owner-authenticated v7 CANCEL gets bounded priority without a full predecessor or Actions read',t=>{
+  const ledger=createMailboxExecutionLedger(sandbox(t)),state={mailboxRotation:record(),
+    consumedRequestIds:[],acceptedRequestIds:[]};
+  const valid=control('CANCEL',{requestId:'rotation-unwind-verified-001'});
+  const forged={...comment(valid,201),user:{login:'attacker'}};
+  const beforeBarrier=comment({...valid,requestId:'rotation-unwind-too-early-001'},99);
+  const otherTransition=comment({...valid,requestId:'rotation-unwind-foreign-001',
+    transitionId:'foreign-rotation-transition-001'},202);
+  const unrelated=comment(ordinary({requestId:'normal-command-late-001'}),203);
+  const matched=comment(valid,204);
+  const poll=prepareBoundedMailboxRotationCancelPoll(state,
+    [forged,beforeBarrier,otherTransition,unrelated,matched],{ledger});
+  assert.equal(poll?.boundedCancelOnly,true);
+  assert.deepEqual(poll.comments.map(x=>x.id),[204]);
+  assert.equal(state.mailboxRotation.phase,'DRAINING');
+  assert.equal(state.mailboxRotationInventory,undefined,'not a drain attestation');
+  const selected=selectBattleBridgeGitHubCommandBatch(poll.comments,{
+    consumedRequestIds:poll.consumedRequestIds,now:new Date(now),maxBatch:1,currentHead:head});
+  assert.equal(selected.ok,true);
+  assert.equal(selected.commands.length,1);
+  assert.equal(selected.commands[0].command.rotationAction,'CANCEL');
+  assert.equal(selected.commands[0].command.transitionId,state.mailboxRotation.transitionId);
+  ledger.reserve(valid);
+  assert.equal(prepareBoundedMailboxRotationCancelPoll(state,[matched],{ledger}),null,
+    'an already reserved cancellation must not replay');
+});
+test('bounded cancellation refuses absent, mismatched, cancelled or oversized windows',t=>{
+  const ledger=createMailboxExecutionLedger(sandbox(t)),state={mailboxRotation:record(),
+    consumedRequestIds:[],acceptedRequestIds:[]};
+  assert.equal(prepareBoundedMailboxRotationCancelPoll(state,[comment(control('STATUS'),200)],{ledger}),null);
+  assert.equal(prepareBoundedMailboxRotationCancelPoll({...state,mailboxRotation:
+    {...record(),phase:'CANCELLED'}},[comment(control('CANCEL'),201)],{ledger}),null);
+  assert.equal(prepareBoundedMailboxRotationCancelPoll({mailboxRotation:null},[],{ledger}),null);
+  assert.throws(()=>prepareBoundedMailboxRotationCancelPoll(state,Array(301).fill({}),{ledger}),
+    /CANCEL_WINDOW_INVALID/);
+});
+
 test('native receipt-only private deliveries retain their IDs and require matching terminal head/operation to drain',()=>{
   const cmd=ordinary(),accepted=comment(terminal(cmd,{state:'ACCEPTED'}),101,true),done=comment(terminal(cmd),102,true);
   const observed=auditMailboxRotationComments([accepted,done],{issueNumber:current});
@@ -318,4 +358,102 @@ test('merge-queue public fence evidence needs no expanded permission; main remai
   await assert.rejects(readMailboxWorkflowGitHub('/issues/999/comments'),/PATH_DENIED/);
   globalThis.fetch=async()=>({status:403,text:async()=>''});
   await assert.rejects(readMailboxWorkflowGitHub('/issues/comments/100'),/FRESH_READ_FAILED/);
+});
+
+
+test('rotation executor exception reports mailbox-rotation failure, never native publisher failure', async () => {
+  const request = command();
+  let invoked = 0;
+  const result = await executeBattleBridgeGitHubCommand(request, {
+    now: new Date('2026-10-25T23:41:00.000Z'),
+    executeMailboxRotationFn: async () => {
+      invoked += 1;
+      throw new Error('SENSITIVE_INTERNAL_EXCEPTION_MUST_NOT_LEAK');
+    },
+  });
+  assert.equal(invoked, 1, 'qualified rotation must reach its own handler');
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAILBOX_ROTATION_EXECUTION_FAILED');
+  assert.equal(result.operation, operation);
+  assert.equal(result.requestId, request.requestId);
+  assert.equal(JSON.stringify(result).includes('SENSITIVE_INTERNAL_EXCEPTION_MUST_NOT_LEAK'), false);
+  assert.equal(JSON.stringify(result).includes('STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED'), false);
+});
+
+test('native FREEZE evidence read exceptions preserve DRAINING with a specific bounded blocker', async () => {
+  for (const [reader, blocker] of [
+    ['readActions', 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED'],
+    ['readComments', 'MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED'],
+  ]) {
+    const f = fixture();
+    f[reader] = async () => { throw new Error('PRIVATE_GITHUB_TOKEN_MUST_NEVER_LEAK'); };
+    const result = await executeMailboxRotationOnHost(command(), f);
+    assert.equal(result.ok, false, reader);
+    assert.equal(result.blocker, blocker, reader);
+    assert.equal(f.state.mailboxRotation.phase, 'DRAINING', reader);
+    assert.equal(f.state.mailboxRotation.drained, false, reader);
+    assert.equal(f.state.mailboxRotation.globalFencePublished, true, reader);
+    assert.equal(f.events[0].type, 'persist', reader);
+    assert.equal(f.events[1].type, 'fence', reader);
+    assert.equal(JSON.stringify(result).includes('PRIVATE_GITHUB_TOKEN_MUST_NEVER_LEAK'), false);
+    assert.equal(JSON.stringify(result).includes('STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED'), false);
+  }
+});
+
+test('FREEZE retries only recognised transient evidence reads, never side effects', async () => {
+  for (const [reader, transient] of [
+    ['readActions', 'MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE'],
+    ['readComments', 'MAILBOX_HISTORY_PAGE_INVALID'],
+  ]) {
+    const f = fixture();
+    const originalRead = f[reader];
+    let calls = 0;
+    f[reader] = async (...args) => {
+      calls += 1;
+      if (calls === 1) throw new Error(transient);
+      return originalRead(...args);
+    };
+    const result = await executeMailboxRotationOnHost(command(), f);
+    assert.equal(result.ok, true, reader);
+    assert.equal(result.finalVerdict, 'MAILBOX_ROTATION_DRAINING', reader);
+    assert.equal(calls, 2, reader);
+    assert.equal(f.events.filter(e => e.type === 'fence').length, 1, reader);
+    assert.equal(f.state.mailboxRotation.phase, 'DRAINING', reader);
+    assert.equal(f.state.mailboxRotation.drained, false, reader);
+  }
+});
+
+test('native Actions evidence failures expose only exact fixed stage codes and never provider secrets',async()=>{
+  for(const [message,expected] of [
+    ['MAILBOX_ACTION_BATCH_DEADLINE','MAILBOX_ACTION_BATCH_DEADLINE'],
+    ['MAILBOX_ACTION_BATCH_RUN_DRIFT','MAILBOX_ACTION_BATCH_RUN_DRIFT'],
+    ['GITHUB_TOKEN=super-secret-unsafe','MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED'],
+  ]){
+    const f=fixture();
+    f.readActions=async()=>{throw Error(message)};
+    const result=await executeMailboxRotationOnHost(command(),f);
+    assert.equal(result.ok,false);
+    assert.equal(result.blocker,expected);
+    assert.equal(result.mailboxRotation.drained,false);
+    assert.equal(f.state.mailboxRotation.phase,'DRAINING');
+    assert.equal(JSON.stringify(result).includes('super-secret-unsafe'),false);
+  }
+});
+
+test('repeated transient evidence errors stay fail-closed after exactly two GET attempts', async () => {
+  for (const [reader, transient, blocker] of [
+    ['readActions', 'MAILBOX_ACTION_BATCH_READ_FAILED', 'MAILBOX_ACTION_BATCH_READ_FAILED'],
+    ['readComments', 'MAILBOX_HISTORY_PAGE_INVALID', 'MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED'],
+  ]) {
+    const f = fixture();
+    let calls = 0;
+    f[reader] = async () => { calls += 1; throw new Error(transient); };
+    const result = await executeMailboxRotationOnHost(command(), f);
+    assert.equal(calls, 2, reader);
+    assert.equal(result.ok, false, reader);
+    assert.equal(result.blocker, blocker, reader);
+    assert.equal(f.state.mailboxRotation.phase, 'DRAINING', reader);
+    assert.equal(f.state.mailboxRotation.drained, false, reader);
+    assert.equal(f.events.filter(e => e.type === 'fence').length, 1, reader);
+  }
 });

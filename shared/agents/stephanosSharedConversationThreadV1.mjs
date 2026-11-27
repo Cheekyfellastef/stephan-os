@@ -16,6 +16,11 @@ export const STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS = Object.freeze([
   'chatgpt-bridge',
   'stephanos',
 ]);
+// Explicit opt-in only; all existing three-participant records remain valid.
+export const STEPHANOS_SHARED_CONVERSATION_OPENCLAW_PARTICIPANTS = Object.freeze([
+  ...STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS,
+  'openclaw',
+]);
 
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
 const MAX_TURN_TEXT = 6000;
@@ -140,9 +145,10 @@ function denseStringList(value, limit = 64) {
 }
 
 function canonicalParticipantList(value) {
-  const list = denseStringList(value, STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS.length);
+  const list = denseStringList(value, STEPHANOS_SHARED_CONVERSATION_OPENCLAW_PARTICIPANTS.length);
   if (!list) return null;
-  if (JSON.stringify(list) !== JSON.stringify(STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS)) return null;
+  if (JSON.stringify(list) !== JSON.stringify(STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS)
+      && JSON.stringify(list) !== JSON.stringify(STEPHANOS_SHARED_CONVERSATION_OPENCLAW_PARTICIPANTS)) return null;
   return list;
 }
 
@@ -197,7 +203,7 @@ function parseBody(body) {
 
   if (!threadId) errors.push('threadId-invalid');
   if (!turnId) errors.push('turnId-invalid');
-  if (!STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS.includes(senderParticipantId)) {
+  if (!visibleToParticipantIds?.includes(senderParticipantId)) {
     errors.push('senderParticipantId-not-allowed');
   }
   if (replyToTurnId && !safeId(replyToTurnId)) errors.push('replyToTurnId-invalid');
@@ -231,6 +237,9 @@ export function createStephanosSharedConversationTurnRecord(turn = {}, options =
   const threadId = safeId(turn.threadId);
   const turnId = safeId(turn.turnId);
   const senderParticipantId = safeId(turn.senderParticipantId);
+  const visibleToParticipantIds = turn.visibleToParticipantIds === undefined
+    ? STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS
+    : canonicalParticipantList(turn.visibleToParticipantIds);
   const replyToTurnId = text(turn.replyToTurnId);
   const turnText = text(turn.text);
   const timestampUtc = text(turn.timestampUtc);
@@ -241,7 +250,7 @@ export function createStephanosSharedConversationTurnRecord(turn = {}, options =
   const errors = [];
   if (!threadId) errors.push('threadId-invalid');
   if (!turnId) errors.push('turnId-invalid');
-  if (!STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS.includes(senderParticipantId)) {
+  if (!visibleToParticipantIds?.includes(senderParticipantId)) {
     errors.push('senderParticipantId-not-allowed');
   }
   if (replyToTurnId && !safeId(replyToTurnId)) errors.push('replyToTurnId-invalid');
@@ -251,6 +260,7 @@ export function createStephanosSharedConversationTurnRecord(turn = {}, options =
   if (!timestampUtc || !Number.isFinite(Date.parse(timestampUtc))) errors.push('timestampUtc-invalid');
   if (!relatedIssue && !relatedPr) errors.push('related-issue-or-pr-required');
   if (suppliedProofRefs.length === 0) errors.push('proofRefs-required-from-caller');
+  if (!visibleToParticipantIds) errors.push('visibleToParticipantIds-must-be-canonical');
 
   if (errors.length > 0) {
     return Object.freeze({
@@ -269,7 +279,7 @@ export function createStephanosSharedConversationTurnRecord(turn = {}, options =
     senderParticipantId,
     replyToTurnId,
     text: turnText,
-    visibleToParticipantIds: [...STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS],
+    visibleToParticipantIds: [...visibleToParticipantIds],
   });
 
   const record = Object.freeze({
@@ -421,8 +431,11 @@ export function buildStephanosSharedConversationThread(turnRecords, options = {}
     });
   }
 
+  const participantIds = turns.some((turn) => turn.senderParticipantId === 'openclaw')
+    ? STEPHANOS_SHARED_CONVERSATION_OPENCLAW_PARTICIPANTS
+    : STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS;
   const participantState = Object.freeze(Object.fromEntries(
-    STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS.map((participantId) => {
+    participantIds.map((participantId) => {
       const participantTurns = ordered.filter((turn) => turn.senderParticipantId === participantId);
       return [participantId, Object.freeze({
         turnCount: participantTurns.length,
@@ -438,7 +451,7 @@ export function buildStephanosSharedConversationThread(turnRecords, options = {}
     thread: Object.freeze({
       schemaVersion: STEPHANOS_SHARED_CONVERSATION_THREAD_SCHEMA_VERSION,
       threadId,
-      participantIds: STEPHANOS_SHARED_CONVERSATION_PARTICIPANTS,
+      participantIds,
       participantState,
       turnCount: ordered.length,
       transcript: Object.freeze(ordered.map((turn) => Object.freeze({
