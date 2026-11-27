@@ -74,6 +74,46 @@ test('native collector exposes fixed stage-specific failures but no GitHub error
  }),error=>error.message==='MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_IN_PROGRESS_PAGE_LENGTH');
 });
 
+test('transient page-shape or total drift re-observes the whole status once without mixing pages',()=>{
+ for(const mode of ['PAGE_LENGTH','TOTAL_DRIFT']){
+  const f=pagedFixture(300),queuedReads=[];let faulted=false;
+  const r=f.collect(path=>{
+   const response=f.api(path);
+   if(path.startsWith('actions/runs?status=queued'))queuedReads.push(path);
+   if(!faulted&&path.endsWith('status=queued&per_page=100&page=2')){
+    faulted=true;
+    if(mode==='PAGE_LENGTH')response.workflow_runs=response.workflow_runs.slice(0,99);
+    else response.total_count=299;
+   }
+   return response;
+  });
+  assert.equal(r.complete,true);
+  assert.deepEqual(queuedReads,[
+   'actions/runs?status=queued&per_page=100',
+   'actions/runs?status=queued&per_page=100&page=2',
+   'actions/runs?status=queued&per_page=100',
+   'actions/runs?status=queued&per_page=100&page=2',
+   'actions/runs?status=queued&per_page=100&page=3',
+  ]);
+ }
+});
+
+test('persistent queued page-shape drift remains blocked after one bounded whole-status re-observation',()=>{
+ const f=pagedFixture(300),queuedReads=[];
+ assert.throws(()=>f.collect(path=>{
+  const response=f.api(path);
+  if(path.startsWith('actions/runs?status=queued'))queuedReads.push(path);
+  if(path.endsWith('status=queued&per_page=100&page=2'))response.workflow_runs=response.workflow_runs.slice(0,99);
+  return response;
+ }),error=>error.message==='MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_QUEUED_PAGE_LENGTH');
+ assert.deepEqual(queuedReads,[
+  'actions/runs?status=queued&per_page=100',
+  'actions/runs?status=queued&per_page=100&page=2',
+  'actions/runs?status=queued&per_page=100',
+  'actions/runs?status=queued&per_page=100&page=2',
+ ]);
+});
+
 test('all 300 queued runs are read and protected runs on later pages remain blocking',()=>{
  const f=pagedFixture(300,{protectedIndexes:[149,299]}),r=f.collect();
  assert.deepEqual(f.reads.filter(p=>p.startsWith('actions/runs?status=queued')),[
