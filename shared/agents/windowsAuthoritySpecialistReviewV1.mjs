@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { types } from 'node:util';
 
 const BASE_PATH = './windowsAuthoritySpecialistReviewV1Base.mjs';
 const LEGACY_ROUTER_PATH = './windowsAuthoritySpecialistReviewV1LegacyRouter.mjs';
@@ -30,7 +31,7 @@ const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534e';
 const STEPHANOS_CORE_DAEMON_BLOB_SHA = '074eab1b76e480f10c78d052188ba88764f4ad37';
-const VR_RESOURCE_GOVERNOR_BLOB_SHA = '0686def65f5c8ae7c8eb10a227516d41bfa16bec';
+const VR_RESOURCE_GOVERNOR_BLOB_SHA = '5e059ea759e3f96c10ccfdc874b020a3fb6d7cae';
 const SOVEREIGN_FIXED_RUNTIME_BLOB_SHA = '1871550d64184ae2287e494dba4695e7fa62d5b8';
 const SOVEREIGN_REVIEWER_PROFILE_BLOB_SHA = '2882eaf285c6125a394670ed014028fbde8cebdb';
 const CANONICAL_MAILBOX_NATIVE_BLOB_SHA = '1b103fda85c371a218f38f20fe5163ca3f5042bf';
@@ -106,7 +107,6 @@ void LEGACY_RECOVERY_MESH_ROUTE;
 void WORKER_WATCHDOG_ROUTE;
 void LEGACY_CORE_ROUTE;
 void MAILBOX_ROLLOVER_BLOB_SHA_BY_PATH;
-void REVIEW_AUTHORITY_BOUNDARY;
 
 const legacyRouterModule = provePinnedModule(LEGACY_ROUTER_PATH, LEGACY_ROUTER_BLOB_SHA);
 const wsl2Module = provePinnedModule(WSL2_PATH, WSL2_BLOB_SHA);
@@ -153,45 +153,206 @@ const STARFIELD_VR_SPLASH_LAUNCH_PATH = 'scripts/windows/launch-starfield-vr-wit
 const STARFIELD_VR_LAUNCHER_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
 const STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0];
 
-function starfieldVrCompositeFindings(analysis = {}) {
-  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
-  if (findings.length !== 2) return null;
-  const expected = new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
-  const paths = findings.map((item) => String(item?.path || '').trim());
+
+// A sibling specialist may inspect nested evidence before its own P0 route
+// is known. Refuse hostile Proxy envelopes without invoking a single trap.
+// Keep the walk bounded and inspect own DATA descriptors only: accessors are
+// never evaluated by this preflight. Strict child evidence guards still apply.
+function unsafeNestedReviewEvidence(value, seen = new Set(), depth = 0, sourceEvidence = false) {
+  if (value === null || typeof value !== 'object') return false;
+  if (types.isProxy(value)) return true;
+  if (seen.has(value)) return false;
+  if (depth >= 10 || seen.size >= 512) return true;
+  seen.add(value);
+  if (types.isProxy(Object.getPrototypeOf(value))) return true;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > 512) return true;
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    // Array index accessors can run during child iteration, and P0
+    // analysis identity accessors can run in older sibling specialists.
+    // Source-envelope accessors can run before strict byte checks.
+    // Harmless analysis extension accessors remain inert and compatible.
+    if (!descriptor) return true;
+    if (!Object.hasOwn(descriptor, 'value')) {
+      if (sourceEvidence || (Array.isArray(value) && typeof key === 'string'
+        && /^(0|[1-9][0-9]*)$/.test(key))
+        || (typeof key === 'string' && ['findings', 'counts', 'verdict', 'clean', 'P0', 'P1', 'P2'].includes(key))) return true;
+      continue;
+    }
+    if (unsafeNestedReviewEvidence(descriptor.value, seen, depth + 1, sourceEvidence)) return true;
+  }
+  return false;
+}
+
+function inertCompositeField(value, key) {
+  // Walk literal data descriptors only. Never execute a getter while selecting
+  // the specialist route; strict own-field checks still decide admission.
+  let cursor = value;
+  while (cursor !== null && (typeof cursor === 'object' || typeof cursor === 'function')) {
+    // Descriptor and prototype operations on a Proxy can execute hostile traps.
+    // Stop before touching a Proxy, including one in a plain object's prototype chain.
+    if (types.isProxy(cursor)) return undefined;
+    const slot = Object.getOwnPropertyDescriptor(cursor, key);
+    if (slot) return Object.hasOwn(slot, 'value') ? slot.value : undefined;
+    cursor = Object.getPrototypeOf(cursor);
+  }
+  return undefined;
+}
+
+function inertTwoP0CompositeFindings(analysis, expected) {
+  const findings = inertCompositeField(analysis, 'findings');
+  if (types.isProxy(findings) || !Array.isArray(findings) || findings.length !== 2) return null;
+  // Two adjacent accessors cannot create a trusted two-P0 candidate.
+  const entries = [inertCompositeField(findings, '0'), inertCompositeField(findings, '1')];
+  const identities = entries.map((item) => ({
+    path: inertCompositeField(item, 'path'),
+    severity: inertCompositeField(item, 'severity'),
+    code: inertCompositeField(item, 'code'),
+  }));
+  const known = [STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH];
+  // Let the matching composite own a known partner; never intercept the other.
+  if (identities.some(({ path }) => typeof path === 'string'
+    && known.includes(path.trim()) && !expected.has(path.trim()))) return null;
+  // Any malformed identity beside a known candidate must fail closed through
+  // the strict validator, not be evaluated to discover the candidate.
+  if (identities.some(({ path, severity, code }) => typeof path !== 'string'
+    || typeof severity !== 'string' || typeof code !== 'string')) {
+    return identities.some(({ path }) => typeof path === 'string' && expected.has(path.trim()))
+      ? findings : null;
+  }
+  const paths = identities.map(({ path }) => path.trim());
   if (new Set(paths).size !== 2 || paths.some((path) => !expected.has(path))) return null;
-  if (findings.some((item) => String(item?.severity || '').toUpperCase() !== 'P0'
-    || String(item?.code || '') !== 'unsupported-high-risk-surface')) return null;
+  if (identities.some(({ severity, code }) => severity.toUpperCase() !== 'P0'
+    || code !== 'unsupported-high-risk-surface')) return null;
   return findings;
 }
 
-function singleFindingAnalysis(analysis, finding) {
-  return Object.freeze({ ...analysis, findings: Object.freeze([finding]), counts: Object.freeze({ P0: 1, P1: 0, P2: 0 }) });
+function starfieldVrCompositeFindings(analysis = {}) {
+  return inertTwoP0CompositeFindings(analysis,
+    new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]));
+}
+
+function singleFindingAnalysis(finding) {
+  // Split into literal one-P0 evidence, never spread untrusted analysis.
+  return Object.freeze({
+    findings: Object.freeze([finding]),
+    counts: Object.freeze({ P0: 1, P1: 0, P2: 0 }),
+    verdict: 'findings',
+    clean: false,
+  });
+}
+
+function compositeChildInput(input, finding) {
+  // Retain own data fields without executing caller-defined accessors.
+  const next = {};
+  for (const key of Object.keys(input)) {
+    const slot = Object.getOwnPropertyDescriptor(input, key);
+    if (slot && Object.hasOwn(slot, 'value')) {
+      Object.defineProperty(next, key, {
+        value: slot.value, enumerable: true, configurable: true, writable: true,
+      });
+    }
+  }
+  next.analysis = singleFindingAnalysis(finding);
+  return Object.freeze(next);
+}
+
+function literalCompositeFinding(findings, path) {
+  // Strict envelope validation preceded this call. Never use the potentially
+  // shadowed Array#find on untrusted review evidence.
+  for (const index of ['0', '1']) {
+    const entry = Object.getOwnPropertyDescriptor(findings, index)?.value;
+    if (entry?.path === path) return entry;
+  }
+  return null;
+}
+
+/**
+ * Composite specialist routing must preserve the original analysis identity.
+ * In particular, recomputing two single-P0 subreviews cannot cleanse an
+ * upstream contradictory counts/verdict envelope.
+ */
+function ownCompositeReviewData(value, keys) {
+  // Accessor-backed claims are executable, not literal review evidence.
+  return Boolean(value && typeof value === 'object' && !types.isProxy(value) && !Array.isArray(value)
+    && keys.every((key) => {
+      const slot = Object.getOwnPropertyDescriptor(value, key);
+      return slot && Object.hasOwn(slot, 'value');
+    }));
+}
+
+function exactTwoP0CompositeEnvelope(analysis) {
+  // Refuse inherited or getter-backed P0 evidence before reading its values.
+  if (!ownCompositeReviewData(analysis, ['findings', 'counts', 'verdict'])
+    || (Object.hasOwn(analysis, 'clean') && !ownCompositeReviewData(analysis, ['clean']))) return false;
+  const counts = analysis.counts;
+  return ownCompositeReviewData(counts, ['P0', 'P1', 'P2'])
+    && Object.keys(counts).length === 3
+    && counts.P0 === 2
+    && counts.P1 === 0
+    && counts.P2 === 0
+    && (!Object.hasOwn(analysis, 'clean') || analysis.clean === false)
+    && analysis.verdict === 'findings';
+}
+
+// Do not let one-element JSON arrays masquerade as scalar P0 identities.
+// This is reviewer-only source classification; it grants no game/runtime action.
+function exactCompositeFindingScalars(findings) {
+  // Array index accessors are executable too; inspect descriptors first.
+  return !types.isProxy(findings) && Array.isArray(findings) && findings.length === 2 && [0, 1].every((index) => {
+    const slot = Object.getOwnPropertyDescriptor(findings, String(index));
+    const item = slot && Object.hasOwn(slot, 'value') ? slot.value : null;
+    return ownCompositeReviewData(item, ['severity', 'code', 'path'])
+      && item.severity === 'P0'
+      && item.code === 'unsupported-high-risk-surface'
+      && typeof item.path === 'string'
+      && item.path === item.path.trim();
+  });
+}
+
+function rejectedCompositeEnvelope(paths) {
+  return Object.freeze({
+    schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
+    eligible: true,
+    clean: false,
+    reviewedPaths: Object.freeze([...paths]),
+    findings: Object.freeze([Object.freeze({
+      severity: 'P0',
+      code: 'windows-authority-composite-escalation-envelope-invalid',
+      path: paths[0],
+    })]),
+    proofRefs: Object.freeze([]),
+    ...REVIEW_AUTHORITY_BOUNDARY,
+    finalVerdict: 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID',
+  });
 }
 
 function analyzeStarfieldVrCompositeReview(input = {}) {
   const findings = starfieldVrCompositeFindings(input.analysis);
   if (!findings) return null;
-  const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
-  const launcherFinding = findings.find((item) => item.path === STARFIELD_VR_LAUNCHER_SCRIPT_PATH);
-  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
-    ...input,
-    analysis: singleFindingAnalysis(input.analysis, splashFinding),
-  });
-  const launcher = starfieldVrLauncher.analyzeWindowsAuthorityStarfieldVrLauncherReviewV1({
-    ...input,
-    analysis: singleFindingAnalysis(input.analysis, launcherFinding),
-  });
+  if (!exactTwoP0CompositeEnvelope(input.analysis) || !exactCompositeFindingScalars(findings)) {
+    return rejectedCompositeEnvelope([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
+  }
+  const splashFinding = literalCompositeFinding(findings, STARFIELD_VR_SPLASH_LAUNCH_PATH);
+  const launcherFinding = literalCompositeFinding(findings, STARFIELD_VR_LAUNCHER_SCRIPT_PATH);
+  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1(compositeChildInput(input, splashFinding));
+  const launcher = starfieldVrLauncher.analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(compositeChildInput(input, launcherFinding));
   if (!splash.eligible || !launcher.eligible) return null;
   const combinedFindings = Object.freeze([...(splash.findings || []), ...(launcher.findings || [])]);
-  const proofRefs = Object.freeze([...new Set([...(splash.proofRefs || []), ...(launcher.proofRefs || [])])]);
   const reviewedPaths = Object.freeze([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
   const clean = splash.clean === true && launcher.clean === true && combinedFindings.length === 0;
+  // A partially rejected composite cannot advertise a positive source proof.
+  const proofRefs = Object.freeze(clean
+    ? [...new Set([...(splash.proofRefs || []), ...(launcher.proofRefs || [])])] : []);
   return Object.freeze({
+    schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
     eligible: true,
     clean,
     findings: combinedFindings,
     reviewedPaths,
     proofRefs,
+    ...REVIEW_AUTHORITY_BOUNDARY,
     finalVerdict: clean
       ? 'WINDOWS_AUTHORITY_STARFIELD_VR_COMPOSITE_SPECIALIST_CLEAN'
       : 'WINDOWS_AUTHORITY_STARFIELD_VR_COMPOSITE_SPECIALIST_FINDINGS',
@@ -199,40 +360,35 @@ function analyzeStarfieldVrCompositeReview(input = {}) {
 }
 
 function starfieldVrAerCompositeFindings(analysis = {}) {
-  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
-  if (findings.length !== 2) return null;
-  const expected = new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
-  const paths = findings.map((item) => String(item?.path || '').trim());
-  if (new Set(paths).size !== 2 || paths.some((path) => !expected.has(path))) return null;
-  if (findings.some((item) => String(item?.severity || '').toUpperCase() !== 'P0'
-    || String(item?.code || '') !== 'unsupported-high-risk-surface')) return null;
-  return findings;
+  return inertTwoP0CompositeFindings(analysis,
+    new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]));
 }
 
 function analyzeStarfieldVrAerCompositeReview(input = {}) {
   const findings = starfieldVrAerCompositeFindings(input.analysis);
   if (!findings) return null;
-  const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
-  const aerFinding = findings.find((item) => item.path === STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH);
-  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
-    ...input,
-    analysis: singleFindingAnalysis(input.analysis, splashFinding),
-  });
-  const aer = starfieldVrAerObserve.analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1({
-    ...input,
-    analysis: singleFindingAnalysis(input.analysis, aerFinding),
-  });
+  if (!exactTwoP0CompositeEnvelope(input.analysis) || !exactCompositeFindingScalars(findings)) {
+    return rejectedCompositeEnvelope([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
+  }
+  const splashFinding = literalCompositeFinding(findings, STARFIELD_VR_SPLASH_LAUNCH_PATH);
+  const aerFinding = literalCompositeFinding(findings, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH);
+  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1(compositeChildInput(input, splashFinding));
+  const aer = starfieldVrAerObserve.analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1(compositeChildInput(input, aerFinding));
   if (!splash.eligible || !aer.eligible) return null;
   const combinedFindings = Object.freeze([...(splash.findings || []), ...(aer.findings || [])]);
-  const proofRefs = Object.freeze([...new Set([...(splash.proofRefs || []), ...(aer.proofRefs || [])])]);
   const reviewedPaths = Object.freeze([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
   const clean = splash.clean === true && aer.clean === true && combinedFindings.length === 0;
+  // Never return a partial positive proof when the combined P0 review fails.
+  const proofRefs = Object.freeze(clean
+    ? [...new Set([...(splash.proofRefs || []), ...(aer.proofRefs || [])])] : []);
   return Object.freeze({
+    schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
     eligible: true,
     clean,
     findings: combinedFindings,
     reviewedPaths,
     proofRefs,
+    ...REVIEW_AUTHORITY_BOUNDARY,
     finalVerdict: clean
       ? 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_CLEAN'
       : 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_FINDINGS',
@@ -240,6 +396,65 @@ function analyzeStarfieldVrAerCompositeReview(input = {}) {
 }
 
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
+  // A caller-controlled root Proxy can execute traps inside any downstream
+  // specialist before composite evidence classification begins. A revoked
+  // Proxy is equally untrusted; types.isProxy inspects both without traps.
+  if (types.isProxy(input)) {
+    return Object.freeze({
+      schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
+      eligible: false,
+      clean: false,
+      reviewedPaths: Object.freeze([]),
+      findings: Object.freeze([]),
+      proofRefs: Object.freeze([]),
+      ...REVIEW_AUTHORITY_BOUNDARY,
+      finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_PROXY',
+    });
+  }
+  // Validate the actual root review identity fields before child dispatch.
+  // Unrelated extension accessors are not read by the existing router and
+  // must not invalidate otherwise literal, independently pinned P0 evidence.
+  // Keep the Proxy guard first so no Proxy trap can run.
+  const rootPrototype = input && typeof input === 'object' ? Object.getPrototypeOf(input) : undefined;
+  const rootIdentityFields = ['repository', 'prNumber', 'branch', 'sourceHead', 'baseSha', 'analysis', 'sources', 'lineageEvidence'];
+  const literalRoot = input && typeof input === 'object' && !Array.isArray(input)
+    && (rootPrototype === Object.prototype || rootPrototype === null)
+    && rootIdentityFields.every((key) => {
+      const field = Object.getOwnPropertyDescriptor(input, key);
+      return !field || Object.hasOwn(field, 'value');
+    });
+  if (!literalRoot) {
+    return Object.freeze({
+      schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
+      eligible: false,
+      clean: false,
+      reviewedPaths: Object.freeze([]),
+      findings: Object.freeze([]),
+      proofRefs: Object.freeze([]),
+      ...REVIEW_AUTHORITY_BOUNDARY,
+      finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_EVIDENCE',
+    });
+  }
+  // A literal root can conceal an executable Proxy in a nested finding,
+  // source or lineage array. Check before any sibling specialist dispatch.
+  const untrustedNestedEvidence = ['analysis', 'sources', 'lineageEvidence'].some((key) => {
+    const field = Object.getOwnPropertyDescriptor(input, key);
+    return field && Object.hasOwn(field, 'value')
+      && unsafeNestedReviewEvidence(field.value, new Set(), 0, key === 'sources');
+  });
+  if (untrustedNestedEvidence) {
+    return Object.freeze({
+      schemaVersion: 'stephanos.windows-authority-specialist-review.v1',
+      eligible: false,
+      clean: false,
+      reviewedPaths: Object.freeze([]),
+      findings: Object.freeze([]),
+      proofRefs: Object.freeze([]),
+      ...REVIEW_AUTHORITY_BOUNDARY,
+      finalVerdict: 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE',
+    });
+  }
+
   // Original #2315 source-only review, never an installed native-signer qualification.
   const mailboxNative = canonicalMailboxNative.analyzeWindowsAuthorityCanonicalMailboxNativeEvidenceReviewV1(input);
   if (mailboxNative.eligible) return mailboxNative;

@@ -35,6 +35,8 @@ await import('./windowsAuthorityForgePodmanPrerequisiteReviewV1.test.mjs');
 await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrLauncherReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrAerObserveReviewV1.test.mjs');
+// Exercise the exact fail-closed governor reviewer semantics in the hosted router suite.
+await import('./windowsAuthorityVrResourceGovernorReviewV1.test.mjs');
 await import('./windowsAuthoritySovereignFixedRuntimeReviewV1.test.mjs');
 await import('./windowsAuthoritySovereignReviewerProfileReviewV1.test.mjs');
 await import('./windowsAuthorityCanonicalMailboxNativeEvidenceReviewV1.test.mjs');
@@ -83,6 +85,16 @@ function input(overrides = {}) {
     ...overrides,
   };
 }
+
+
+test('router preserves exact governor specialist source pin after metadata fail-closed correction', async () => {
+  const reviewerSource = await readFile(new URL('./windowsAuthorityVrResourceGovernorReviewV1.mjs', import.meta.url), 'utf8');
+  const routerSource = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
+  assert.equal(gitBlobSha(reviewerSource), '5e059ea759e3f96c10ccfdc874b020a3fb6d7cae');
+  assert.ok(routerSource.includes("const VR_RESOURCE_GOVERNOR_BLOB_SHA = '5e059ea759e3f96c10ccfdc874b020a3fb6d7cae';"));
+  assert.ok(reviewerSource.includes('counts.P0 === 1'));
+  assert.ok(reviewerSource.includes("analysis.verdict === 'findings'"));
+});
 
 test('routes exact #2164 two-path Windows escalation through the bounded mailbox rollover profile', () => {
   const result = analyzeWindowsAuthoritySpecialistReview(input());
@@ -140,6 +152,7 @@ test('registry source pins the current bounded mailbox recovery blobs and grants
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
   assert.match(source, /f66cc26ef865bb840522b16cbb53f830f9499838/);
+  assert.match(source, /5e059ea759e3f96c10ccfdc874b020a3fb6d7cae/);
   assert.match(source, /1b103fda85c371a218f38f20fe5163ca3f5042bf/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
@@ -218,6 +231,7 @@ test('composes exact Starfield VR splash and launcher escalations without wideni
     analysis: {
       findings: [splashPath, launcherPath].map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
       counts: { P0: 2, P1: 0, P2: 0 },
+      verdict: 'findings',
     },
     sources,
   });
@@ -277,6 +291,7 @@ test('composes exact Starfield VR splash and AER Observe escalations without wid
     analysis: {
       findings: [splashPath, aerPath].map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
       counts: { P0: 2, P1: 0, P2: 0 },
+      verdict: 'findings',
     },
     sources,
   });
@@ -286,6 +301,52 @@ test('composes exact Starfield VR splash and AER Observe escalations without wid
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_CLEAN');
 });
 
+
+test('composite reviewer rejects inherited P0 summaries behind unrelated three-key counts', async () => {
+  const splashPath = WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.find((path) =>
+    path.endsWith('launch-starfield-vr-with-splash.ps1'));
+  for (const [partnerPath, partnerFile] of [
+    [WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0], 'launch-starfield-vr.ps1'],
+    [WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0], 'run-starfield-aer-stabilizer-observe.ps1'],
+  ]) {
+    const content = await Promise.all([
+      readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1', import.meta.url), 'utf8'),
+      readFile(new URL('../../scripts/windows/' + partnerFile, import.meta.url), 'utf8'),
+    ]);
+    const paths = [splashPath, partnerPath];
+    const sources = content.map((bytes, index) => ({
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path: paths[index],
+      ref: HEAD,
+      exists: true,
+      size: Buffer.byteLength(bytes, 'utf8'),
+      blobSha: gitBlobSha(bytes),
+      content: bytes,
+    }));
+    const baseAnalysis = {
+      findings: paths.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+      counts: { P0: 2, P1: 0, P2: 0 },
+      verdict: 'findings',
+    };
+    const review = (analysis) => analyzeWindowsAuthoritySpecialistReview({
+      repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD, analysis, sources,
+    });
+    assert.equal(review(baseAnalysis).clean, true, 'unchanged real source must remain eligible');
+    const inheritedCounts = Object.assign(Object.create({ P0: 2, P1: 0, P2: 0 }), {
+      other1: 0, other2: 0, other3: 0,
+    });
+    const denied = review({ ...baseAnalysis, counts: inheritedCounts });
+    assert.equal(denied.eligible, true, 'malformed exact path set must be explicitly rejected');
+    assert.equal(denied.clean, false);
+    assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID');
+    assert.deepEqual(denied.proofRefs, [], 'no positive source proof from inherited count claims');
+    for (const key of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(denied[key], false, key);
+    }
+  }
+});
 
 test('routes exact #3362 fixed-runtime Windows escalation through the sovereign specialist', () => {
   const head = 'a'.repeat(40);
@@ -356,6 +417,7 @@ test('routes exact #3302 seven Windows source-only P0s before the frozen legacy 
   assert.equal(result.epochAdoptionAuthorized, false);
 });
 
+
 test('routes exact #3439 Reviewer bootstrap escalation before frozen fallback', () => {
   const head='a'.repeat(40), base='b'.repeat(40);
   const result=analyzeWindowsAuthoritySpecialistReview({
@@ -373,4 +435,509 @@ test('routes exact #3439 Reviewer bootstrap escalation before frozen fallback', 
   assert.equal(result.eligible,true);
   assert.deepEqual(result.reviewedPaths,WINDOWS_AUTHORITY_SOVEREIGN_REVIEWER_PROFILE_PATHS_V1);
   assert.equal(result.clean,false);
+});
+
+test('composite specialist suppresses every positive source proof if either child fails exact evidence', async () => {
+  const splashPath = WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.find(path =>
+    path.endsWith('launch-starfield-vr-with-splash.ps1'));
+  for (const [partnerPath, file] of [
+    [WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0], 'launch-starfield-vr.ps1'],
+    [WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0], 'run-starfield-aer-stabilizer-observe.ps1'],
+  ]) {
+    const [splash, partner] = await Promise.all([
+      readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1', import.meta.url), 'utf8'),
+      readFile(new URL('../../scripts/windows/' + file, import.meta.url), 'utf8'),
+    ]);
+    const paths = [splashPath, partnerPath];
+    const sources = [splash, partner].map((content, index) => ({
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path: paths[index], ref: HEAD, exists: true,
+      size: Buffer.byteLength(content, 'utf8'), blobSha: gitBlobSha(content), content,
+    }));
+    const request = (evidence) => analyzeWindowsAuthoritySpecialistReview({
+      repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+      analysis: {
+        findings: paths.map(path => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+        counts: { P0: 2, P1: 0, P2: 0 },
+        verdict: 'findings',
+      },
+      sources: evidence,
+    });
+    const clean = request(sources);
+    assert.equal(clean.eligible, true);
+    assert.equal(clean.clean, true, JSON.stringify(clean.findings));
+    assert.ok(clean.proofRefs.length >= 1, 'baseline must contain a real positive proof');
+    assert.equal(clean.schemaVersion, 'stephanos.windows-authority-specialist-review.v1');
+    for (const property of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(clean[property], false, property + ' must remain denied on clean composite evidence');
+    }
+    for (const damagedIndex of [0, 1]) {
+      // Self-consistent metadata is not enough: one child has absent source bytes.
+      // The other child remains valid and previously leaked a positive proofRef.
+      const invalidSources = sources.map((entry, index) => index === damagedIndex
+        ? { ...entry, content: '', size: 0, blobSha: gitBlobSha('') } : entry);
+      const rejected = request(invalidSources);
+      assert.equal(rejected.eligible, true);
+      assert.equal(rejected.clean, false, 'one failed child must fail the composite');
+      assert.ok(rejected.findings.length > 0);
+      assert.deepEqual(rejected.proofRefs, [], 'no partial positive proof on any P0 finding');
+      assert.equal(rejected.schemaVersion, 'stephanos.windows-authority-specialist-review.v1');
+      for (const property of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+        assert.equal(rejected[property], false, property + ' must be an explicit denial on child rejection');
+      }
+    }
+  }
+});
+
+test('composite review refuses contradictory typed counts and verdict before delegating to child specialists', async () => {
+  const splashPath = WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.find(path =>
+    path.endsWith('launch-starfield-vr-with-splash.ps1'));
+  for (const [partnerPath, filename] of [
+    [WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0], 'launch-starfield-vr.ps1'],
+    [WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0], 'run-starfield-aer-stabilizer-observe.ps1'],
+  ]) {
+    const paths = [splashPath, partnerPath];
+    const [splash, partner] = await Promise.all([
+      readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1', import.meta.url), 'utf8'),
+      readFile(new URL('../../scripts/windows/' + filename, import.meta.url), 'utf8'),
+    ]);
+    const sources = [splash, partner].map((content, index) => ({
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path: paths[index], ref: HEAD, exists: true,
+      size: Buffer.byteLength(content, 'utf8'), blobSha: gitBlobSha(content), content,
+    }));
+    const analysis = {
+      findings: paths.map(path => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+      counts: { P0: 2, P1: 0, P2: 0 },
+      verdict: 'findings',
+    };
+    const review = (overrides = {}) => analyzeWindowsAuthoritySpecialistReview({
+      repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+      analysis: { ...analysis, ...overrides }, sources,
+    });
+    assert.equal(review().clean, true, 'baseline confirms registered positive proof paths');
+
+    // Positive two-P0 reviews cannot execute unrelated accessors or a
+    // shadowed Array#find while splitting evidence into child reviews.
+    for (const kind of ['array-find', 'analysis-extra', 'input-extra']) {
+      let getterCalls = 0;
+      const unsafeFindings = analysis.findings.map((entry) => ({ ...entry }));
+      const unsafeAnalysis = { ...analysis, findings: unsafeFindings };
+      const unsafeInput = {
+        repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+        analysis: unsafeAnalysis, sources,
+      };
+      const explosive = () => {
+        getterCalls++;
+        throw new Error('UNTRUSTED_COMPOSITE_GETTER_EXECUTED');
+      };
+      if (kind === 'array-find') {
+        Object.defineProperty(unsafeFindings, 'find', { enumerable: true, get: explosive });
+      } else if (kind === 'analysis-extra') {
+        Object.defineProperty(unsafeAnalysis, 'untrustedExtra', { enumerable: true, get: explosive });
+      } else {
+        Object.defineProperty(unsafeInput, 'untrustedExtra', { enumerable: true, get: explosive });
+      }
+      const safe = analyzeWindowsAuthoritySpecialistReview(unsafeInput);
+      assert.equal(getterCalls, 0, kind + ' must not invoke untrusted getter');
+      assert.equal(safe.eligible, true, kind);
+      assert.equal(safe.clean, true, kind + ' must preserve literal P0 evidence');
+      for (const authority of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+        assert.equal(safe[authority], false, kind + ' cannot grant ' + authority);
+      }
+    }
+
+    // Accessor-backed upstream P0 identity claims are denied before any child
+    // dispatch, rather than reaching the legacy composite classifier.
+    for (const field of ['counts', 'verdict', 'clean']) {
+      const forged = { ...analysis, clean: false };
+      let getterCalls = 0;
+      Object.defineProperty(forged, field, {
+        enumerable: true, get() { getterCalls++; throw new Error('untrusted composite identity getter'); },
+      });
+      const denied = analyzeWindowsAuthoritySpecialistReview({
+        repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+        analysis: forged, sources,
+      });
+      assert.equal(getterCalls, 0, field + ' getter must not execute');
+      assert.equal(denied.eligible, false, field + ' accessor must be denied before child dispatch');
+      assert.equal(denied.clean, false, field + ' accessor must fail closed');
+      assert.deepEqual(denied.proofRefs, [], field + ' accessor must not yield proof');
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE');
+    }
+    // Sibling reviewers may read counts before the composite route selects a
+    // specialist. Reject executable count identities at the shared entrypoint.
+    for (const field of ['P0', 'P1', 'P2']) {
+      const counts = { ...analysis.counts };
+      const original = counts[field];
+      let getterCalls = 0;
+      Object.defineProperty(counts, field, {
+        enumerable: true, get() { getterCalls++; return original; },
+      });
+      const denied = review({ counts });
+      assert.equal(getterCalls, 0, field + ' must not execute before specialist dispatch');
+      assert.equal(denied.eligible, false, field + ' count accessor must be denied at entrypoint');
+      assert.equal(denied.clean, false, field + ' count accessor must fail closed');
+      assert.deepEqual(denied.proofRefs, [], field + ' count accessor must not yield proof');
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE');
+    }
+    // Route discovery must not run getters even when they return the exact P0
+    // identity. Both partner routes use this same candidate matcher.
+    for (const index of [0, 1]) {
+      for (const field of ['severity', 'code', 'path']) {
+        const forgedFindings = analysis.findings.map((entry) => ({ ...entry }));
+        const literal = forgedFindings[index][field];
+        let getterCalls = 0;
+        Object.defineProperty(forgedFindings[index], field, {
+          enumerable: true,
+          get() { getterCalls++; return literal; },
+        });
+        const denied = review({ findings: forgedFindings });
+        assert.equal(getterCalls, 0, 'candidate discovery must not run ' + field + ' getter at ' + index);
+        assert.equal(denied.clean, false);
+        assert.deepEqual(denied.proofRefs, []);
+      }
+    }
+    // Descriptor-only routing must not invoke Proxy traps, including proxies
+    // nested in findings/counts, a prototype link, or revoked Proxy objects.
+    // Cover both existing Starfield composite partner routes without new lanes.
+    for (const kind of ['finding-0', 'finding-1', 'counts', 'prototype',
+      'revoked-finding', 'revoked-counts']) {
+      let trapCalls = 0;
+      const findings = analysis.findings.map((entry) => ({ ...entry }));
+      let counts = { ...analysis.counts };
+      const hostile = (target) => new Proxy(target, {
+        getOwnPropertyDescriptor(object, key) {
+          trapCalls++;
+          return Reflect.getOwnPropertyDescriptor(object, key);
+        },
+        getPrototypeOf(object) {
+          trapCalls++;
+          return Reflect.getPrototypeOf(object);
+        },
+        get(object, key, receiver) {
+          trapCalls++;
+          return Reflect.get(object, key, receiver);
+        },
+        has(object, key) {
+          trapCalls++;
+          return Reflect.has(object, key);
+        },
+      });
+      if (kind === 'finding-0' || kind === 'finding-1') {
+        const index = Number(kind.at(-1));
+        findings[index] = hostile(findings[index]);
+      } else if (kind === 'counts') {
+        counts = hostile(counts);
+      } else if (kind === 'prototype') {
+        delete findings[0].path;
+        Object.setPrototypeOf(findings[0], hostile({ path: paths[0] }));
+      } else if (kind === 'revoked-finding') {
+        const revoked = Proxy.revocable(findings[0], {});
+        revoked.revoke();
+        findings[0] = revoked.proxy;
+      } else if (kind === 'revoked-counts') {
+        const revoked = Proxy.revocable(counts, {});
+        revoked.revoke();
+        counts = revoked.proxy;
+      }
+      const denied = review({ findings, counts });
+      assert.equal(trapCalls, 0, kind + ' must not execute a Proxy trap');
+      // The router now rejects nested executable evidence BEFORE a sibling
+      // reviewer can inspect it; stricter pre-dispatch denial replaces the
+      // earlier post-dispatch composite-finding classification.
+      assert.equal(denied.eligible, false, kind + ' must be rejected before child dispatch');
+      assert.equal(denied.clean, false, kind + ' must not qualify clean review');
+      assert.deepEqual(denied.proofRefs, [], kind + ' must not create positive proof');
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE', kind);
+    }
+
+    // Getter-backed array indices are also executable, not wire findings.
+    for (const index of [0, 1]) {
+      const forgedFindings = analysis.findings.map((entry) => ({ ...entry }));
+      const literal = forgedFindings[index];
+      let getterCalls = 0;
+      Object.defineProperty(forgedFindings, String(index), {
+        enumerable: true,
+        get() { getterCalls++; return literal; },
+      });
+      const denied = review({ findings: forgedFindings });
+      assert.equal(getterCalls, 0, 'candidate discovery must not run index getter ' + index);
+      assert.equal(denied.clean, false);
+      assert.deepEqual(denied.proofRefs, []);
+    }
+    // A valid upstream envelope may not carry prototype-forged P0 finding fields.
+    for (const index of [0, 1]) {
+      for (const field of ['severity', 'code', 'path']) {
+        const findings = analysis.findings.map((item, i) => {
+          if (i !== index) return item;
+          const forged = { ...item };
+          const inherited = forged[field];
+          delete forged[field];
+          Object.setPrototypeOf(forged, { [field]: inherited });
+          assert.equal(Object.hasOwn(forged, field), false);
+          return forged;
+        });
+        const denied = review({ findings });
+        assert.equal(denied.eligible, true, 'inherited ' + field + ' at index ' + index);
+        assert.equal(denied.clean, false, 'inherited ' + field + ' at index ' + index);
+        assert.deepEqual(denied.proofRefs, []);
+        assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID');
+      }
+    }
+    for (const [reason, forged] of [
+      ['inherited full analysis', Object.create(analysis)],
+      ['inherited findings', Object.assign(Object.create({ findings: analysis.findings }), {
+        counts: analysis.counts, verdict: 'findings',
+      })],
+      ['inherited counts', Object.assign(Object.create({ counts: analysis.counts }), {
+        findings: analysis.findings, verdict: 'findings',
+      })],
+      ['inherited verdict', Object.assign(Object.create({ verdict: 'findings' }), {
+        findings: analysis.findings, counts: analysis.counts,
+      })],
+    ]) {
+      const denied = analyzeWindowsAuthoritySpecialistReview({
+        repository: 'Cheekyfellastef/stephan-os', sourceHead: HEAD,
+        analysis: forged, sources,
+      });
+      assert.equal(denied.eligible, true, reason);
+      assert.equal(denied.clean, false, reason);
+      assert.deepEqual(denied.proofRefs, [], reason);
+      assert.equal(denied.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID', reason);
+    }
+    for (const [reason, override] of [
+      // Both composite routes must reject one-element-array coercion before child review.
+      ...[0, 1].flatMap((index) => ['severity', 'code', 'path'].map((field) => [
+        'coerced ' + field + ' in finding ' + index,
+        { findings: analysis.findings.map((entry, i) => i === index
+          ? { ...entry, [field]: [entry[field]] } : entry) },
+      ])),
+      ...[0, 1].flatMap((index) => [
+        ['lowercase severity finding ' + index, {
+          findings: analysis.findings.map((entry, i) => i === index
+            ? { ...entry, severity: 'p0' } : entry),
+        }],
+        ['whitespace-padded source path finding ' + index, {
+          findings: analysis.findings.map((entry, i) => i === index
+            ? { ...entry, path: ' ' + entry.path + ' ' } : entry),
+        }],
+      ]),
+      ['zero P0', { counts: { P0: 0, P1: 0, P2: 0 } }],
+      ['extra P0', { counts: { P0: 3, P1: 0, P2: 0 } }],
+      ['coerced P0', { counts: { P0: '2', P1: 0, P2: 0 } }],
+      ['extra P1', { counts: { P0: 2, P1: 1, P2: 0 } }],
+      ['extra P2', { counts: { P0: 2, P1: 0, P2: 1 } }],
+      ['missing counts', { counts: undefined }],
+      ['array counts', { counts: [2, 0, 0] }],
+      ['unexpected count category', { counts: { P0: 2, P1: 0, P2: 0, P3: 1 } }],
+      ['contradictory clean boolean', { clean: true }],
+      ['wrong-typed clean claim', { clean: 'false' }],
+      ['false clean', { verdict: 'clean' }],
+      ['missing verdict', { verdict: undefined }],
+    ]) {
+      const result = review(override);
+      assert.equal(result.eligible, true, reason);
+      assert.equal(result.clean, false, reason);
+      assert.deepEqual(result.proofRefs, [], reason);
+      assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_COMPOSITE_ESCALATION_ENVELOPE_INVALID', reason);
+      assert.equal(result.schemaVersion, 'stephanos.windows-authority-specialist-review.v1', reason);
+      for (const property of ['sourceMutationAllowed', 'mergeAuthority', 'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+        assert.equal(result[property], false, reason + ': ' + property);
+      }
+    }
+  }
+});
+
+test('specialist entry refuses a hostile or revoked root Proxy before child dispatch', () => {
+  assert.equal(analyzeWindowsAuthoritySpecialistReview(input()).eligible, true,
+    'ordinary literal input must preserve its existing route');
+  let traps = 0;
+  const hostile = new Proxy(input(), {
+    get() { traps++; throw new Error('untrusted root get'); },
+    getOwnPropertyDescriptor() { traps++; throw new Error('untrusted root descriptor'); },
+    ownKeys() { traps++; throw new Error('untrusted root keys'); },
+    getPrototypeOf() { traps++; throw new Error('untrusted root prototype'); },
+    has() { traps++; throw new Error('untrusted root has'); },
+  });
+  const rejected = analyzeWindowsAuthoritySpecialistReview(hostile);
+  assert.equal(traps, 0, 'no root Proxy trap may execute before route rejection');
+  assert.equal(rejected.eligible, false);
+  assert.equal(rejected.clean, false);
+  assert.deepEqual(rejected.proofRefs, []);
+  assert.equal(rejected.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_PROXY');
+  for (const key of ['mergeAuthority', 'runtimeMutationAllowed',
+    'providerQualificationAuthority', 'sourceMutationAllowed']) {
+    assert.equal(rejected[key], false, key + ' must remain denied');
+  }
+  const revoked = Proxy.revocable(input(), {});
+  revoked.revoke();
+  const revokedResult = analyzeWindowsAuthoritySpecialistReview(revoked.proxy);
+  assert.equal(revokedResult.eligible, false);
+  assert.equal(revokedResult.clean, false);
+  assert.deepEqual(revokedResult.proofRefs, []);
+  assert.equal(revokedResult.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_PROXY');
+});
+
+test('specialist entry refuses accessor-backed or inherited root review evidence without executing it', () => {
+  for (const field of ['analysis', 'repository', 'sources', 'sourceHead', 'prNumber', 'baseSha', 'lineageEvidence']) {
+    let getterCalls = 0;
+    const candidate = input();
+    Object.defineProperty(candidate, field, {
+      enumerable: true,
+      configurable: true,
+      get() { getterCalls++; throw new Error('hostile root getter ' + field); },
+    });
+    const result = analyzeWindowsAuthoritySpecialistReview(candidate);
+    assert.equal(getterCalls, 0, field + ': getter cannot execute');
+    assert.equal(result.eligible, false, field);
+    assert.equal(result.clean, false, field);
+    assert.deepEqual(result.proofRefs, [], field);
+    assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_EVIDENCE', field);
+    for (const authority of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(result[authority], false, field + ': ' + authority);
+    }
+  }
+  let inheritedCalls = 0;
+  const inherited = Object.create(Object.defineProperty({}, 'analysis', {
+    get() { inheritedCalls++; throw new Error('hostile inherited analysis'); },
+  }));
+  // Define own wire fields without triggering the inherited accessor's missing setter.
+  Object.defineProperties(inherited, Object.getOwnPropertyDescriptors(input()));
+  delete inherited.analysis;
+  const rejected = analyzeWindowsAuthoritySpecialistReview(inherited);
+  assert.equal(inheritedCalls, 0, 'inherited analysis must never be read');
+  assert.equal(rejected.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_ROOT_EVIDENCE');
+  assert.deepEqual(rejected.proofRefs, []);
+  let symbolCalls = 0;
+  const symbolInput = input();
+  Object.defineProperty(symbolInput, Symbol('untrusted'), {
+    get() { symbolCalls++; throw new Error('hostile symbol getter'); },
+  });
+  const rejectedSymbol = analyzeWindowsAuthoritySpecialistReview(symbolInput);
+  assert.equal(symbolCalls, 0, 'symbol accessor must never execute');
+  assert.equal(rejectedSymbol.eligible, true, 'unread unrelated symbol accessor must preserve normal route');
+  assert.equal(symbolCalls, 0, 'irrelevant symbol getter must not execute');
+});
+
+
+test('specialist entry denies nested Proxy review evidence before any sibling can evaluate traps', () => {
+  const verdict = 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE';
+  assert.notEqual(analyzeWindowsAuthoritySpecialistReview(input()).finalVerdict, verdict,
+    'normal literal review payload remains routed');
+  const cases = [
+    ['analysis', (claim, hostile) => { claim.analysis = hostile(claim.analysis); }],
+    ['analysis.findings', (claim, hostile) => { claim.analysis.findings = hostile(claim.analysis.findings); }],
+    ['analysis.finding', (claim, hostile) => { claim.analysis.findings[0] = hostile(claim.analysis.findings[0]); }],
+    ['analysis.counts', (claim, hostile) => { claim.analysis.counts = hostile(claim.analysis.counts); }],
+    ['sources', (claim, hostile) => { claim.sources = hostile(claim.sources); }],
+    ['source entry', (claim, hostile) => { claim.sources = [hostile({ path: 'untrusted.ps1' })]; }],
+    ['lineage', (claim, hostile) => { claim.lineageEvidence = hostile(claim.lineageEvidence); }],
+    ['lineage parents', (claim, hostile) => { claim.lineageEvidence.parents = hostile(claim.lineageEvidence.parents); }],
+    ['lineage comparison', (claim, hostile) => { claim.lineageEvidence.comparison = hostile(claim.lineageEvidence.comparison); }],
+    ['analysis prototype', (claim, hostile) => { Object.setPrototypeOf(claim.analysis, hostile({})); }],
+  ];
+  for (const [label, mutate] of cases) {
+    let traps = 0;
+    const hostile = (value) => new Proxy(value, {
+      get() { traps++; throw new Error('nested Proxy get ' + label); },
+      ownKeys() { traps++; throw new Error('nested Proxy ownKeys ' + label); },
+      getPrototypeOf() { traps++; throw new Error('nested Proxy prototype ' + label); },
+    });
+    const claim = input();
+    mutate(claim, hostile);
+    const result = analyzeWindowsAuthoritySpecialistReview(claim);
+    assert.equal(traps, 0, label + ': no untrusted trap may execute');
+    assert.equal(result.finalVerdict, verdict, label);
+    assert.equal(result.eligible, false, label);
+    assert.equal(result.clean, false, label);
+    assert.deepEqual(result.proofRefs, [], label);
+    for (const authority of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(result[authority], false, label + ': ' + authority);
+    }
+  }
+  const revoked = Proxy.revocable([], {});
+  revoked.revoke();
+  const claim = input();
+  claim.analysis.findings = revoked.proxy;
+  const denied = analyzeWindowsAuthoritySpecialistReview(claim);
+  assert.equal(denied.finalVerdict, verdict);
+  assert.deepEqual(denied.proofRefs, []);
+});
+
+test('specialist preflight rejects source or array-index accessors before child iteration', () => {
+  const verdict = 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE';
+  const cases = [
+    ['sources array index 0', (claim, getter) => {
+      Object.defineProperty(claim.sources, '0', { enumerable: true, configurable: true, get: getter });
+    }],
+    ['sources array index 1', (claim, getter) => {
+      claim.sources = [{ path: 'ordinary.ps1' }];
+      Object.defineProperty(claim.sources, '1', { enumerable: true, configurable: true, get: getter });
+    }],
+    ['source object path', (claim, getter) => {
+      claim.sources = [{ path: 'untrusted.ps1' }];
+      Object.defineProperty(claim.sources[0], 'path', { enumerable: true, configurable: true, get: getter });
+    }],
+    ['source object content', (claim, getter) => {
+      claim.sources = [{ path: 'ordinary.ps1' }];
+      Object.defineProperty(claim.sources[0], 'content', { enumerable: true, configurable: true, get: getter });
+    }],
+    ['analysis findings index', (claim, getter) => {
+      Object.defineProperty(claim.analysis.findings, '0', { enumerable: true, configurable: true, get: getter });
+    }],
+  ];
+  for (const [label, alter] of cases) {
+    let getterCalls = 0;
+    const claim = input();
+    alter(claim, () => { getterCalls++; throw new Error('untrusted nested evidence ' + label); });
+    const denied = analyzeWindowsAuthoritySpecialistReview(claim);
+    assert.equal(getterCalls, 0, label + ': nested getter must not execute');
+    assert.equal(denied.finalVerdict, verdict, label);
+    assert.equal(denied.eligible, false, label);
+    assert.equal(denied.clean, false, label);
+    assert.deepEqual(denied.proofRefs, [], label);
+    for (const authority of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(denied[authority], false, label + ': ' + authority);
+    }
+  }
+  assert.notEqual(analyzeWindowsAuthoritySpecialistReview(input()).finalVerdict, verdict,
+    'ordinary literal evidence must continue through its unchanged specialist route');
+});
+
+test('specialist preflight rejects executable analysis P0 identity getters before child dispatch', () => {
+  const verdict = 'WINDOWS_AUTHORITY_SPECIALIST_UNTRUSTED_NESTED_EVIDENCE';
+  for (const field of ['findings', 'counts', 'verdict', 'clean']) {
+    let getterCalls = 0;
+    const claim = input();
+    Object.defineProperty(claim.analysis, field, {
+      enumerable: true,
+      configurable: true,
+      get() { getterCalls++; throw new Error('executable analysis ' + field); },
+    });
+    const result = analyzeWindowsAuthoritySpecialistReview(claim);
+    assert.equal(getterCalls, 0, field + ': child must not evaluate analysis accessor');
+    assert.equal(result.eligible, false, field);
+    assert.equal(result.clean, false, field);
+    assert.deepEqual(result.proofRefs, [], field);
+    assert.equal(result.finalVerdict, verdict, field);
+    for (const authority of ['sourceMutationAllowed', 'mergeAuthority',
+      'runtimeMutationAllowed', 'providerQualificationAuthority']) {
+      assert.equal(result[authority], false, field + ': ' + authority);
+    }
+  }
+  let extensionCalls = 0;
+  const extension = input();
+  Object.defineProperty(extension.analysis, 'unusedExtensionField', {
+    enumerable: true,
+    get() { extensionCalls++; throw new Error('unread extension getter'); },
+  });
+  const outcome = analyzeWindowsAuthoritySpecialistReview(extension);
+  assert.equal(extensionCalls, 0, 'unread extension getter remains inert');
+  assert.notEqual(outcome.finalVerdict, verdict, 'benign extension does not force an unrelated rejection');
 });
