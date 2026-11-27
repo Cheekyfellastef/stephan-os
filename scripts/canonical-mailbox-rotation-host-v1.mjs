@@ -4,6 +4,33 @@ import { evaluateCanonicalMailboxSuccessorCandidate } from '../shared/agents/can
 import { MAILBOX_ROTATION_SCHEMA, auditMailboxRotationComments, projectMailboxRotation,
   validateMailboxRotationCommandShape, validateMailboxRotationRecord, verifyMailboxRotationProbes } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 
+// Evidence GETs can race a GitHub Actions status change or a transient provider
+// read failure. Retry only a recognised, read-only observation once. Never retry
+// persistence, fence publication, source admission, or any command execution.
+const RETRYABLE_ROTATION_READ_CODES = new Set([
+  'MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE',
+  'MAILBOX_ACTION_BATCH_RUN_DRIFT',
+  'MAILBOX_ACTION_BATCH_READ_FAILED',
+  'MAILBOX_HISTORY_PAGE_INVALID',
+]);
+function retryableRotationReadError(error) {
+  const code = String(error?.code || error?.message || '');
+  return RETRYABLE_ROTATION_READ_CODES.has(code)
+    || /^MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_(?:QUEUED|IN_PROGRESS|WAITING|REQUESTED|PENDING)_(?:READ|RESPONSE|TOTAL_DRIFT|PAGE_LENGTH|PAGE_LIMIT)$/.test(code)
+    || /\b(?:HTTP\s*)?(?:429|500|502|503|504)\b/i.test(code)
+    || /^(?:ECONNRESET|ETIMEDOUT|EAI_AGAIN)$/.test(code);
+}
+async function readRotationEvidenceWithOneRetry(read, ...args) {
+  try {
+    return await read(...args);
+  } catch (error) {
+    if (!retryableRotationReadError(error)) throw error;
+    // The caller revalidates evidence freshness and head identity; this is
+    // never a substitute for a native quiescence/drained certificate.
+    return read(...args);
+  }
+}
+
 export function readMailboxAuthorityLiteral(source) {
   if (typeof source !== 'string' || Buffer.byteLength(source, 'utf8') > 64000) throw new Error('MAILBOX_ROTATION_SOURCE_INVALID');
   const active = source.match(/^export const CANONICAL_MAILBOX_ISSUE = ([1-9][0-9]*);$/m);
@@ -84,14 +111,47 @@ export async function executeMailboxRotationOnHost(command, {
     persist(state);
   }
   if (!['CANCELLED', 'VERIFIED'].includes(record.phase)) {
-    state.mailboxRotationActions = await readActions(state.mailboxRotation);
-    state.mailboxRotation = {...state.mailboxRotation,...mailboxActionEvidenceSummary(state.mailboxRotationActions)};
-    if (!mailboxActionsExecutionQuiescent(state.mailboxRotationActions,{now:now(),mainHead:sourceHead,activationHead:state.mailboxRotation.cutoverHead})) {
+    let actionsQuiescent = false;
+    try {
+      state.mailboxRotationActions = await readRotationEvidenceWithOneRetry(readActions, state.mailboxRotation);
+      state.mailboxRotation = { ...state.mailboxRotation, ...mailboxActionEvidenceSummary(state.mailboxRotationActions) };
+      actionsQuiescent = mailboxActionsExecutionQuiescent(state.mailboxRotationActions, {
+        now: now(), mainHead: sourceHead, activationHead: state.mailboxRotation.cutoverHead,
+      });
+    } catch (error) {
+      // Expose only fixed, enumerated non-secret evidence stage codes; a raw
+      // GitHub provider exception may contain credentials or local paths.
+      const typed = new Set([
+        'MAILBOX_ACTION_BATCH_DEADLINE','MAILBOX_ACTION_BATCH_READ_TIMEOUT',
+        'MAILBOX_ACTION_BATCH_READ_FAILED','MAILBOX_ACTION_BATCH_RUN_DRIFT',
+        'MAILBOX_ACTION_BATCH_CHILD_FAILED','MAILBOX_ACTION_BATCH_RESULT_INVALID',
+        'MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE',
+        'MAILBOX_ROTATION_ACTIONS_INVENTORY_INVALID',
+        'MAILBOX_ACTION_COLLECTION_STALE','MAILBOX_ACTION_MAIN_MOVED',
+        'MAILBOX_ACTION_NONADMISSION_SOURCE_UNPROVEN',
+        'MAILBOX_ACTION_REVOCATION_SOURCE_UNPROVEN',
+      ]);
+      const inventoryStage = typeof error?.message === 'string'
+        && /^MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_(?:QUEUED|IN_PROGRESS|WAITING|REQUESTED|PENDING)_(?:READ|RESPONSE|TOTAL_DRIFT|PAGE_LENGTH|PAGE_LIMIT)$/.test(error.message);
+      const blocker = typed.has(error?.message) || inventoryStage ? error.message
+        : 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED';
+      state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
+      persist(state);
+      return held(blocker);
+    }
+    if (!actionsQuiescent) {
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
     }
-    state.mailboxRotationInventory = auditMailboxRotationComments(await readComments(record.predecessorIssue), {
-      issueNumber: record.predecessorIssue, barrierCommentId: record.barrierCommentId,
-    });
+    try {
+      state.mailboxRotationInventory = auditMailboxRotationComments(await readRotationEvidenceWithOneRetry(readComments, record.predecessorIssue), {
+        issueNumber: record.predecessorIssue, barrierCommentId: record.barrierCommentId,
+      });
+    } catch {
+      // Missing or malformed historical evidence is not an empty queue.
+      state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
+      persist(state);
+      return held('MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED');
+    }
     const inventory = state.mailboxRotationInventory;
     if (inventory.pendingBeforeBarrier.length || inventory.pendingAfterBarrier.length || inventory.acceptedIds.length) {
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
