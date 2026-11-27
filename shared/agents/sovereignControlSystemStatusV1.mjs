@@ -44,6 +44,126 @@ export function sovereignControlSystemGovernorObservationCodeV1(value) {
     ? value : 'SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_OBSERVATION_UNPROVEN';
 }
 
+// A reason for missing owner evidence is not owner identity or custody proof.
+const OWNER_DIAGNOSTIC_CODES = new Set([
+  'OWNER_CIM_LISTENER_QUERY_FAILED', 'OWNER_LISTENER_UNPROVEN', 'OWNER_LISTENER_NOT_PRIVATE',
+  'OWNER_CIM_PROCESS_QUERY_FAILED', 'OWNER_PROCESS_UNPROVEN', 'OWNER_COMMAND_LINE_UNAVAILABLE',
+  'OWNER_COMMAND_LINE_MISMATCH', 'OWNER_IMAGE_MISMATCH', 'OWNER_PROCESS_BIRTH_UNAVAILABLE',
+  'OWNER_NATIVE_QUERY_UNAVAILABLE', 'OWNER_NATIVE_ACCESS_DENIED', 'OWNER_NATIVE_OPEN_FAILED',
+  'OWNER_NATIVE_PROCESS_EXITED', 'OWNER_NATIVE_BIRTH_UNPROVEN', 'OWNER_NATIVE_BIRTH_MISMATCH',
+  'OWNER_NATIVE_IMAGE_UNPROVEN', 'OWNER_NATIVE_IMAGE_MISMATCH', 'OWNER_IMAGE_HASH_UNPROVEN',
+  'OWNER_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN',
+  'OWNER_OBSERVER_TIMEOUT', 'OWNER_OBSERVER_FAILED', 'OWNER_OBSERVER_INVALID_RECEIPT',
+]);
+
+export function sovereignControlSystemOwnerDiagnosticCodeV1(value) {
+  return typeof value === 'string' && OWNER_DIAGNOSTIC_CODES.has(value)
+    ? value : 'OWNER_OBSERVER_INVALID_RECEIPT';
+}
+
+// Qualification-only refusal detail. Keep this separate from the general
+// blocker vocabulary: a typed inspection failure is never runtime authority.
+// Includes two source-declared defensive labels as coverage, not runtime facts.
+export const SOVEREIGN_CONTROL_SYSTEM_QUALIFICATION_DIAGNOSTIC_CODES_V1 = Object.freeze([
+  'BATTLE_BRIDGE_FIXED_GIT_CONFIG_INVALID',
+  'CANONICAL_GIT_PROBE_CLEANUP_UNPROVEN',
+  'CANONICAL_GIT_PROBE_CONTEXT_CHANGED',
+  'CANONICAL_GIT_PROBE_CONTEXT_CLOSED',
+  'CANONICAL_GIT_PROBE_CONTEXT_UNPROVEN',
+  'CANONICAL_GIT_PROBE_DIRECTORY_UNPROVEN',
+  'CANONICAL_GIT_PROBE_FILE_CHANGED',
+  'CANONICAL_GIT_PROBE_FILE_UNPROVEN',
+  'CANONICAL_GIT_PROBE_HEAD_UNSUPPORTED',
+  'CANONICAL_GIT_PROBE_INDEX_TIMESTAMP_UNPROVEN',
+  'CANONICAL_GIT_PROBE_INDEX_UNSUPPORTED',
+  'CANONICAL_GIT_PROBE_ORIGINAL_CHANGED',
+  'FIXED_RUNTIME_CANONICAL_SOURCE_EXPIRED',
+  'FIXED_RUNTIME_EQUIVALENT_VERSION_AMBIGUOUS',
+  'FIXED_RUNTIME_GIT_CLOSURE_CHANGED',
+  'FIXED_RUNTIME_GIT_CLOSURE_UNPROVEN',
+  'FIXED_RUNTIME_SOURCE_PROOF_BASE64',
+  'FIXED_RUNTIME_SOURCE_PROOF_CLOSURE',
+  'FIXED_RUNTIME_SOURCE_PROOF_COMMIT_HASH',
+  'FIXED_RUNTIME_SOURCE_PROOF_COMMIT_TREE',
+  'FIXED_RUNTIME_SOURCE_PROOF_CONTEXT',
+  'FIXED_RUNTIME_SOURCE_PROOF_DEADLINE',
+  'FIXED_RUNTIME_SOURCE_PROOF_HEAD_CHANGED',
+  'FIXED_RUNTIME_SOURCE_PROOF_MEMBERSHIP',
+  'FIXED_RUNTIME_SOURCE_PROOF_MEMBER_MODE',
+  'FIXED_RUNTIME_SOURCE_PROOF_OBJECT',
+  'FIXED_RUNTIME_SOURCE_PROOF_OBJECT_HASH',
+  'FIXED_RUNTIME_SOURCE_PROOF_READ',
+  'FIXED_RUNTIME_SOURCE_PROOF_TREE_ALIAS',
+  'FIXED_RUNTIME_SOURCE_PROOF_TREE_BOUND',
+  'FIXED_RUNTIME_SOURCE_PROOF_TREE_HASH',
+  'FIXED_RUNTIME_SOURCE_PROOF_TREE_MODE',
+  'FIXED_RUNTIME_SOURCE_PROOF_TREE_ORDER',
+  'FIXED_RUNTIME_SOURCE_PROOF_TREE_PATH',
+  'FIXED_RUNTIME_SOURCE_PROOF_TREE_SHAPE',
+  'FIXED_RUNTIME_SOURCE_PROOF_TREE_UNUSED',
+  'FIXED_RUNTIME_SOURCE_PROOF_UTF8',
+  'FIXED_RUNTIME_SOURCE_PROOF_WIRE_BOUND',
+  'FIXED_RUNTIME_SOURCE_PROOF_WIRE_SHAPE',
+  'FIXED_RUNTIME_VERSION_DISCOVERY_BOUND',
+  'FIXED_RUNTIME_VERSION_DISCOVERY_UNPROVEN',
+  'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+  'RUNTIME_SOURCE_PROOF_BASE64',
+  'RUNTIME_SOURCE_PROOF_CLOSURE',
+  'RUNTIME_SOURCE_PROOF_COMMIT_HASH',
+  'RUNTIME_SOURCE_PROOF_COMMIT_TREE',
+  'RUNTIME_SOURCE_PROOF_LEGACY_MANIFEST',
+  'RUNTIME_SOURCE_PROOF_MEMBERSHIP',
+  'RUNTIME_SOURCE_PROOF_MEMBER_CHANGED',
+  'RUNTIME_SOURCE_PROOF_PROTECTED_CLOSURE_CHANGED',
+  'RUNTIME_SOURCE_PROOF_TREE_ALIAS',
+  'RUNTIME_SOURCE_PROOF_TREE_BOUND',
+  'RUNTIME_SOURCE_PROOF_TREE_HASH',
+  'RUNTIME_SOURCE_PROOF_TREE_MODE',
+  'RUNTIME_SOURCE_PROOF_TREE_ORDER',
+  'RUNTIME_SOURCE_PROOF_TREE_PATH',
+  'RUNTIME_SOURCE_PROOF_TREE_SHAPE',
+  'RUNTIME_SOURCE_PROOF_TREE_UNUSED',
+  'RUNTIME_SOURCE_PROOF_WIRE_BOUND',
+  'RUNTIME_SOURCE_PROOF_WIRE_SHAPE',
+]);
+const QUALIFICATION_DIAGNOSTIC_CODES = new Set(SOVEREIGN_CONTROL_SYSTEM_QUALIFICATION_DIAGNOSTIC_CODES_V1);
+
+export function sovereignControlSystemQualificationDiagnosticCodeV1(value) {
+  return typeof value === 'string' && QUALIFICATION_DIAGNOSTIC_CODES.has(value) ? value : '';
+}
+
+export const SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1 = Object.freeze([
+  'PHASE', 'OVERRIDE', 'LOAD', 'COOLDOWN', 'ACTIVE', 'FLAT_GAME', 'AIR_LINK',
+  'REAL_AIR_LINK', 'VIRTUAL_AIR_LINK', 'PREPARE_LEASE', 'LOCAL_MODEL', 'HEAVY_MODEL',
+]);
+
+// Retain the original admission sample through at most 15 seconds of diagnostic
+// return time after its existing 30-second freshness check. This grants no
+// admission, and historical reprojection compares original times, never now.
+export function projectSovereignControlSystemGovernorPermissionV1(value, nativeObservedAtUtc) {
+  try {
+    const row = record(value), observedAtUtc = utc(row.observedAtUtc), nativeTime = utc(nativeObservedAtUtc);
+    if (Object.keys(row).sort().join(',') !== 'failed,observedAtUtc' || !observedAtUtc || !nativeTime)
+      return null;
+    const age = Date.parse(nativeTime) - Date.parse(observedAtUtc);
+    const labels = row.failed, predicates = SOVEREIGN_CONTROL_SYSTEM_GOVERNOR_PERMISSION_PREDICATES_V1;
+    if (age < 0 || age > 45000 || !Array.isArray(labels) || Object.getPrototypeOf(labels) !== Array.prototype
+      || labels.length < 1 || labels.length > predicates.length || Reflect.ownKeys(labels).length !== labels.length + 1)
+      return null;
+    const descriptors = Object.getOwnPropertyDescriptors(labels), failed = [];
+    let previous = -1;
+    for (let index = 0; index < labels.length; index++) {
+      const descriptor = descriptors[index];
+      if (!descriptor || !Object.hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string') return null;
+      const position = predicates.indexOf(descriptor.value);
+      if (position <= previous) return null;
+      previous = position;
+      failed.push(descriptor.value);
+    }
+    return Object.freeze({ observedAtUtc, failed: Object.freeze(failed) });
+  } catch { return null; }
+}
+
 // Deliberately closed: an uppercase exception message is not public telemetry.
 const CODES = new Set([
   UNKNOWN,
@@ -253,7 +373,11 @@ export function projectSovereignControlSystemStatusV1(value) {
       ...(c.result.available && typeof c.row.administratorEnabled === 'boolean'
         ? { administratorEnabled: c.row.administratorEnabled } : {}) };
     const owner = { ...o.result, available: o.result.available && Boolean(o.result.observedAtUtc),
-      stable: o.result.available && Boolean(o.result.observedAtUtc) && o.row.stable === true };
+      stable: o.result.available && Boolean(o.result.observedAtUtc) && o.row.stable === true,
+      ...(Object.hasOwn(o.row, 'diagnosticCode') && o.row.available === false && o.row.stable === false
+        && o.result.reason === 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN'
+        && source.available && source.stable && source.reason === '' && source.expectedMainMatches !== false
+        ? { diagnosticCode: sovereignControlSystemOwnerDiagnosticCodeV1(o.row.diagnosticCode) } : {}) };
     const guardianValid = g.result.available && owner.available && owner.stable
       && ['enabled', 'running', 'scheduled', 'maintenanceInFlight'].every(key => typeof g.row[key] === 'boolean')
       && ['HELD', 'NOT_HELD_REPORTED', 'UNKNOWN'].includes(g.row.custodyState);
@@ -277,8 +401,20 @@ export function projectSovereignControlSystemStatusV1(value) {
       && source.available && source.stable && source.reason === '' && (!expectedMain || expectedMain === sourceHead)
       && Object.hasOwn(n.row, 'governorHoldCode')
       ? sovereignControlSystemGovernorHoldCodeV1(n.row.governorHoldCode) : '';
+    const governorPermission = governorHoldCode === 'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED'
+      && (!Object.hasOwn(n.row, 'sourceHead') || nativeHead === sourceHead)
+      && Object.hasOwn(n.row, 'governorPermission')
+      ? projectSovereignControlSystemGovernorPermissionV1(n.row.governorPermission, n.result.observedAtUtc) : null;
+    const qualificationDiagnosticCode = nativeDenial && n.row.reason === 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN'
+      && source.available && source.stable && source.reason === ''
+      && (!Object.hasOwn(s.row, 'expectedMain') || expectedMain === sourceHead)
+      && (!Object.hasOwn(n.row, 'sourceHead') || nativeHead === sourceHead)
+      && Object.hasOwn(n.row, 'qualificationDiagnosticCode')
+      ? sovereignControlSystemQualificationDiagnosticCodeV1(n.row.qualificationDiagnosticCode) : '';
     const nativeRuntime = { ...n.result, available: qualificationObserved || nativeDenial, qualificationObserved,
       ...(governorHoldCode ? { governorHoldCode } : {}),
+      ...(governorPermission ? { governorPermission } : {}),
+      ...(qualificationDiagnosticCode ? { qualificationDiagnosticCode } : {}),
       ...(nativeHead ? { sourceHead: nativeHead } : {}),
       ...(qualificationObserved ? { profiles: Object.freeze([...n.row.profiles]) } : {}),
       ...(utc(n.row.bootStartedAtUtc) && n.result.observedAtUtc

@@ -40,10 +40,10 @@ test('isolated actual parent protocol preserves zero across refusal cancellation
   assert.equal(result.cases,27);assert.equal(result.nativeExecuted,false);assert.equal(result.productionQualification,false);
 });
 
-test('actual inspector preserves only closed native denials and never qualifies failure', () => {
+test('actual inspector preserves closed denials and the same governor sample without qualifying failure', () => {
   const output=execFileSync(process.execPath,['--experimental-vm-modules',fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-inspection-diagnostics-fixture-v1.mjs',import.meta.url))],{encoding:'utf8',timeout:10000,windowsHide:true});
   const result=JSON.parse(output);
-  assert.equal(result.cases,53);assert.equal(result.nativeExecuted,false);assert.equal(result.productionQualification,false);
+  assert.equal(result.cases,59);assert.equal(result.nativeExecuted,false);assert.equal(result.productionQualification,false);
 });
 
 

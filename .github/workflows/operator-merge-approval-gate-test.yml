@@ -23,6 +23,10 @@ jobs:
         run: |
           set -o pipefail
           npm run stephanos:operator-merge-approval:test 2>&1 | tee operator-merge-test.log
+      - name: Prove signed specialist intake and closed source authority
+        run: |
+          set -o pipefail
+          node --test shared/agents/sovereignQualifiedSpecialistReviewV1.test.mjs shared/agents/sovereignQualifiedSpecialistSourceV1.test.mjs shared/agents/sovereignSpecialistAuthorityClosureV1.test.mjs shared/agents/sovereignAuthenticatedReviewDiffV1.test.mjs 2>&1 | tee -a operator-merge-test.log
       - name: Prove bounded native ready lifecycle and mailbox provenance source
         run: |
           node --input-type=module <<'NODE'

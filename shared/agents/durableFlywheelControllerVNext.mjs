@@ -204,13 +204,17 @@ function missionSpecificCapacityRouting(
   if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) {
     return capacityRouting;
   }
+  // Even when enumeration finds no candidate, action composition must use the
+  // controller's current source identity, never a stale capacity snapshot head.
+  const routedSourceHead = sha(sourceRevision);
+  const currentCapacityRouting = freeze({ ...capacityRouting, sourceHead: routedSourceHead });
   const candidates = resolveCapacityCandidates(
     mission,
-    capacityRouting,
+    currentCapacityRouting,
     sourceRevision,
     nowUtc,
   );
-  if (!Array.isArray(candidates) || candidates.length === 0) return capacityRouting;
+  if (!Array.isArray(candidates) || candidates.length === 0) return currentCapacityRouting;
 
   let nativeRoutingCandidate = capacityRouting.nativeRoutingCandidate ?? null;
   let forgeLaneReceipt = capacityRouting.forgeLaneReceipt ?? null;
@@ -243,16 +247,13 @@ function missionSpecificCapacityRouting(
     }
   }
 
-  const routedSourceHead = sha(sourceRevision) || sha(capacityRouting.sourceHead);
   if (
     nativeRoutingCandidate === (capacityRouting.nativeRoutingCandidate ?? null)
     && forgeLaneReceipt === (capacityRouting.forgeLaneReceipt ?? null)
-    && (!routedSourceHead || routedSourceHead === sha(capacityRouting.sourceHead))
-  ) return capacityRouting;
+  ) return currentCapacityRouting;
 
   return freeze({
-    ...capacityRouting,
-    ...(routedSourceHead ? { sourceHead: routedSourceHead } : {}),
+    ...currentCapacityRouting,
     ...(nativeRoutingCandidate ? { nativeRoutingCandidate } : {}),
     ...(forgeLaneReceipt ? { forgeLaneReceipt } : {}),
   });
