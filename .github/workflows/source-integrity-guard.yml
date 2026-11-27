@@ -1,0 +1,38 @@
+name: Source Integrity Guard
+
+# This pull_request workflow is an untrusted, informational syntax smoke.
+# It never runs or registers the protected-base attestation job.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-integrity-guard-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-integrity:
+    name: PR-controlled source syntax smoke (not independent review)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact pull request head for untrusted smoke
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prove changed JavaScript syntax (informational PR-controlled check)
+        run: node .github/scripts/changed-source-integrity-guard.mjs
+
+      - name: Guard regression (informational PR-controlled tests)
+        run: node --test scripts/changed-source-integrity-guard.test.mjs

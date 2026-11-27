@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+// Exercise the original recovery guardian's bounded authority-read broker in current CI.
+import './recovery-mesh-guardian-github-observation.test.mjs';
 
 import {
   CHATGPT_SHARED_WORKSPACE_OWNER,

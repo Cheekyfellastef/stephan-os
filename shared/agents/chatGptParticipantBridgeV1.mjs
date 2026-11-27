@@ -183,7 +183,10 @@ function isExactSharedConversationTurnDeliveryPayload(value) {
   if (!isPlainDataObject(value)) return false;
   try {
     const keys = Object.keys(value).sort();
-    if (JSON.stringify(keys) !== JSON.stringify(['transportAttestation', 'turnRecord'])) return false;
+    const legacy = JSON.stringify(keys) === JSON.stringify(['transportAttestation', 'turnRecord']);
+    const addressed = JSON.stringify(keys) === JSON.stringify(['requestedEntityId', 'transportAttestation', 'turnRecord']);
+    if (!legacy && !addressed) return false;
+    if (addressed && value.requestedEntityId !== 'openclaw') return false;
     const record = value.turnRecord;
     const attestation = value.transportAttestation;
     if (!isPlainDataObject(record) || !isPlainDataObject(attestation)) return false;
@@ -192,6 +195,7 @@ function isExactSharedConversationTurnDeliveryPayload(value) {
 
     const participantId = text(record.participantId);
     if (!['operator', CHATGPT_BRIDGE_PARTICIPANT_ID].includes(participantId)) return false;
+    if (addressed && participantId !== CHATGPT_BRIDGE_PARTICIPANT_ID) return false;
     if (record.kind !== SHARED_WORKSPACE_RECORD_KINDS.MESSAGE) return false;
     if (text(record.channel) !== SHARED_CONVERSATION_CHANNEL) return false;
     if (text(record.recordSubtype) !== SHARED_CONVERSATION_SUBTYPE) return false;
