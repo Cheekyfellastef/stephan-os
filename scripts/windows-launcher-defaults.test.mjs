@@ -10,6 +10,84 @@ const WINDOWS_LAUNCHER_PS1 = new URL('../windows/Launch-Stephanos-Local.ps1', im
 const WINDOWS_LAUNCHER_CMD = new URL('../windows/Launch-Stephanos-Local.cmd', import.meta.url);
 const WINDOWS_IGNITE_APPROVAL_PS1 = new URL('../windows/Invoke-Stephanos-Ignite-With-Approval.ps1', import.meta.url);
 
+
+function launcherFunctionBlock(script, name) {
+  const declaration = 'function ' + name + '(';
+  const start = script.indexOf(declaration);
+  assert.ok(start >= 0, 'missing ' + name + ' function');
+  const end = script.indexOf('\nfunction ', start + declaration.length);
+  assert.ok(end > start, 'unterminated top-level ' + name + ' function');
+  return script.slice(start, end);
+}
+
+function balancedOrderedBlock(source, openAt) {
+  let depth = 0;
+  let quote = '';
+  for (let i = openAt; i < source.length; i += 1) {
+    const ch = source[i];
+    if (quote) {
+      if (ch === quote) {
+        if (source[i + 1] === quote) { i += 1; continue; }
+        quote = '';
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if (ch === '{') depth += 1;
+    if (ch === '}' && --depth === 0) return source.slice(openAt + 1, i);
+  }
+  assert.fail('unterminated PowerShell hashtable');
+}
+
+function parseOrderedPowerShellFields(source, assignment = null) {
+  const prefix = assignment ? assignment + ' = [ordered]@{' : '[ordered]@{';
+  const start = source.indexOf(prefix);
+  assert.ok(start >= 0, 'missing ordered hashtable ' + (assignment || 'inline'));
+  const openAt = source.indexOf('{', start);
+  const body = balancedOrderedBlock(source, openAt);
+  const fields = {};
+  let i = 0;
+  while (i < body.length) {
+    while (i < body.length && /[\s;]/.test(body[i])) i += 1;
+    const key = /^[A-Za-z][A-Za-z0-9_]*/.exec(body.slice(i))?.[0];
+    if (!key) break;
+    i += key.length;
+    while (i < body.length && /\s/.test(body[i])) i += 1;
+    assert.equal(body[i], '=', 'missing value assignment for ' + key);
+    i += 1;
+    const begin = i;
+    let braces = 0;
+    let parens = 0;
+    let quote = '';
+    while (i < body.length) {
+      const ch = body[i];
+      if (quote) {
+        if (ch === quote) quote = '';
+      } else if (ch === "'" || ch === '"') {
+        quote = ch;
+      } else if (ch === '{') {
+        braces += 1;
+      } else if (ch === '}') {
+        braces -= 1;
+      } else if (ch === '(') {
+        parens += 1;
+      } else if (ch === ')') {
+        parens -= 1;
+      } else if (ch === ';' && braces === 0 && parens === 0) {
+        break;
+      } else if (ch === '\n' && braces === 0 && parens === 0 &&
+        /^\s*[A-Za-z][A-Za-z0-9_]*\s*=/.test(body.slice(i + 1))) {
+        break;
+      }
+      i += 1;
+    }
+    assert.equal(Object.hasOwn(fields, key), false, 'duplicate PowerShell field ' + key);
+    fields[key] = body.slice(begin, i).trim();
+    if (body[i] === ';') i += 1;
+  }
+  return fields;
+}
+
 test('launcher-root mode enables browser auto-open by default', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(
@@ -215,15 +293,40 @@ test('launcher-root splash uses detailed ignition stage model', async () => {
 
 test('ignition status preserves destination paths, blocker actions, and non-primary PowerShell wall truth', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
-  assert.match(script, /destinations = \[ordered\]@\{ statusPath = \$ignitionStatusPath; splashPath = \$ignitionSplashPath; logRoot = \(Join-Path \$ignitionProofRoot 'logs'\); transcriptPath = \$ignitionTranscriptPath; supportSnapshotPath = \$ignitionSupportSnapshotPath \}/m, 'status payload must record status, splash, and log destinations');
-  assert.match(script, /aria-label="Blocker and operator action"/m, 'splash must reserve browser-visible blocker/operator-action space');
-  assert.match(script, /currentStage = 'blocked'/m, 'blocked status must preserve blocked currentStage');
-  assert.match(script, /nextOperatorAction = if \(\$Extra\.ContainsKey\('nextOperatorAction'\)\)/m, 'blocked status must preserve adjudicated operator action');
-  assert.match(script, /blocker = if \(\$Extra\.ContainsKey\('blocker'\)\)/m, 'blocked status must preserve adjudicated blocker');
-  assert.match(script, /primaryUi = 'splash-status-browser'/m, 'splash/status browser must remain primary UI');
-  assert.match(script, /\$visiblePowerShellRequired = \$false/m, 'VISIBLE_POWERSHELL_REQUIRED=False must remain encoded');
+  const projection = launcherFunctionBlock(script, 'Resolve-IgnitionStatusProjection');
+  const payload = parseOrderedPowerShellFields(projection, '$payload');
+  const destinations = parseOrderedPowerShellFields(payload.destinations);
+  assert.deepEqual(destinations, {
+    statusPath: '$ignitionStatusPath',
+    splashPath: '$ignitionSplashPath',
+    logRoot: "(Join-Path $ignitionProofRoot 'logs')",
+    transcriptPath: '$ignitionTranscriptPath',
+    supportSnapshotPath: '$ignitionSupportSnapshotPath',
+  }, 'status, splash, log, transcript and support destinations must be bound by name');
+  assert.equal(payload.currentStage, '$currentStage');
+  assert.equal(payload.primaryUi, "'splash-status-browser'");
+  assert.equal(payload.visiblePowerShellRequired, '$visiblePowerShellRequired');
+  assert.match(payload.nextOperatorAction, /\$Extra\.ContainsKey\('nextOperatorAction'\)/);
+  assert.match(payload.blocker, /\$Extra\.ContainsKey\('blocker'\)/);
+  const publish = launcherFunctionBlock(script, 'Publish-IgnitionStatusProjection');
+  assert.match(publish, /Write-IgnitionJson\s+-Path\s+\$ignitionStatusPath\s+-Value\s+\$Outcome/);
+  const wrapper = launcherFunctionBlock(script, 'Write-IgnitionStatus');
+  assert.match(wrapper, /Get-IgnitionStatusProjection\s+-Phase\s+\$Phase/);
+  const fail = launcherFunctionBlock(script, 'Fail-Step');
+  assert.match(fail, /Get-IgnitionStatusProjection\s+-Phase\s+'blocked'/);
+  assert.match(fail, /currentStage\s*=\s*'blocked'/);
+  assert.match(fail, /nextOperatorAction\s*=\s*\$nextAction/);
+  assert.match(fail, /blocker\s*=\s*\$blocker/);
+  assert.match(script, /aria-label="Blocker and operator action"/);
+  assert.match(script, /\$visiblePowerShellRequired\s*=\s*\$false/);
 });
 
+test('ordered ignition proof assertions tolerate formatting and field order but not field identity drift', () => {
+  const a = parseOrderedPowerShellFields("[ordered]@{ a = $x; b = 'ok' }");
+  const b = parseOrderedPowerShellFields("[ordered]@{\n b='ok'\n a=$x\n}");
+  assert.deepEqual(a, b);
+  assert.notDeepEqual(a, parseOrderedPowerShellFields("[ordered]@{a=$wrong; b='ok'}"));
+});
 
 test('professional ignition emits support snapshot and proof transcript with exact-head gate', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
