@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   resolveRecoveryGuardianGithubObservation,
@@ -91,4 +92,17 @@ test('guardian rejects stale compare evidence even for immutable exact-SHA compa
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'GUARDIAN_GITHUB_AUTHORITY_SOURCE_NOT_FRESH');
+});
+
+
+test('guardian keeps brokered observation separate from fresh task-repair authority', () => {
+  const source = readFileSync(new URL('./windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1', import.meta.url), 'utf8');
+  assert.match(source, /function Confirm-FreshRepairAuthority \{[\s\S]*?& \$githubCli api 'repos\/Cheekyfellastef\/stephan-os\/branches\/main' --jq '\.commit\.sha'[\s\S]*?FRESH_REPAIR_MAIN_AUTHORITY_UNPROVEN/);
+  assert.match(source, /\$liveMain -ne \$remoteMainHead/);
+  assert.match(source, /& \$githubCli api \$liveComparePath[\s\S]*?FRESH_REPAIR_ANCESTOR_UNPROVEN/);
+  assert.match(source, /if \(-not \$mailboxHealthy\) \{\s*#[^\n]*\n\s*if \(\$mailboxRepairEligible\) \{\s*Confirm-FreshRepairAuthority/);
+  assert.match(source, /\$mailboxRepairEligible = \[bool\]\(\(-not \$mailboxHealthy\) -and \(\(-not \$mailboxActiveCanonical\) -or \$mailboxStaleRunningObserved -or \$mailboxGenerationObsoleteObserved\)\)/);
+  assert.match(source, /if \(\$sourceRelation -eq 'EXACT'\) \{\s*if \(-not \$recoveryHealth\.healthy\) \{\s*Confirm-FreshRepairAuthority/);
+  assert.match(source, /'shared\/agents\/githubObservationBrokerV1\.mjs'/);
+  assert.equal((source.match(/^\s*Confirm-FreshRepairAuthority\s*$/gm)||[]).length, 2);
 });
