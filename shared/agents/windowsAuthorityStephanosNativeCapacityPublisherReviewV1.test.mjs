@@ -12,10 +12,10 @@ const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SOURCE_HEAD = 'a'.repeat(40);
 const PATH = WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1[0];
 const FIXTURE_URL = new URL('./fixtures/stephanosNativeCapacityPublisherInstallerV1.fixture.txt', import.meta.url);
-const FIXTURE = readFileSync(FIXTURE_URL, 'utf8');
+const FIXTURE = readFileSync(FIXTURE_URL, 'utf8').replace(/\r\n/g, '\n');
 const EXPECTED_BLOB = '65253e069c91414bfe24cec8fc0db6ad14d9371c';
 const REPAIRED_BLOB = '8d3c7a8c528a62011967b986e3d87b8675810b5a';
-const REPAIRED_FIXTURE = readFileSync(new URL('./fixtures/stephanosNativeCapacityPublisherBootstrapRepairV1.fixture.txt', import.meta.url), 'utf8');
+const REPAIRED_FIXTURE = readFileSync(new URL('./fixtures/stephanosNativeCapacityPublisherBootstrapRepairV1.fixture.txt', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 function gitBlobSha(content) {
   const bytes = Buffer.from(content, 'utf8');

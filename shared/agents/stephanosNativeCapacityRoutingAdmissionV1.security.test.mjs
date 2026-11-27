@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -124,6 +124,7 @@ test('admits the canonical protected-key identity and derived authority identity
   const result = await admit();
   assert.equal(result.ok, true, result.reason);
   assert.equal(result.candidate.authorityReceiptIds.length, 1);
+  assert.equal(result.candidate.capacityObservedAtUtc, '2026-08-10T11:59:00.000Z');
   assert.match(result.candidate.authorityReceiptIds[0], /^native-authority-[0-9a-f]{24}$/);
 });
 
@@ -147,4 +148,84 @@ test('rejects a substituted authority ID that is not derived from the signed rec
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'STEPHANOS_NATIVE_SOURCE_AUTHORITY_INVALID:authority-id-binding-mismatch');
+});
+
+test('missing, malformed or untrusted publisher status cannot admit native capacity', async () => {
+  for (const scenario of ['missing-status', 'invalid-json', 'missing-key']) {
+    const options = await fixture();
+    const statusPath = join(options.root, 'status', 'stephanos-native-capacity-current.json');
+    if (scenario === 'missing-status') await unlink(statusPath);
+    if (scenario === 'invalid-json') await writeFile(statusPath, '{ invalid json', 'utf8');
+    if (scenario === 'missing-key') {
+      await unlink(join(options.env.STEPHANOS_MISSION_RUNNER_ROOT, 'keys',
+        'stephanos-native-capacity-public.pem'));
+    }
+    const result = await readVerifiedStephanosNativeRoutingCandidate({
+      ...options, repository: REPOSITORY, sourceHead: SOURCE_HEAD,
+      taskClass: 'FOCUSED_REPAIR', nowUtc: NOW,
+    });
+    assert.equal(result.ok, false, scenario);
+    assert.equal(result.reason, scenario === 'invalid-json'
+      ? 'STEPHANOS_NATIVE_ROUTING_TRUTH_READ_FAILED'
+      : 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', scenario);
+    assert.equal(result.truthInput, scenario === 'missing-key' ? 'PUBLIC_KEY' : 'STATUS', scenario);
+    assert.equal(result.candidate, null, scenario);
+    assert.equal(result.mergeAuthority, false, scenario);
+    assert.equal(result.leaseSeizureAllowed, false, scenario);
+  }
+});
+
+test('native publisher diagnostic-only slot identifies its phase but grants no signed capacity', async () => {
+  for (const phase of ['CHECKING', 'BLOCKED', 'STOPPED']) {
+    const result = await admit((status) => {
+      delete status.capacityReceipt;
+      delete status.sourceAuthority;
+      delete status.publisherAttestation;
+      status.status = phase;
+      status.sourceMutationAllowed = false;
+      status.diagnostic = {
+        schemaVersion: 'stephanos.native-capacity-observation.v1',
+        phase,
+        reason: 'native-capacity-source-dirty',
+        sourceHead: SOURCE_HEAD,
+        expiresAtUtc: '2026-08-10T12:03:00.000Z',
+        qualificationProven: false,
+      };
+      return status;
+    });
+    assert.equal(result.ok, false, phase);
+    assert.equal(result.reason, 'STEPHANOS_NATIVE_PUBLISHER_DIAGNOSTIC_ONLY', phase);
+    assert.equal(result.publisherPhase, phase);
+    assert.equal(result.publisherReason, 'native-capacity-source-dirty');
+    assert.equal(result.candidate, null);
+    assert.equal(result.mergeAuthority, false);
+    assert.equal(result.leaseSeizureAllowed, false);
+  }
+});
+
+test('forged diagnostic wrapping a malformed receipt cannot suppress signed validator', async () => {
+  for (const variation of ['receipt-present', 'wrong-schema', 'qualification-true', 'unsafe-flag']) {
+    const result = await admit((status) => {
+      delete status.capacityReceipt;
+      delete status.sourceAuthority;
+      delete status.publisherAttestation;
+      status.status = 'BLOCKED';
+      status.sourceMutationAllowed = false;
+      status.diagnostic = {
+        schemaVersion: 'stephanos.native-capacity-observation.v1',
+        phase: 'BLOCKED', reason: 'native-capacity-source-dirty',
+        qualificationProven: false,
+      };
+      if (variation === 'receipt-present') status.capacityReceipt = {};
+      if (variation === 'wrong-schema') status.diagnostic.schemaVersion = 'untrusted';
+      if (variation === 'qualification-true') status.diagnostic.qualificationProven = true;
+      if (variation === 'unsafe-flag') status.mergeAuthority = true;
+      return status;
+    });
+    assert.equal(result.ok, false, variation);
+    assert.equal(result.reason, 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:receipt-shape-invalid', variation);
+    assert.equal(result.candidate, null, variation);
+    assert.equal(result.mergeAuthority, false, variation);
+    assert.equal(result.leaseSeizureAllowed, false, variation);
+  }
 });

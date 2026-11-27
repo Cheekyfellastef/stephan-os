@@ -2,7 +2,10 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
-import { readVerifiedStephanosNativeRoutingCandidate } from './stephanosNativeCapacityRoutingAdmissionV1.mjs';
+import {
+  readVerifiedStephanosNativeRoutingCandidate,
+  readVerifiedStephanosNativeStalePublisherHeadV1,
+} from './stephanosNativeCapacityRoutingAdmissionV1.mjs';
 
 export const STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION = 'INSTALL_STEPHANOS_NATIVE_CAPACITY_PUBLISHER';
 
@@ -86,27 +89,40 @@ function run(spawnSyncFn, executable, args, options = {}) {
   });
 }
 
-function lastJsonObject(stdout = '') {
-  const lines = String(stdout).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    try {
-      const parsed = JSON.parse(lines[index]);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-    } catch {}
+// The fixed installer and one-task reconciler emit a single compact receipt.
+// Never search backwards for plausible JSON: a trailing message or a second
+// object makes the result ambiguous and cannot prove installation or restart.
+export function parseNativePublisherInstallerReceiptV1(stdout = '') {
+  if (typeof stdout !== 'string' || Buffer.byteLength(stdout, 'utf8') > 32 * 1024) return null;
+  const raw = stdout.trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export async function proveNativePublisherSignedReadbackV1({
-  expectedHead = '', repositoryRoot = '', env = process.env,
+  expectedHead = '', repositoryRoot = '', env = process.env, notBeforeUtc = '',
   verify = readVerifiedStephanosNativeRoutingCandidate,
+  verifyStale = readVerifiedStephanosNativeStalePublisherHeadV1,
   sleep = (ms) => new Promise(resolveWait => setTimeout(resolveWait, ms)),
   now = () => new Date(),
 } = {}) {
-  // Task registration and StartNow do not prove a fresh signed capacity record.
+  // StartNow is not execution proof. Require post-request publication of
+  // independently verified signed current-head capacity.
+  const notBeforeMs = Date.parse(notBeforeUtc);
+  if (!Number.isFinite(notBeforeMs)) {
+    return Object.freeze({ ok: false, attempt: 0, sourceHead: expectedHead,
+      reason: 'STEPHANOS_NATIVE_PUBLISHER_POST_START_BOUNDARY_MISSING',
+      finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_HELD' });
+  }
+  let sawAuthenticatedStaleHead = false;
   let lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_STATUS_NOT_YET_PROVEN';
-  // Local model cold starts are bounded by a 120s qualification timeout.
-  // Poll for up to 150s so a healthy first 27B load is not falsely rejected.
+  let lastTruthInput = '';
   for (let attempt = 1; attempt <= 16; attempt += 1) {
     try {
       const v = await verify({
@@ -123,21 +139,63 @@ export async function proveNativePublisherSignedReadbackV1({
         && c?.taskClass === 'FOCUSED_REPAIR'
         && c?.sourceMutationAllowed === true
         && c?.mergeAuthority === false && c?.leaseSeizureAllowed === false) {
-        return Object.freeze({
-          ok: true, attempt, sourceHead: expectedHead,
-          finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_CAPACITY_LIVE_PROVEN',
-        });
+        const observedAtMs = Date.parse(c?.capacityObservedAtUtc || '');
+        if (Number.isFinite(observedAtMs) && observedAtMs >= notBeforeMs) {
+          return Object.freeze({
+            ok: true, attempt, sourceHead: expectedHead,
+            capacityObservedAtUtc: c.capacityObservedAtUtc,
+            finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_CAPACITY_LIVE_PROVEN',
+          });
+        }
+        lastReason = 'STEPHANOS_NATIVE_PUBLISHER_POST_START_SIGNED_RECEIPT_UNPROVEN';
+        lastTruthInput = '';
+      } else {
+        const reason = text(v?.reason);
+        lastReason = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,119}$/.test(reason)
+          ? reason : 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_TRUST_NOT_PROVEN';
+        lastTruthInput = (lastReason === 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
+          || lastReason === 'STEPHANOS_NATIVE_ROUTING_TRUTH_READ_FAILED')
+          && (v?.truthInput === 'STATUS' || v?.truthInput === 'PUBLIC_KEY')
+          ? v.truthInput : '';
+        // A source-head-invalid error does not verify the Ed25519 signature.
+        // Require separate signed old-head proof observed after StartNow.
+        try {
+          const stale = await verifyStale({
+            nowUtc: now().toISOString(),
+            repository: 'Cheekyfellastef/stephan-os',
+            sourceHead: expectedHead,
+            taskClass: 'FOCUSED_REPAIR',
+            root: resolve(env.USERPROFILE, 'Documents', 'Stephanos-openclaw-workspace'),
+            repoRoot: repositoryRoot, env,
+          });
+          const observedAtMs = Date.parse(stale?.capacityObservedAtUtc || '');
+          if (stale?.ok === true && stale?.verifiedSignedReceipt === true
+            && stale?.expectedHead === expectedHead
+            && stale?.repository === 'Cheekyfellastef/stephan-os'
+            && /^[0-9a-f]{40}$/.test(stale?.signedStaleHead || '')
+            && stale.signedStaleHead !== expectedHead
+            && Number.isFinite(observedAtMs) && observedAtMs >= notBeforeMs) {
+            sawAuthenticatedStaleHead = true;
+          }
+        } catch {
+          // No stale proof: no task-stop authority.
+        }
       }
-      const reason = text(v?.reason);
-      lastReason = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,119}$/.test(reason)
-        ? reason : 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_TRUST_NOT_PROVEN';
     } catch {
       lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_UNAVAILABLE';
+      lastTruthInput = '';
     }
     if (attempt < 16) await sleep(10_000);
   }
+  // The stale writer may clear its own status before the final sample. Only
+  // preserve a witnessed stale head across MISSING, never a new trust error.
+  const reason = sawAuthenticatedStaleHead && (
+    lastReason === 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
+    || lastReason === 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:source-head-invalid'
+  ) ? 'STEPHANOS_NATIVE_PUBLISHER_AUTHENTICATED_STALE_SOURCE_HEAD' : lastReason;
   return Object.freeze({
-    ok: false, attempt: 16, sourceHead: expectedHead, reason: lastReason,
+    ok: false, attempt: 16, sourceHead: expectedHead, reason,
+    truthInput: reason === lastReason ? lastTruthInput : '',
     finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_HELD',
   });
 }
@@ -184,12 +242,13 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     '-StartNow',
   ]);
   if (!install.ok) {
+    // A PowerShell diagnostic may contain private Windows paths, identities or
+    // command arguments. Only the exit status is eligible for public mailbox proof.
     return fail('STEPHANOS_NATIVE_PUBLISHER_INSTALL_FAILED', {
       status: install.status,
-      stderr: text(install.stderr).slice(0, 500),
     });
   }
-  const receipt = lastJsonObject(install.stdout);
+  const receipt = parseNativePublisherInstallerReceiptV1(install.stdout);
   if (
     !receipt
     || receipt.finalVerdict !== 'STEPHANOS_NATIVE_CAPACITY_PUBLISHER_TASK_INSTALLED'
@@ -202,17 +261,68 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     return fail('STEPHANOS_NATIVE_PUBLISHER_INSTALL_RECEIPT_INVALID');
   }
 
-  const signed = await proveNativePublisherSignedReadbackV1({
+  // StartNow is requested within the fixed installer. An observation from
+  // the interval before its completion cannot certify new publisher work.
+  // Only post-completion, independently signed current-head capacity qualifies.
+  const installCompletedAtUtc = (options.now || (() => new Date()))().toISOString();
+  let signed = await proveNativePublisherSignedReadbackV1({
     expectedHead: shape.expectedHead, repositoryRoot, env,
+    notBeforeUtc: installCompletedAtUtc,
     verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
+    verifyStale: options.verifyStaleFn || readVerifiedStephanosNativeStalePublisherHeadV1,
     sleep: options.sleepFn,
     now: options.now || (() => new Date()),
   });
+  let recoveryReceipt = null;
+  // The fixed task's IgnoreNew policy can leave a pre-upgrade publisher
+  // running after a successful installer StartNow. Repair ONLY a typed signed
+  // SOURCE-HEAD-INVALID verdict, after canonical main/dirt and installer
+  // identity were already proved; never try a generic process kill.
+  if (!signed.ok
+    && signed.reason === 'STEPHANOS_NATIVE_PUBLISHER_AUTHENTICATED_STALE_SOURCE_HEAD') {
+    const recovery = run(spawnSyncFn, POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', resolve(repositoryRoot, 'scripts', 'windows',
+        'reconcile-stephanos-native-capacity-publisher-stale.ps1'),
+      '-ExpectedHead', shape.expectedHead,
+      '-RequestId', text(command.requestId),
+    ]);
+    recoveryReceipt = parseNativePublisherInstallerReceiptV1(recovery.stdout);
+    if (!recovery.ok
+      || recoveryReceipt?.finalVerdict !== 'NATIVE_PUBLISHER_FIXED_TASK_RESTART_REQUESTED'
+      || recoveryReceipt.expectedHead !== shape.expectedHead
+      || recoveryReceipt.taskName !== 'Stephanos Native Capacity Publisher'
+      || recoveryReceipt.signedCapacityVerified !== false
+      || recoveryReceipt.leaseReleaseAllowed !== false
+      || recoveryReceipt.sourceMutationAllowed !== false
+      || recoveryReceipt.mergeAuthority !== false) {
+      return fail('STEPHANOS_NATIVE_PUBLISHER_BOUNDED_RESTART_BLOCKED', {
+        signedCapacityProven: false, previousSignedReason: signed.reason,
+        taskName: 'Stephanos Native Capacity Publisher',
+        noOtherTaskTouched: true,
+        mergeAuthority: false, leaseSeizureAllowed: false,
+      });
+    }
+    // An installation-era signed receipt cannot certify the recovery restart.
+    // Require a new signed observation after the fixed-task reconciliation ends.
+    const recoveryCompletedAtUtc = (options.now || (() => new Date()))().toISOString();
+    signed = await proveNativePublisherSignedReadbackV1({
+      expectedHead: shape.expectedHead, repositoryRoot, env,
+      notBeforeUtc: recoveryCompletedAtUtc,
+      verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
+    verifyStale: options.verifyStaleFn || readVerifiedStephanosNativeStalePublisherHeadV1,
+      sleep: options.sleepFn,
+      now: options.now || (() => new Date()),
+    });
+  }
   if (!signed.ok) {
     return fail('STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_NOT_PROVEN', {
       operation: STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
       sourceHead: shape.expectedHead, taskInstalled: true, startRequested: true,
       signedCapacityProven: false, signedReadbackReason: signed.reason,
+      signedReadbackTruthInput: signed.truthInput === 'STATUS'
+        || signed.truthInput === 'PUBLIC_KEY' ? signed.truthInput : '',
+      boundedRestartAttempted: recoveryReceipt !== null,
       mergeAuthority: false, leaseSeizureAllowed: false,
     });
   }
@@ -225,6 +335,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     taskInstalled: true,
     signedCapacityProven: true,
     signedReadbackAttempt: signed.attempt,
+    boundedRestartAttempted: recoveryReceipt !== null,
     sourceHead: shape.expectedHead,
     expectedHead: shape.expectedHead,
     expectedHeadMatch: true,
