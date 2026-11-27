@@ -70,9 +70,11 @@ import { MAILBOX_ROTATION_OPERATION, MAILBOX_ROTATION_REQUEST_ID, auditMailboxRo
   parseMailboxRotationComment, mailboxRotationCommandAllowed, projectMailboxRotation,
   validateMailboxRotationRecord, projectMailboxRotationReceipt } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
+import { inspectHistoricalMailboxTerminal, projectHistoricalTerminalAttestation,
+  HISTORICAL_TERMINAL_ATTESTATION_VERDICT } from '../shared/agents/mailboxHistoricalTerminalAttestationV1.mjs';
 import { executeMailboxRotationOnHost, readMailboxAuthorityLiteral, verifyMailboxRotationActivationPull } from './canonical-mailbox-rotation-host-v1.mjs';
 import { buildMailboxRotationFence, findMailboxRotationFence } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
-import { inventoryMailboxRotationExecution } from './canonical-mailbox-action-evidence-v2.mjs';
+import { inventoryMailboxRotationExecution, collectMailboxActionProofsNative } from './canonical-mailbox-action-evidence-v2.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
 import {
@@ -2672,6 +2674,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       ...coreDaemonStatusReadbackProjection(receipt, operationResult),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
+      ...projectHistoricalTerminalAttestation(operationResult, receipt),
       ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
@@ -3034,6 +3037,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         ok: inner?.ok !== false,
         ...projectMaintenanceRecoveryReceiptV1(inner?.maintenanceRecovery, compactReceipt.operation),
         ...projectMailboxRotationReceipt(inner, compactReceipt.operation),
+        ...projectHistoricalTerminalAttestation(inner, compactReceipt),
         ...projectFrontendVisibilityReceiptV1(inner?.frontendVisibility, compactReceipt.operation,
           { expectedHead: compactReceipt.expectedHead, expectedDistFingerprint: inner?.expectedDistFingerprint }),
         blocker: inner?.blocker || '',
@@ -3207,6 +3211,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
       ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
+      ...projectHistoricalTerminalAttestation(operationResult, receipt),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
@@ -3612,6 +3617,7 @@ function publishRotationFence(record, proof) {
 
 function readRotationActions(record) {
   return inventoryMailboxRotationExecution({activationHead:record?.cutoverHead,
+    collectProofs:collectMailboxActionProofsNative,
     read:path=>ghJson(['api',`repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/${path}`])});
 }
 
@@ -3643,6 +3649,35 @@ export function prepareMailboxRotationPoll(state, comments, { readComments = loa
     filtered.push(comment);
   }
   return { comments: filtered, consumedRequestIds: consumed, deferredRequestIds };
+}
+
+// A matching, owner-authenticated CANCEL can unwind an existing DRAINING
+// fence without the expensive full-history/Actions read needed for FROZEN.
+// This is a selection shortcut only: ordinary native validation, ledger,
+// preflight, receipt and global-fence readback are never bypassed.
+export function prepareBoundedMailboxRotationCancelPoll(state, comments, { ledger = executionLedger } = {}) {
+  const record = state?.mailboxRotation;
+  if (!record || !['DRAINING', 'FROZEN'].includes(record.phase)) return null;
+  validateMailboxRotationRecord(record);
+  if (!Array.isArray(comments) || comments.length > 300) throw new Error('MAILBOX_ROTATION_CANCEL_WINDOW_INVALID');
+  const consumed = new Set([...(state.consumedRequestIds || []), ...(state.acceptedRequestIds || [])]);
+  const candidates = [];
+  for (const comment of comments) {
+    const parsed = parseMailboxRotationComment(comment, CANONICAL_MAILBOX_ISSUE);
+    if (parsed?.type !== 'command'
+      || parsed.value.operation !== MAILBOX_ROTATION_OPERATION
+      || parsed.value.rotationAction !== 'CANCEL'
+      || parsed.value.transitionId !== record.transitionId
+      || parsed.commentId <= record.barrierCommentId) continue;
+    if (ledger.has(parsed.value.requestId)) consumed.add(parsed.value.requestId);
+    if (!consumed.has(parsed.value.requestId)) candidates.push(comment);
+  }
+  return candidates.length ? Object.freeze({
+    comments: candidates,
+    consumedRequestIds: consumed,
+    deferredRequestIds: [],
+    boundedCancelOnly: true,
+  }) : null;
 }
 
 function postReceipt(receipt) {
@@ -4449,6 +4484,10 @@ export async function cancelMissionOrchestratorMission(command = {}, {
 export async function readMailboxReceipt(command = {}, {
   readSourceIdentity = readCanonicalSourceIdentity,
   receiptRoot = canonicalReceiptRoot,
+  readExecutionLedger = requestId => executionLedger.read(requestId),
+  processSourceHead = MAILBOX_PROCESS_SOURCE_HEAD,
+  readCommentId = 0,
+  now = () => new Date(),
 } = {}) {
   const identity = await readSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -4484,7 +4523,17 @@ export async function readMailboxReceipt(command = {}, {
       return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_JSON_INVALID', targetRequestId };
     }
     if (String(receipt?.requestId || '') !== targetRequestId) {
-      return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
+      const historical = inspectHistoricalMailboxTerminal({
+        command, identity, processSourceHead, readCommentId, unidentifiedReceipt: receipt,
+        readLedger: readExecutionLedger, now,
+      });
+      const historicalTerminalAttestation = historical.attestation;
+      if (historicalTerminalAttestation) return {
+        ...identity, ok: true, finalVerdict: HISTORICAL_TERMINAL_ATTESTATION_VERDICT,
+        historicalTerminalAttestation,
+        arbitraryFilesystemAccess: false, commandExecutionAccess: false, sourceMutationAccess: false,
+      };
+      return { ...identity, ok: false, blocker: historical.blocker || 'MAILBOX_RECEIPT_ID_MISMATCH', targetRequestId };
     }
     return {
       ...identity,
@@ -4541,7 +4590,7 @@ async function executeSelectedMailboxCommand(selected, receiptRef, state) {
     readSharedWorkspaceStatus,
     readCriticalBacklogStatus,
     readProgrammeAuthorityStatus,
-    readMailboxReceipt,
+    readMailboxReceipt: command => readMailboxReceipt(command, { readCommentId: selected.commentId }),
     cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
     startRemoteCommander,
@@ -4612,14 +4661,24 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     publish: publicationBudget.publish,
   });
   bootstrapMailboxExecutionHistory(state);
-  const comments = state.mailboxRotation && !['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)
-    ? loadCompleteMailboxComments(CANONICAL_MAILBOX_ISSUE) : loadBoundedMailboxComments();
+  const rotationActive = state.mailboxRotation && !['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase);
+  // A source-bound CANCEL must remain executable even if Actions inventory
+  // collection is slow or unavailable. The bounded window cannot certify drain.
+  const boundedComments = loadBoundedMailboxComments();
+  const cancellation = rotationActive
+    ? prepareBoundedMailboxRotationCancelPoll(state, boundedComments) : null;
+  const comments = cancellation ? cancellation.comments
+    : rotationActive ? loadCompleteMailboxComments(CANONICAL_MAILBOX_ISSUE) : boundedComments;
   const currentHead = readGitHubMainHead();
-  const rotationPoll = prepareMailboxRotationPoll(state, comments, {
+  const rotationPoll = cancellation || prepareMailboxRotationPoll(state, comments, {
+    // Full predecessor history is already authenticated for the active epoch;
+    // avoid reading its 25 pages a second time in this polling cycle.
+    readComments: issueNumber => issueNumber === CANONICAL_MAILBOX_ISSUE
+      ? comments : loadCompleteMailboxComments(issueNumber),
     approvedUpdateHead: state.mailboxRotation && currentHead !== MAILBOX_PROCESS_SOURCE_HEAD
       ? approvedRotationUpdateHead(state.mailboxRotation, currentHead) : '',
   });
-  if (state.mailboxRotation && !['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)) {
+  if (rotationActive && !cancellation) {
     try { state.mailboxRotationActions = await readRotationActions(state.mailboxRotation); }
     catch { state.mailboxRotationActions = { complete: false, pendingRuns: [] }; }
   }

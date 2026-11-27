@@ -12,6 +12,8 @@ import {
 } from '../shared/agents/goalBuildingAgentV1.continuation.mjs';
 // Original Goal #1558 PR Estate proof runs inside the existing conveyor CI, no extra workflow.
 import '../shared/agents/prEstateReconciler.test.mjs';
+// Exercise the existing original #2954 GitHub quota-admission repair in hosted conveyor CI.
+import '../scripts/independent-merge-security-review-entry-v1.test.mjs';
 // Original #1558 CLI mode-boundary regression executes in the existing hosted Node conveyor proof.
 import '../scripts/pr-estate-reconcile.test.mjs'; // #1558: hosted gate also proves both empty --input/--from-gh orders with zero GH calls.
 // Original Goal #1451/#2670 Captain Bridge PR-open-state truth, using the existing conveyor CI.

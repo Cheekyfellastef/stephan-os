@@ -19,8 +19,19 @@ function normalizeMarker(value, fallback) {
   return toText(value, fallback).replace(/\s+/g, '_').toUpperCase();
 }
 
-function hasBase64Only(value = '') {
-  return /^[A-Za-z0-9+/]*={0,2}$/.test(String(value ?? ''));
+function isCanonicalBase64(value = '') {
+  const payload = String(value ?? '');
+  return payload.length % 4 === 0
+    && /^[A-Za-z0-9+/]*={0,2}$/.test(payload)
+    && Buffer.from(payload, 'base64').toString('base64') === payload;
+}
+
+function quotePosixPath(path) {
+  if (path.includes('\0')) {
+    throw new TypeError('Patch Courier diff paths must not contain NUL bytes.');
+  }
+  if (/^[A-Za-z0-9_./:-]+$/.test(path)) return path;
+  return `'${path.replace(/'/g, "'\\''")}'`;
 }
 
 export function buildPatchCourierPacket({
@@ -71,8 +82,8 @@ export function parsePatchCourierPacket(packetText = '') {
   if (!endMarker.startsWith('END_DIFF_')) {
     throw new Error('Patch Courier packet is missing an END_DIFF marker.');
   }
-  if (!hasBase64Only(payloadBase64)) {
-    throw new Error('Patch Courier payload must be base64 encoded.');
+  if (!isCanonicalBase64(payloadBase64)) {
+    throw new Error('Patch Courier payload must be canonical base64 encoded.');
   }
 
   return {
@@ -86,9 +97,11 @@ export function parsePatchCourierPacket(packetText = '') {
 }
 
 export function buildPatchCourierDiffCommand(paths = []) {
+  // Render the existing POSIX-shell/GNU base64 export; callers only show this
+  // command. Quoting is not execution authority or a replacement for their gates.
   const normalizedPaths = Array.isArray(paths)
-    ? paths.map((path) => toText(path)).filter(Boolean)
+    ? paths.map((path) => String(path ?? '')).filter((path) => path.trim())
     : [];
-  const pathArgs = normalizedPaths.length > 0 ? ` -- ${normalizedPaths.join(' ')}` : '';
+  const pathArgs = normalizedPaths.length > 0 ? ` -- ${normalizedPaths.map(quotePosixPath).join(' ')}` : '';
   return `git diff --binary${pathArgs} | base64 -w 0`;
 }
