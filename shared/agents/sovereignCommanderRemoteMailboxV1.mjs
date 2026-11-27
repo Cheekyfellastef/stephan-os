@@ -45,7 +45,6 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-ui-4173',
   SPATIAL_PREPARE_ACTION,
   'restart-stephanos-runtime',
-  'status-sovereign-mailbox-lifeboat',
   'status-recovery-mesh',
   'status-worker-watchdog',
   'status-stephanos-core-daemon',

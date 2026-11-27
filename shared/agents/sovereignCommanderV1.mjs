@@ -370,11 +370,6 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-restart-stephanos-runtime.mjs')]),
       timeoutMs: 120_000,
     }),
-    'status-sovereign-mailbox-lifeboat': frozen({
-      executable: powershell,
-      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-battle-bridge-recovery-mesh.ps1')]),
-      timeoutMs: 15_000,
-    }),
     'status-recovery-mesh': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-battle-bridge-recovery-mesh.ps1')]),

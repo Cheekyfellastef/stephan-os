@@ -64,7 +64,6 @@ on:
       - 'shared/agents/sovereignCommanderProcessSessionsV1.test.mjs'
       - 'scripts/windows/status-battle-bridge-recovery-mesh.ps1'
       - 'scripts/windows/status-battle-bridge-worker-watchdog.ps1'
-      - 'shared/agents/sovereignMailboxLifeboatStatusV1.test.mjs'
       - 'shared/agents/sovereignFixedRuntimeSourceClosureV1.json'
       - 'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs'
       - 'scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs'
@@ -210,7 +209,6 @@ on:
       - 'shared/agents/sovereignCommanderProcessSessionsV1.test.mjs'
       - 'scripts/windows/status-battle-bridge-recovery-mesh.ps1'
       - 'scripts/windows/status-battle-bridge-worker-watchdog.ps1'
-      - 'shared/agents/sovereignMailboxLifeboatStatusV1.test.mjs'
       - 'shared/agents/sovereignFixedRuntimeSourceClosureV1.json'
       - 'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs'
       - 'scripts/sovereign-fixed-runtime-directory-package-v1.test.mjs'
@@ -414,7 +412,7 @@ jobs:
       - name: Windows temporary-store supervised R7 recovery regressions
         run: node --experimental-vm-modules --test --test-concurrency=1 stephanos-server/services/supervisedR7RecoveryPreparationV1.test.mjs stephanos-server/services/supervisedR7RecoveryPreparationV1.integration.test.mjs stephanos-server/services/supervisedR7RecoveryRuntime.test.js
       - name: Real Windows private directory creation, exact Unicode and ancestor race regressions
-        run: node --test shared/agents/sovereignDirectoryCreateV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignMailboxLifeboatStatusV1.test.mjs
+        run: node --test shared/agents/sovereignDirectoryCreateV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs
       - name: Native private file confinement and MCP session lifecycle
         run: node --test --test-concurrency=1 shared/agents/sovereignSearchSessionsV1.test.mjs shared/agents/sovereignMcpSessionHistoryV1.test.mjs shared/agents/sovereignCommanderPrivateSessionsV1.test.mjs shared/agents/sovereignCommanderSessionLifecycleV1.test.mjs shared/agents/sovereignMcpSessionConfigV1.test.mjs shared/agents/sovereignCommanderSessionConfigV1.test.mjs shared/agents/sovereignFileCopyV1.test.mjs shared/agents/sovereignFileCopyNativeV1.test.mjs shared/agents/sovereignCommanderFileCopyV1.test.mjs shared/agents/sovereignFileMoveV1.test.mjs shared/agents/sovereignCommanderFileMoveV1.test.mjs shared/agents/sovereignProcessSessionsV1.test.mjs shared/agents/sovereignCommanderProcessSessionsV1.test.mjs shared/agents/sovereignFeedbackIntakeV1.test.mjs shared/agents/sovereignPdfWriteV1.test.mjs shared/agents/sovereignCommanderFeedbackPdfV1.test.mjs
       - name: Captured private-tool package closure and installer contracts

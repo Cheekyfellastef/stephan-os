@@ -128,3 +128,39 @@ RETRY_DOES_NOT_DUPLICATE_SHARED_TURNS
 CONVERSATION_AUTHORSHIP_DOES_NOT_GRANT_APPROVAL_OR_MEMORY_AUTHORITY
 NO_SECOND_CHAT_OR_CONTROL_PLANE
 ```
+
+
+## Redundant transport mesh V1
+
+The canonical conversation remains the only transcript and message authority. Transport redundancy is implemented as adapters around the same envelope, not parallel chats or mailboxes.
+
+### Candidate routes and failure domains
+
+| Route | Failure domain | Role | Current source status |
+|---|---|---|---|
+| OpenClaw Gateway RPC | OpenClaw Gateway | Native reply | Existing primary adapter |
+| Shared Workspace inbox/outbox | Shared Workspace storage | Reconciliation and local polling | Existing durable record; independent consumer not yet commissioned |
+| GitHub signed reply | GitHub | Native reply only with verifiable OpenClaw identity proof | Candidate; not configured |
+| OpenClaw reverse polling | OpenClaw local runtime | Native reply | Candidate; poller not commissioned |
+| Sovereign Commander local relay | Sovereign Commander | Native reply | Candidate; authenticated chat adapter not commissioned |
+| Official ChatGPT remote MCP | Remote MCP tunnel | Native reply | Candidate; requires authenticated endpoint and ChatGPT app connection |
+| GitHub issue comments / browser | GitHub | Request carrier only | Existing outbound carrier; never proof of native OpenClaw reply |
+
+Multiple adapters on GitHub count as **one** failure domain. Ollama/Qwen is local reasoning capacity, not a transport. Browser automation is limited to Stephanos/local application diagnostics and supported GitHub interaction; it must not scrape ChatGPT output or bypass usage controls.
+
+### Failover contract
+
+- Every route receives the same request, message, thread and turn identities plus one deterministic idempotency key.
+- Only adapters explicitly classified `zero-cost` are accepted. Paid API, Codex and unknown-cost adapters are rejected before invocation.
+- A route may trigger failover only when it proves failure occurred before remote acceptance (`transport-failure` with `safeToRetry=true`).
+- Application denial, authentication failure, policy rejection or invalid receipt is terminal. The coordinator must not seek a weaker route.
+- Timeout/exception after possible acceptance is **uncertain**. Query the same idempotency key and canonical workspace before attempting another route. If acceptance cannot be authoritatively reconciled, stop rather than risk a duplicate model turn.
+- A successful route must return an exact request/message/thread/turn receipt, an independently verified OpenClaw transport identity, and all execution/approval/source/merge authority flags false.
+- Route attempts are appended to the existing Shared Workspace event ledger. No new transcript, mailbox, command queue, controller or memory store is created.
+- Health probes may skip an unhealthy route; the route becomes eligible again after its health probe recovers. Failure-domain counts are based on distinct domains, not adapter count.
+
+### Commissioning boundary
+
+This source slice adds the failover coordinator and deterministic tests, wires the existing Gateway RPC and canonical Shared Workspace reply reconciliation, and records route attempts. Optional GitHub-signed, reverse-poll, Sovereign Commander and remote-MCP adapters remain **unconfigured** until their actual authenticated receivers and independent reply receipts exist. A route listed in the registry is not a live connection. The Gateway's current reply is still a read-only acknowledgement, not proof of a Qwen model completion.
+
+The zero-cost guardrail, canonical transcript, identity checks and existing #3563 specialist P0 review remain mandatory. This route mesh does not authorize runtime changes, source writes, mailbox rotation, merges or paid-provider fallback.

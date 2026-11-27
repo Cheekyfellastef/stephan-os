@@ -44,7 +44,7 @@ export const SOVEREIGN_COMMANDER_MCP_PROTOCOLS = Object.freeze(new Set([SOVEREIG
 export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
   'battle-bridge-status', 'battle-bridge-observe', 'visibility-snapshot',
   'cpu-pressure-snapshot', 'controller-lane-status', 'meter-status',
-  'status-sovereign-mailbox-lifeboat', 'status-recovery-mesh', 'status-worker-watchdog', 'status-stephanos-core-daemon',
+  'status-recovery-mesh', 'status-worker-watchdog', 'status-stephanos-core-daemon',
   'starfield-vr-performance-diagnosis',
 ]);
 
@@ -341,7 +341,7 @@ const TOOLS = Object.freeze([
   {
     name: 'start_process',
     title: 'Start a fixed read-only diagnostic session',
-    description: 'Start only status-recovery-mesh or status-worker-watchdog as a bounded private read-only process session. Returns observed direct-child launch state; output can be read separately before exit. No commands, arguments, environment, input, arbitrary PIDs or repair actions are accepted. This does not prove descendant or maintenance custody release.',
+    description: 'Start only status-recovery-mesh or status-worker-watchdog as a bounded private process session. Returns observed direct-child launch state; output can be read separately before exit. No commands, arguments, environment, input, arbitrary PIDs or repair actions are accepted. This does not prove descendant or maintenance custody release.',
     inputSchema: { type: 'object', additionalProperties: false, required: ['profile'],
       properties: { profile: { type: 'string', enum: ['status-recovery-mesh', 'status-worker-watchdog'] } } },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -435,7 +435,6 @@ const TOOLS = Object.freeze([
             'repair-ui-4173',
             'prepare-spatial-workspace',
             'restart-stephanos-runtime',
-            'status-sovereign-mailbox-lifeboat',
             'status-recovery-mesh',
             'status-worker-watchdog',
             'status-stephanos-core-daemon',
