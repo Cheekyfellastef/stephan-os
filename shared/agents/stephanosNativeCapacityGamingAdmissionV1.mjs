@@ -10,11 +10,12 @@ const ACTIVITY_FLAGS = Object.freeze([
 ]);
 const PERMISSION_FLAGS = Object.freeze(['localModelAllowed', 'heavyModelAllowed']);
 
-function hold(reason) {
+function hold(reason, governorPermission) {
   return Object.freeze({
     ok: false,
     finalVerdict: 'STEPHANOS_NATIVE_CAPACITY_GAMING_HOLD',
     reason: `native-capacity-gaming-${reason}`,
+    ...(governorPermission ? { governorPermission } : {}),
   });
 }
 
@@ -94,7 +95,21 @@ export function inspectStephanosNativeCapacityGamingAdmissionV1(options = {}) {
     if (nowMs - observed > MAX_OBSERVATION_AGE_MS) return hold('observation-stale');
     if (state.phase !== 'NORMAL' || state.overrideMode !== 'AUTO' || state.ollamaLoadMode !== 'balanced'
       || state.cooldownUntilUtc !== '' || ACTIVITY_FLAGS.some((flag) => state[flag])
-      || PERMISSION_FLAGS.some((flag) => !state[flag])) return hold('permission-denied');
+      || PERMISSION_FLAGS.some((flag) => !state[flag])) {
+      // Describe this exact validated sample only after the original admission
+      // decision. These labels carry no raw state, new read or permission.
+      const failed = [
+        ['PHASE', state.phase !== 'NORMAL'], ['OVERRIDE', state.overrideMode !== 'AUTO'],
+        ['LOAD', state.ollamaLoadMode !== 'balanced'], ['COOLDOWN', state.cooldownUntilUtc !== ''],
+        ['ACTIVE', state.active], ['FLAT_GAME', state.flatGameActive],
+        ['AIR_LINK', state.airLinkActive], ['REAL_AIR_LINK', state.realAirLinkActive],
+        ['VIRTUAL_AIR_LINK', state.virtualAirLinkTestActive], ['PREPARE_LEASE', state.prepareLeaseActive],
+        ['LOCAL_MODEL', !state.localModelAllowed], ['HEAVY_MODEL', !state.heavyModelAllowed],
+      ].filter(([, denied]) => denied).map(([label]) => label);
+      return hold('permission-denied', Object.freeze({
+        observedAtUtc: new Date(observed).toISOString(), failed: Object.freeze(failed),
+      }));
+    }
     return Object.freeze({ ok: true, reason: 'STEPHANOS_NATIVE_CAPACITY_GAMING_ADMITTED' });
   } catch {
     return hold('evidence-unavailable');

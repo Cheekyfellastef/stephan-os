@@ -7,6 +7,8 @@ export const BATTLE_BRIDGE_OBSERVATION_MODEL_SAMPLE_LIMIT = 12;
 export const BATTLE_BRIDGE_OBSERVATION_STDOUT_BUDGET_BYTES = 16 * 1024;
 
 const LOOPBACK = '127.0.0.1';
+const CONTROL_TOWER_ORIGIN = 'https://stephanos-control-tower.timelesspearl.chatgpt.site';
+const BACKEND_HEALTH_MAX_BYTES = 64 * 1024;
 const SERVICE_TARGETS = Object.freeze([
   Object.freeze({ id: 'ui', url: 'http://127.0.0.1:4173/' }),
   Object.freeze({ id: 'backend', url: 'http://127.0.0.1:8787/api/health' }),
@@ -24,21 +26,86 @@ function safeText(value, max = 160) {
   return String(value ?? '').trim().slice(0, max);
 }
 
-async function request(fetchFn, url, { json = false, timeoutMs = 1500 } = {}) {
+// Backend health contains provider and private-network configuration. Read it
+// under a hard bound, then retain only the fixed diagnostic fields below.
+async function boundedBackendHealthJson(response) {
+  const type = response.headers?.get?.('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+  const declaredBytes = Number(response.headers?.get?.('content-length'));
+  if (type !== 'application/json' || declaredBytes > BACKEND_HEALTH_MAX_BYTES || !response.body?.getReader) {
+    await response.body?.cancel?.().catch(() => {});
+    return null;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let bytes = 0;
+  let content = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > BACKEND_HEALTH_MAX_BYTES) return null;
+      content += decoder.decode(value, { stream: true });
+    }
+    return JSON.parse(content + decoder.decode());
+  } catch {
+    return null;
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
+async function request(fetchFn, url, { json = false, backendHealth = false, timeoutMs = 1500 } = {}) {
   try {
     const response = await fetchFn(url, {
       method: 'GET',
       signal: AbortSignal.timeout(timeoutMs),
       headers: { accept: json ? 'application/json' : '*/*' },
+      ...(backendHealth ? { redirect: 'error', credentials: 'omit', cache: 'no-store' } : {}),
     });
     let body = null;
     if (json && response.ok) {
-      try { body = await response.json(); } catch {}
+      try { body = backendHealth ? await boundedBackendHealthJson(response) : await response.json(); } catch {}
     }
     return Object.freeze({ reachable: true, ok: response.ok, status: Number(response.status) || 0, body });
   } catch {
     return Object.freeze({ reachable: false, ok: false, status: 0, body: null });
   }
+}
+
+function backendConnectionObservation(result) {
+  const health = result.body;
+  const identity = health?.backendIdentity;
+  const observed = result.reachable === true && result.ok === true
+    && Number.isInteger(result.status) && result.status >= 200 && result.status < 300
+    && health?.ok === true
+    && health?.schemaVersion === 'stephanos.backend-health.v1'
+    && health?.service === 'stephanos-server'
+    && identity?.schemaVersion === 'stephanos.backend-runtime-identity.v1'
+    && identity?.runtimeId === 'stephanos-battle-bridge-backend'
+    && typeof identity?.sourceHead === 'string' && /^[a-f0-9]{40}$/.test(identity.sourceHead);
+  const origins = observed ? health.cors?.allowed_origins : null;
+  const originsObserved = Array.isArray(origins) && origins.length <= 128
+    && health.cors.allowed_origin_count === origins.length
+    && origins.every(origin => typeof origin === 'string' && origin.length <= 512);
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-backend-connection.v1',
+    observed,
+    healthSchemaVersion: observed ? 'stephanos.backend-health.v1' : '',
+    service: observed ? 'stephanos-server' : '',
+    backendIdentity: observed ? Object.freeze({
+      schemaVersion: 'stephanos.backend-runtime-identity.v1',
+      runtimeId: 'stephanos-battle-bridge-backend',
+      sourceHead: identity.sourceHead,
+    }) : null,
+    controlTowerOrigin: CONTROL_TOWER_ORIGIN,
+    // This is exact configured membership, not a remote-browser CORS test.
+    controlTowerOriginConfigured: originsObserved ? origins.includes(CONTROL_TOWER_ORIGIN) : null,
+    browserAccessProven: false,
+    loadedSourceBytesProven: false,
+    executionAuthority: false,
+  });
 }
 
 function sovereignCommanderRouteProof(env = process.env) {
@@ -56,6 +123,7 @@ function serviceObservation(target, result, routeProof) {
     ready: result.ok,
     httpStatus: result.status,
   });
+  if (target.id === 'backend') return Object.freeze({ ...probe, connection: backendConnectionObservation(result) });
   if (target.id !== 'sovereign-commander') return probe;
 
   const commandPathProven = routeProof.commandPathProven === true;
@@ -144,7 +212,10 @@ export async function collectBattleBridgeObservation({
 } = {}) {
   const routeProof = sovereignCommanderRouteProof(env);
   const serviceEntries = await Promise.all(SERVICE_TARGETS.map(async (target) => {
-    const result = await request(fetchFn, target.url, { json: target.id === 'ollama' || target.id === 'sovereign-commander' });
+    const result = await request(fetchFn, target.url, {
+      json: ['backend', 'ollama', 'sovereign-commander'].includes(target.id),
+      backendHealth: target.id === 'backend',
+    });
     return [target.id, serviceObservation(target, result, routeProof)];
   }));
   const services = Object.freeze(Object.fromEntries(serviceEntries));

@@ -249,6 +249,25 @@ function normalizePrCommitList(value) {
   return value.map((item) => normalizeSha(typeof item === 'string' ? item : item?.oid || item?.sha || item?.commit?.oid)).filter(Boolean);
 }
 
+function optionalPublicationFieldMatches(record, key, matches) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  try {
+    const field = Object.getOwnPropertyDescriptor(record, key);
+    if (!field) return !(key in record);
+    return Object.hasOwn(field, 'value') && matches(field.value);
+  } catch {
+    return false;
+  }
+}
+
+function expectedPublicationPrMatches(value, prNumber) {
+  if (typeof value === 'string') {
+    if (!/^[1-9][0-9]*$/.test(value)) return false;
+    value = Number(value);
+  }
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value === prNumber;
+}
+
 export function createPRPublicationVerifierResult(packet = {}, options = {}) {
   const prNumber = asInteger(packet.prNumber || packet.pullRequestNumber, null);
   const headBranch = safeField(packet.headBranch || packet.branch, 'unknown');
@@ -265,7 +284,15 @@ export function createPRPublicationVerifierResult(packet = {}, options = {}) {
   const testedCodeMatchesPr = shaMatches(testedHeadSha, remotePrHeadSha);
   const prNumberPresent = prNumber !== null && prNumber > 0;
   const branchPresent = headBranch !== 'unknown';
-  const pass = prNumberPresent && branchPresent && expectedCommitPresent && prHeadMatchesExpected && fetchedBranchMatchesPr && localHeadMatchesPr && testedCodeMatchesPr;
+  const targetExistingPr = optionalPublicationFieldMatches(packet, 'targetExistingPr', (value) => value === true);
+  const publicationDisabled = ['publishAllowed', 'publish', 'createPr', 'merge']
+    .every((field) => optionalPublicationFieldMatches(packet, field, (value) => value === false));
+  const expectedPrMatches = [packet, options]
+    .every((record) => optionalPublicationFieldMatches(record, 'expectedPr', (value) => expectedPublicationPrMatches(value, prNumber)));
+  const expectedBranchMatches = [packet, options]
+    .every((record) => optionalPublicationFieldMatches(record, 'expectedBranch', (value) => typeof value === 'string' && value.length > 0 && value === headBranch));
+  const pass = prNumberPresent && branchPresent && expectedCommitPresent && prHeadMatchesExpected && fetchedBranchMatchesPr && localHeadMatchesPr && testedCodeMatchesPr
+    && targetExistingPr && publicationDisabled && expectedPrMatches && expectedBranchMatches;
   const blockers = [];
   if (!prNumberPresent) blockers.push('pr-number-missing');
   if (!branchPresent) blockers.push('head-branch-missing');
@@ -274,6 +301,10 @@ export function createPRPublicationVerifierResult(packet = {}, options = {}) {
   if (!fetchedBranchMatchesPr) blockers.push('origin-branch-stale-or-missing');
   if (!localHeadMatchesPr) blockers.push('local-head-is-not-pr-head');
   if (!testedCodeMatchesPr) blockers.push('tested-code-is-not-pr-code');
+  if (!targetExistingPr) blockers.push('target-existing-pr-required');
+  if (!publicationDisabled) blockers.push('publication-disabled');
+  if (!expectedPrMatches) blockers.push('pr-number-mismatch');
+  if (!expectedBranchMatches) blockers.push('branch-mismatch');
   return createVerifierResult({
     checkId: 'pr-publication-proof',
     verifierType: 'PRPublicationVerifier',
@@ -293,6 +324,10 @@ export function createPRPublicationVerifierResult(packet = {}, options = {}) {
       proofEvidence('fetchedBranchMatchesPr', fetchedBranchMatchesPr),
       proofEvidence('localHeadMatchesPr', localHeadMatchesPr),
       proofEvidence('testedCodeMatchesPr', testedCodeMatchesPr),
+      proofEvidence('targetExistingPr', targetExistingPr),
+      proofEvidence('publicationDisabled', publicationDisabled),
+      proofEvidence('expectedPrMatches', expectedPrMatches),
+      proofEvidence('expectedBranchMatches', expectedBranchMatches),
     ],
     reason: pass ? '' : blockers.join(' '),
     durationMs: options.durationMs ?? 0,

@@ -2,6 +2,9 @@ import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonica
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { FLEET_SUPERVISOR_ACTION, FLEET_SUPERVISOR_SCHEMA, FLEET_SUPERVISOR_MARKER,
   projectFleetConveyorObservationV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { serializeFleetSupervisorTerminalV1 } from '../../scripts/sovereign-commander-fleet-goal-supervisor.mjs';
@@ -11,8 +14,14 @@ import { buildSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
 import { STEPHANOS_EXECUTION_SURFACE, buildStephanosExecutionCommandEnvelopeV1,
   buildStephanosExecutionSurfaceCatalogV1 } from './stephanosExecutionCommandFabricV1.mjs';
 import { checkpointTerminalMailboxReceipt, createSanitizedMailboxReceiptProjection,
+  createWindowsSafeMailboxReceiptFilename, readMailboxReceipt,
   serializeBoundedReceiptJson } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
+import { executeBattleBridgeGitHubCommand, buildBattleBridgeGitHubCommandReceipt }
+  from './battleBridgeGitHubCommandMailbox.mjs';
 import { projectBoundedRemoteControllerLaneStatus } from '../../scripts/sovereign-controller-lane-status.mjs';
+import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
+import { SPATIAL_PREPARE_ACTION, SPATIAL_PREPARE_SCHEMA, SPATIAL_PREPARE_MARKER,
+  spatialPrepareBlockedV1 } from './sovereignSpatialWorkspaceV1.mjs';
 
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
@@ -21,6 +30,9 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
+  safeCpuPressureSnapshotProjection,
+  strictNativeFailureExitStatusV1,
+  safeStarfieldVrResourcePreflightProjection,
   diagnoseRescueIslandNativeReceiptInvalidV1,
   sovereignCommanderRemoteNetworkTimeoutMs,
   sovereignCommanderRemotePlanStepTimeoutMs,
@@ -28,6 +40,113 @@ import {
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
 const HEAD = 'e42d31670da802cc15d4c323dd8dcff10a03033f';
+
+function backendConnection(overrides = {}) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-backend-connection.v1',
+    observed: true,
+    healthSchemaVersion: 'stephanos.backend-health.v1',
+    service: 'stephanos-server',
+    backendIdentity: {
+      schemaVersion: 'stephanos.backend-runtime-identity.v1',
+      runtimeId: 'stephanos-battle-bridge-backend',
+      sourceHead: HEAD,
+    },
+    controlTowerOrigin: 'https://stephanos-control-tower.timelesspearl.chatgpt.site',
+    controlTowerOriginConfigured: true,
+    browserAccessProven: false,
+    loadedSourceBytesProven: false,
+    executionAuthority: false,
+    ...overrides,
+  };
+}
+
+async function remoteBackendObservation(connection, serviceOverrides = {}, collected = null) {
+  const observation = collected || {
+    schemaVersion: 'stephanos.battle-bridge-observation.v1', ok: true,
+    capturedAtUtc: '2026-11-07T15:00:00.000Z', hostRole: 'battle-bridge',
+    services: { backend: { reachable: true, ready: true, httpStatus: 200, connection, ...serviceOverrides } },
+    readOnly: true, arbitraryShellAllowed: false, secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+  };
+  const maintenance = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED', proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'battle-bridge-observe' } },
+    structuredContent: { ok: true, status: 0, stdout: JSON.stringify(observation), stderr: '', errorCode: '' },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  return executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: 'battle-bridge-observe' }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' },
+  });
+}
+
+test('backend identity and pinned origin decision survive the existing observer and public receipt path', async () => {
+  const health = {
+    ok: true, schemaVersion: 'stephanos.backend-health.v1', service: 'stephanos-server',
+    backendIdentity: { ...backendConnection().backendIdentity, privatePath: 'SECRET_LOCAL_PATH' },
+    cors: { allowed_origin_count: 1, allowed_origins: [backendConnection().controlTowerOrigin] },
+    provider_secret_status: { secret: 'PRIVATE_PROVIDER_VALUE' },
+  };
+  const collected = await collectBattleBridgeObservation({
+    fetchFn: async url => new Response(JSON.stringify(String(url).includes(':8787/') ? health : { models: [] }), {
+      headers: { 'content-type': 'application/json' },
+    }),
+    spawnSyncFn: () => ({ status: 1, stdout: '', stderr: '' }),
+    now: () => new Date('2026-11-07T15:00:00.000Z'),
+    memory: () => ({ totalBytes: 16, freeBytes: 8 }), uptimeFn: () => 123, env: {},
+  });
+  const result = await remoteBackendObservation(null, {}, collected);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.observation.services.backend.connection, backendConnection());
+  assert.doesNotMatch(JSON.stringify(result), /SECRET_LOCAL_PATH|PRIVATE_PROVIDER_VALUE|allowed_origins|provider_secret_status/);
+});
+
+test('public backend diagnostics retain false and unknown without publishing raw origins or configuration', async () => {
+  for (const configured of [true, false, null, 'true']) {
+    const connection = backendConnection({
+      controlTowerOriginConfigured: configured,
+      privateOrigins: ['https://PRIVATE_ORIGIN.invalid'], secret: 'PRIVATE_CONNECTION_SECRET',
+    });
+    connection.backendIdentity.privatePath = 'PRIVATE_IDENTITY_PATH';
+    const result = await remoteBackendObservation(connection);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.observation.services.backend.connection, backendConnection({
+      controlTowerOriginConfigured: typeof configured === 'boolean' ? configured : null,
+    }));
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_ORIGIN|PRIVATE_CONNECTION_SECRET|PRIVATE_IDENTITY_PATH/);
+  }
+});
+
+test('public backend diagnostic projection refuses foreign identity, target and authority claims', async () => {
+  const identity = backendConnection().backendIdentity;
+  const variants = [
+    undefined, null, {}, backendConnection({ observed: 'true' }),
+    backendConnection({ schemaVersion: 'foreign' }), backendConnection({ healthSchemaVersion: 'foreign' }),
+    backendConnection({ service: 'foreign' }),
+    backendConnection({ backendIdentity: { ...identity, schemaVersion: 'foreign' } }),
+    backendConnection({ backendIdentity: { ...identity, runtimeId: 'foreign' } }),
+    backendConnection({ backendIdentity: { ...identity, sourceHead: 'PRIVATE_IDENTITY_SECRET' } }),
+    backendConnection({ controlTowerOrigin: 'https://foreign.invalid' }),
+    backendConnection({ browserAccessProven: true }), backendConnection({ loadedSourceBytesProven: true }),
+    backendConnection({ executionAuthority: true }),
+  ];
+  for (const connection of variants) {
+    const result = await remoteBackendObservation(connection);
+    assert.equal(result.ok, true); // The original observation action still ran.
+    const projected = result.observation.services.backend.connection;
+    assert.equal(projected.observed, false);
+    assert.equal(projected.backendIdentity, null);
+    assert.equal(projected.controlTowerOriginConfigured, null);
+    assert.equal(projected.executionAuthority, false);
+    assert.equal(projected.browserAccessProven, false);
+    assert.equal(projected.loadedSourceBytesProven, false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_IDENTITY_SECRET|foreign.invalid/);
+  }
+  for (const service of [{ ready: false }, { reachable: false }, { httpStatus: 503 }, { httpStatus: '200' }]) {
+    const result = await remoteBackendObservation(backendConnection(), service);
+    assert.equal(result.observation.services.backend.connection.observed, false);
+  }
+});
 
 function command(overrides = {}) {
   return {
@@ -164,6 +283,103 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
 }
 
 const readToken = async () => 'x'.repeat(44);
+
+function spatialReadyFixture(overrides = {}) {
+  return { schemaVersion: SPATIAL_PREPARE_SCHEMA, actionId: SPATIAL_PREPARE_ACTION,
+    sourceHead: HEAD, buildId: 'b'.repeat(64), ok: true, blocker: '',
+    installationVerified: true, uiReady: true, helperProbePassed: true, nativeProbePassed: true,
+    existingHostPreserved: false, createdProbeStopped: true, hostRunningAfter: false,
+    mutationAttempted: true, readyForOperatorLaunch: true,
+    interactiveAcceptance: false, voiceAcceptance: false, headsetAcceptance: false, ...overrides };
+}
+function spatialMaintenanceFixture(receipt = spatialReadyFixture(), changes = {}) {
+  return { ok: receipt.ok,
+    finalVerdict: receipt.ok ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+    proofHash: 'f'.repeat(64), command: { plan: { processId: SPATIAL_PREPARE_ACTION } },
+    contentText: 'PRIVATE_NATIVE_TEXT',
+    structuredContent: { status: receipt.ok ? 0 : 2,
+      stdout: `${SPATIAL_PREPARE_MARKER}${JSON.stringify(receipt)}\n`,
+      stderr: 'PRIVATE_COMPILER_STDERR', errorCode: '', signal: '' }, ...changes };
+}
+async function spatialRemoteFixture(maintenance) {
+  const { calls, fetchFn } = mcpFetch({ maintenance });
+  let unrelatedRuntimeRepair = 0;
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: SPATIAL_PREPARE_ACTION }), {
+    spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+    ensureRuntimeFn: async () => { unrelatedRuntimeRepair += 1; return { ok: true }; },
+  });
+  return { result, calls, unrelatedRuntimeRepair };
+}
+
+test('Spatial preparation carries authenticated outer head and has bounded transport headroom', async () => {
+  const { result, calls, unrelatedRuntimeRepair } = await spatialRemoteFixture(spatialMaintenanceFixture());
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SPATIAL_WORKSPACE_READY_FOR_OPERATOR_LAUNCH');
+  assert.deepEqual(result.spatialPreparation, spatialReadyFixture());
+  assert.equal(unrelatedRuntimeRepair, 0);
+  const call = calls.map(row => { try { return JSON.parse(row.options?.body); } catch { return null; } })
+    .find(row => row?.params?.arguments?.actionId === SPATIAL_PREPARE_ACTION);
+  assert.deepEqual(call.params.arguments, { actionId: SPATIAL_PREPARE_ACTION, expectedMain: HEAD });
+  assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: SPATIAL_PREPARE_ACTION })), 300000);
+  assert.equal(validateSovereignCommanderRemoteCommandShape(command({ remoteAction: '', remotePlan: [SPATIAL_PREPARE_ACTION] })).ok, false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+});
+
+test('Spatial typed holds and absent native qualification remain blocked and public-safe', async () => {
+  const receipt = spatialPrepareBlockedV1(HEAD, 'SPATIAL_PREPARE_COMPILER_MISSING');
+  const { result } = await spatialRemoteFixture(spatialMaintenanceFixture(receipt));
+  assert.equal(result.ok, false); assert.equal(result.blocker, receipt.blocker);
+  assert.equal(result.spatialPreparation.readyForOperatorLaunch, false);
+  const missing = await spatialRemoteFixture({ ok: false, blocker: 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING',
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED', privatePath: 'PRIVATE_PATH' });
+  assert.equal(missing.result.ok, false);
+  assert.equal(missing.result.executionBlocker, 'FIXED_RUNTIME_CURRENT_INSTALLATION_MISSING');
+  assert.equal(Object.hasOwn(missing.result, 'spatialPreparation'), false);
+  assert.doesNotMatch(JSON.stringify(missing.result), /PRIVATE_PATH/);
+});
+
+test('Spatial public completion refuses contradictory, malformed, foreign and interactive receipts', async () => {
+  const good = spatialMaintenanceFixture();
+  const variants = [
+    { ...good, ok: false }, { ...good, proofHash: '' },
+    { ...good, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' },
+    { ...good, command: { plan: { processId: 'battle-bridge-status' } } },
+    ...[null, false, '0', 2].map(status => ({ ...good, structuredContent: { ...good.structuredContent, status } })),
+    { ...good, structuredContent: { ...good.structuredContent, signal: 'SIGTERM' } },
+    { ...good, structuredContent: { ...good.structuredContent, errorCode: 'ETIMEDOUT' } },
+    { ...good, structuredContent: { ...good.structuredContent, stdout: good.structuredContent.stdout.repeat(2) } },
+    ...[{ sourceHead: 'd'.repeat(40) }, { interactiveAcceptance: true },
+      { createdProbeStopped: false }, { hostRunningAfter: true }, { rawWindows: ['PRIVATE_WINDOW'] }]
+      .map(change => spatialMaintenanceFixture(spatialReadyFixture(change))),
+  ];
+  for (const candidate of variants) {
+    const { result } = await spatialRemoteFixture(candidate);
+    assert.equal(result.ok, false);
+    assert.equal(Object.hasOwn(result, 'spatialPreparation'), false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+  }
+});
+
+test('Spatial preparation evidence survives normal and compact canonical mailbox receipts', async () => {
+  for (const native of [spatialMaintenanceFixture(), spatialMaintenanceFixture(spatialPrepareBlockedV1(HEAD, 'SPATIAL_PREPARE_PORT_OCCUPIED'))]) {
+    const { result } = await spatialRemoteFixture(native);
+    const receipt = { schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+      requestId: 'spatial-preparation-roundtrip-001', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest, branch: 'main',
+      expectedHead: HEAD, processSourceHead: HEAD, state: result.ok ? 'DONE' : 'BLOCKED', blocker: result.blocker,
+      result: { ok: result.ok, verdict: result.verdict, result: { ...result,
+        stdout: 'PRIVATE_NATIVE_OUTPUT', stderr: 'PRIVATE_COMPILER',
+        codexLastMessage: 'SAFE_PADDING '.repeat(1000) } } };
+    const compact = JSON.parse(serializeBoundedReceiptJson(receipt, 6 * 1024));
+    const repeated = JSON.parse(serializeBoundedReceiptJson(compact, 6 * 1024));
+    for (const packet of [receipt, compact, repeated]) {
+      const projected = createSanitizedMailboxReceiptProjection(packet);
+      assert.deepEqual(projected.operationResult.spatialPreparation, result.spatialPreparation);
+      assert.equal(projected.operationResult.spatialPreparation.interactiveAcceptance, false);
+      assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_/);
+    }
+  }
+});
 
 function fleetReceiptRaw(overrides = {}) {
   return {
@@ -2075,11 +2291,14 @@ test('maintenance receipt must contain exact completion proof', async () => {
     command: { plan: { processId: 'battle-bridge-status' } },
     structuredContent: { ok: true, status: 0, errorCode: '' },
   };
-  for (const maintenance of [
-    { ...baseline, finalVerdict: 'SOMETHING_ELSE' },
-    { ...baseline, proofHash: 'bad' },
-    { ...baseline, command: { plan: { processId: 'other-action' } } },
-    { ...baseline, structuredContent: { ok: false, status: 1, errorCode: 'FAILED' } },
+  for (const [maintenance, expectedFailure] of [
+    [{ ...baseline, finalVerdict: 'SOMETHING_ELSE' }, 'COMMANDER_ACTION_COMPLETION_UNVERIFIED'],
+    // Invalid proof hashes are rejected by sovereignCommanderCompletionEnvelope
+    // before a native completion is trusted, so do not infer a specific child failure.
+    [{ ...baseline, proofHash: 'bad' }, 'COMMANDER_ACTION_COMPLETION_UNVERIFIED'],
+    [{ ...baseline, command: { plan: { processId: 'other-action' } } }, 'COMMANDER_ACTION_PROCESS_ID_MISMATCH'],
+    [{ ...baseline, structuredContent: { ok: false, status: 1, errorCode: 'FAILED' } }, 'COMMANDER_ACTION_NATIVE_EXIT_NONZERO'],
+    [{ ...baseline, structuredContent: { ok: true, status: null, errorCode: '' } }, 'COMMANDER_ACTION_EXIT_UNVERIFIED'],
   ]) {
     const { fetchFn } = mcpFetch({ maintenance });
     const result = await executeSovereignCommanderRemoteOnBattleBridge(
@@ -2093,6 +2312,28 @@ test('maintenance receipt must contain exact completion proof', async () => {
     );
     assert.equal(result.ok, false);
     assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+    assert.equal(result.finalVerdict, expectedFailure);
+    assert.equal(result.executionBlocker, expectedFailure);
+    assert.equal(result.publicReceiptSafe, true);
+    assert.equal(result.secretMaterialReturned, false);
+    const receipt = {
+      schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+      requestId: 'commander-proof-failure-typed-v1', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest,
+      branch: 'main', expectedHead: HEAD, processSourceHead: HEAD,
+      state: 'BLOCKED', blocker: result.blocker,
+      result: { ok: false, verdict: result.verdict, operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+        requestId: 'commander-proof-failure-typed-v1', result: {
+          ...result, stdout: 'PRIVATE_NATIVE_COMMAND_OUTPUT',
+          codexLastMessage: 'PRIVATE_NATIVE_COMMAND_OUTPUT'.repeat(300),
+        } },
+    };
+    const compact = JSON.parse(serializeBoundedReceiptJson(receipt, 6 * 1024));
+    assert.equal(compact.result.result.finalVerdict, expectedFailure,
+      'bounded public receipt must retain the failure discriminator');
+    assert.equal(compact.result.result.blocker, result.blocker);
+    assert.equal(compact.result.result.ok, false);
+    assert.doesNotMatch(JSON.stringify(compact), /PRIVATE_NATIVE_COMMAND_OUTPUT/);
   }
 });
 
@@ -2595,6 +2836,235 @@ test('controller activity publication is single-action, canonical and returns on
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE RAW OUTPUT'), false);
   assert.equal(serialized.includes('PRIVATE STDERR'), false);
+});
+
+
+
+test('material controller publication binds proofWritten and proofId to the requested run (#2573)', async () => {
+  const controllerId = '6ac3999164b88191a1c866c70ab51bd7';
+  const runId = 'material-proof-identity-v1';
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId, runId, observedEnabled: true, executionState: 'ACTIVE',
+    materialActionsSucceeded: 1, safeEligibleWorkRemaining: 0,
+    proofRefs: ['proof/material-run-verified'],
+  };
+  const publication = {
+    schemaVersion: activity.schemaVersion, ok: true, controllerId, runId,
+    statusWritten: true, statusId: 'controller-' + controllerId + '-activity',
+    proofWritten: true, proofId: 'controller-' + controllerId.slice(0, 12) + '-run-' + runId,
+    executionState: 'ACTIVE', materialLaneCount: 0, materialActionsSucceeded: 1,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false, sourceMutationAllowed: false,
+    mergeAuthority: false, secretMaterialIncluded: false,
+  };
+  const execute = async (requested, published) => {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'publish-controller-activity' } },
+      structuredContent: { ok: true, status: 0,
+        stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT=' + JSON.stringify(published),
+        stderr: '', errorCode: '' },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    return executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'publish-controller-activity', controllerActivity: requested }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+    );
+  };
+  assert.equal((await execute(activity, publication)).ok, true);
+  for (const spoof of [
+    { proofWritten: false, proofId: '' },
+    { proofWritten: false },
+    { proofWritten: true, proofId: '' },
+    { proofWritten: true, proofId: 'controller-other-run-foreign' },
+    { proofWritten: true, proofId: 'controller-' + controllerId.slice(0, 12) + '-run-foreign' },
+  ]) {
+    const result = await execute(activity, { ...publication, ...spoof });
+    assert.equal(result.ok, false, 'material completion admitted missing or foreign proof');
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID');
+  }
+  const noMaterial = { ...activity, materialActionsSucceeded: 0, proofRefs: [] };
+  const noMaterialPublished = { ...publication, materialActionsSucceeded: 0, proofWritten: false, proofId: '' };
+  assert.equal((await execute(noMaterial, noMaterialPublished)).ok, true);
+  const unexpected = await execute(noMaterial, { ...noMaterialPublished, proofWritten: true, proofId: publication.proofId });
+  assert.equal(unexpected.ok, false, 'status-only publication inherited foreign proof');
+});
+
+test('controller publication binds statusId to the exact requested canonical controller (#2573)', async () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'controller-status-identity-bound',
+    observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const published = {
+    schemaVersion: activity.schemaVersion, ok: true,
+    controllerId: activity.controllerId, runId: activity.runId,
+    statusWritten: true, proofWritten: false,
+    statusId: `controller-${activity.controllerId}-activity`, proofId: '',
+    executionState: 'IDLE', materialLaneCount: 0,
+    materialActionsSucceeded: 0,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false, sourceMutationAllowed: false,
+    mergeAuthority: false, secretMaterialIncluded: false,
+  };
+  const execute = async (statusId) => {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'publish-controller-activity' } },
+      structuredContent: {
+        ok: true, status: 0,
+        stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT='
+          + JSON.stringify({ ...published, statusId }),
+        stderr: '', errorCode: '',
+      },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    return executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'publish-controller-activity', controllerActivity: activity }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+    );
+  };
+  assert.equal((await execute(published.statusId)).ok, true);
+  for (const foreignStatusId of [
+    'controller-other-controller-activity',
+    'controller-6ac3999164b88191a1c866c70ab51bd7-other',
+    'controller-6ae722da2e188191b4dc8093fcb76941-activity',
+  ]) {
+    const result = await execute(foreignStatusId);
+    assert.equal(result.ok, false, `foreign status identity admitted: ${foreignStatusId}`);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID');
+  }
+});
+
+test('controller activity identities must be scalar strings before canonical publication (#2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'typed-identity', observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  assert.equal(check(activity).ok, true, 'valid canonical scalar identity must remain admitted');
+  for (const [field, malformed, blocker] of [
+    ['controllerId', [activity.controllerId], 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID'],
+    ['runId', [activity.runId], 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID'],
+    ['runId', 17, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID'],
+    ['executionState', [activity.executionState], 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID'],
+  ]) {
+    const result = check({ ...activity, [field]: malformed });
+    assert.equal(result.ok, false, field + ' admitted non-scalar ' + JSON.stringify(malformed));
+    assert.equal(result.blocker, blocker);
+  }
+});
+
+test('controller activity explicit counters reject coercion while legacy lane-count aliases remain numeric (original #2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'strict-counter-validation',
+    observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  assert.equal(check(activity).ok, true);
+  for (const field of [
+    'materialActionsSucceeded', 'goalsAdvanced', 'sourceChanges',
+    'reviewsAdvanced', 'mergesCompleted', 'safeEligibleWorkRemaining',
+    'activeLaneCount', 'parkedLaneCount',
+  ]) {
+    for (const malformed of [null, false, '0', [], {}]) {
+      const result = check({ ...activity, [field]: malformed });
+      assert.equal(result.ok, false, `${field} accepted coerced ${JSON.stringify(malformed)}`);
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID');
+    }
+  }
+  const legacy = check({ ...activity, activeLanes: '2', activeLaneCount: 2, parkedLanes: '0' });
+  assert.equal(legacy.ok, true, 'retain original documented legacy lane-count normalization');
+  assert.equal(legacy.command.controllerActivity.activeLaneCount, 2);
+  assert.deepEqual(legacy.command.controllerActivity.activeLanes, []);
+  const invalidLegacy = check({ ...activity, activeLanes: '2', activeLaneCount: '2' });
+  assert.equal(invalidLegacy.ok, false);
+  assert.equal(invalidLegacy.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID');
+});
+
+test('legacy lane-count strings obey the bounded metadata model without coercing explicit counters (original #2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'legacy-counter-model', observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  for (const [alias, explicit] of [['activeLanes', 'activeLaneCount'], ['parkedLanes', 'parkedLaneCount']]) {
+    for (let count = 0; count <= 15; count++) {
+      for (const legacy of [count, String(count), ` ${count} `]) {
+        const result = check({ ...activity, [alias]: legacy });
+        assert.equal(result.ok, true, `${alias} rejected bounded legacy ${JSON.stringify(legacy)}`);
+        assert.equal(result.command.controllerActivity[explicit], count);
+        assert.deepEqual(result.command.controllerActivity[alias], []);
+      }
+      assert.equal(check({ ...activity, [alias]: String(count), [explicit]: count }).ok, true);
+      assert.equal(check({ ...activity, [alias]: String(count), [explicit]: String(count) }).ok, false);
+      assert.equal(check({ ...activity, [alias]: String(count), [explicit]: (count + 1) % 16 }).ok, false);
+    }
+    for (const malformed of ['', ' ', '1.0', '1e0', '+1', '-1', 'Infinity', 'NaN', '0x1', '\\d', '16', 16, -1, null, false, {}]) {
+      assert.equal(check({ ...activity, [alias]: malformed }).ok, false,
+        `${alias} accepted malformed legacy ${JSON.stringify(malformed)}`);
+    }
+  }
+});
+
+test('controller activity positive public completion rejects coerced output counters (original #2573)', async () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'strict-publication-receipt',
+    observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const published = {
+    schemaVersion: activity.schemaVersion,
+    ok: true, controllerId: activity.controllerId, runId: activity.runId,
+    statusWritten: true, proofWritten: false,
+    statusId: `controller-${activity.controllerId}-activity`,
+    proofId: '', executionState: 'IDLE', materialLaneCount: 0,
+    materialActionsSucceeded: 0, finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false, sourceMutationAllowed: false,
+    mergeAuthority: false, secretMaterialIncluded: false,
+  };
+  for (const field of ['materialLaneCount', 'materialActionsSucceeded']) {
+    for (const malformed of [null, false, '0', [], {}]) {
+      const maintenance = {
+        ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+        proofHash: 'a'.repeat(64),
+        command: { plan: { processId: 'publish-controller-activity' } },
+        structuredContent: {
+          ok: true, status: 0,
+          stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT='
+            + JSON.stringify({ ...published, [field]: malformed }),
+          stderr: '', errorCode: '',
+        },
+      };
+      const { fetchFn } = mcpFetch({ maintenance });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command({ remoteAction: 'publish-controller-activity', controllerActivity: activity }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+      );
+      assert.equal(result.ok, false, `${field} accepted ${JSON.stringify(malformed)}`);
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID');
+    }
+  }
 });
 
 test('controller activity rejects generic maintenance success without a real publication projection', async () => {
@@ -3271,6 +3741,298 @@ test('remote Core health refuses missing or false custody proofs despite fresh s
   }
 });
 
+test('Core native status does not convert null or malformed ages into fresh heartbeat proof', async () => {
+  for (const [ageInput, expectedAge] of [
+    ...[null, '', '0', false, -1, {}, []].map(age => [{ heartbeatAgeSeconds: age, flywheelCycleAgeSeconds: age }, null]),
+    [{ heartbeatAgeSeconds: 3, heartbeatFresh: false, flywheelCycleAgeSeconds: null }, 3],
+    [{ heartbeatAgeSeconds: 3, heartbeatFresh: 'true', flywheelCycleAgeSeconds: null }, 3],
+  ]) {
+    const status = {
+      schemaVersion: 'stephanos.core-daemon-status.v1', ok: true,
+      processInventoryComplete: true, processCount: 1, daemonHealthy: true,
+      singleWriterProven: true, writerProcessObserved: true, lockOwnerMatchesWriter: true,
+      rescueGenerationPresent: true, rescueAttemptCount: 0,
+      readiness: 'READY', sourceHead: HEAD,
+      ...ageInput,
+    };
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED', proofHash: 'b'.repeat(64),
+      command: { plan: { processId: 'status-stephanos-core-daemon' } },
+      structuredContent: { ok: true, status: 0, stdout: JSON.stringify(status) },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'status-stephanos-core-daemon' }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' } },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY');
+    assert.equal(result.coreDaemonStatus.heartbeatAgeSeconds, expectedAge);
+    assert.equal(result.coreDaemonStatus.flywheelCycleAgeSeconds, null);
+    assert.notEqual(result.coreDaemonStatus.heartbeatFresh, true);
+  }
+});
+
+test('shared Core leaf keeps historical missing flags absent and accepts only closed typed evidence', async () => {
+  const { projectSovereignCoreDaemonStatusV1: project } = await import('./sovereignCommanderRemoteMailboxV1.mjs');
+  assert.equal(typeof project, 'function');
+  for (const heartbeatAgeSeconds of [null, 0]) {
+    const projected = project({ available: true, sourceHead: HEAD, heartbeatAgeSeconds, processCount: null });
+    assert.equal(projected.heartbeatAgeSeconds, heartbeatAgeSeconds);
+    assert.equal(projected.processCount, null);
+    for (const key of ['heartbeatFresh', 'processInventoryComplete', 'singleWriterProven',
+      'writerProcessObserved', 'lockOwnerMatchesWriter', 'rescueGenerationPresent', 'rescueAttemptCount',
+      'busyGraceActive', 'flywheelCycleAgeSeconds']) assert.equal(Object.hasOwn(projected, key), false, key);
+    assert.deepEqual(project(projected), projected);
+  }
+  for (const input of [null, [], 'status', Object.create({ available: true, singleWriterProven: true })]) {
+    assert.equal(project(input), null);
+  }
+  let getterCalled = false;
+  const input = { available: true, processInventoryComplete: true, processCount: 1,
+    heartbeatAgeSeconds: 0, heartbeatFresh: true, singleWriterProven: true,
+    sourceMutationAllowed: true, schedulerAuthority: true, mergeAuthority: true,
+    privatePath: 'PRIVATE_CORE_PATH' };
+  Object.defineProperty(input, 'writerProcessObserved', { enumerable: true, get() { getterCalled = true; return true; } });
+  const projected = project(input);
+  assert.equal(getterCalled, false);
+  assert.notEqual(projected.writerProcessObserved, true);
+  assert.equal(projected.singleWriterProven, true);
+  assert.equal(projected.processCount, 1);
+  assert.equal(projected.heartbeatFresh, true);
+  for (const key of ['sourceMutationAllowed', 'schedulerAuthority', 'mergeAuthority']) assert.equal(projected[key], false);
+  assert.doesNotMatch(JSON.stringify(projected), /PRIVATE_CORE/);
+});
+
+const CORE_EXECUTION_RICH_KEYS = [
+  'processInventoryComplete', 'processObservationBlocker', 'reportedDaemonHealthy',
+  'singleWriterProven', 'writerProcessObserved', 'lockOwnerMatchesWriter',
+  'rescueGenerationPresent', 'rescueAttemptCount', 'heartbeatFresh',
+  'busyGraceActive', 'flywheelCycleAgeSeconds',
+];
+const CORE_EXECUTION_STALE_HEAD = '8113cc30b86f08afe3f5f8780ee01b9dc135c6e5';
+
+async function produceCoreStatusExecution({ healthy = false, nativeChanges = {}, maintenanceChanges = {},
+  observedHead = HEAD, observedBranch = 'main' } = {}) {
+  // Only external Git/token/MCP boundaries are doubled. The dispatcher,
+  // executor, native parser and execution envelope all run production code.
+  const native = {
+    schemaVersion: 'stephanos.core-daemon-status.v1', ok: healthy,
+    processInventoryComplete: healthy, processCount: healthy ? 1 : null,
+    processObservationBlocker: healthy ? '' : 'CORE_PROCESS_INVENTORY_UNPROVEN',
+    daemonHealthy: healthy, reportedDaemonHealthy: healthy,
+    singleWriterProven: healthy, writerProcessObserved: healthy, lockOwnerMatchesWriter: healthy,
+    rescueGenerationPresent: true, rescueAttemptCount: 2,
+    heartbeatFresh: healthy, busyGraceActive: false, flywheelCycleAgeSeconds: null,
+    readiness: healthy ? 'READY' : 'RELOAD_REQUIRED',
+    sourceHead: healthy ? HEAD : CORE_EXECUTION_STALE_HEAD,
+    heartbeatAgeSeconds: healthy ? 3 : null,
+    processId: 12345, commandLine: 'PRIVATE_CORE_PRODUCER_COMMAND', localPath: 'PRIVATE_CORE_PRODUCER_PATH',
+    operation: 'FOREIGN_CHILD_OPERATION', requestId: 'foreign-child-request', expectedHeadMatch: true,
+    mergeAuthority: true, schedulerAuthority: true, sourceMutationAllowed: true,
+    ...nativeChanges,
+  };
+  const maintenance = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED', proofHash: 'b'.repeat(64),
+    command: { plan: { processId: 'status-stephanos-core-daemon' } },
+    structuredContent: { ok: true, status: 0, stdout: JSON.stringify(native), stderr: '', errorCode: '' },
+    ...maintenanceChanges,
+  };
+  const { fetchFn, calls } = mcpFetch({ maintenance });
+  const original = command({ remoteAction: 'status-stephanos-core-daemon',
+    requestId: `core-status-produced-${healthy ? 'done' : 'blocked'}` });
+  const execution = await executeBattleBridgeGitHubCommand(original, {
+    spawnSyncFn: (executable, args) => args.includes('branch')
+      ? { status: 0, stdout: observedBranch + '\n', stderr: '' } : spawnForHead(observedHead)(executable, args),
+    readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' },
+  });
+  const receipt = buildBattleBridgeGitHubCommandReceipt({ command: original,
+    state: execution.ok ? 'DONE' : 'BLOCKED', processSourceHead: HEAD,
+    acceptedAt: '2026-11-16T23:30:00.000Z', heartbeatAt: '2026-11-16T23:30:02.000Z',
+    completedAt: '2026-11-16T23:30:02.000Z', result: execution, blocker: execution.blocker || '',
+    proofRefs: Array.from({ length: 20 }, (_, i) => `fixtures/core-status-budget/${i}-${'p'.repeat(110)}`),
+  });
+  return { command: original, execution, receipt, calls };
+}
+
+async function readCoreStatusThroughDispatcher(original, storedJson, receiptRoot) {
+  const receiptPath = join(receiptRoot, createWindowsSafeMailboxReceiptFilename(original.requestId));
+  await writeFile(receiptPath, storedJson, 'utf8');
+  const laterHead = 'b'.repeat(40);
+  const readCommand = {
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    operation: 'READ_MAILBOX_RECEIPT', requestId: `read-${original.requestId}`,
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest,
+    branch: 'main', operatorApproval: 'operator-approved', expectedHead: laterHead,
+    expiresAt: '2026-11-17T00:00:00.000Z', targetRequestId: original.requestId,
+  };
+  // The real READ dispatcher constructs its own execution wrapper too.
+  const execution = await executeBattleBridgeGitHubCommand(readCommand, {
+    readMailboxReceipt: input => readMailboxReceipt(input, { receiptRoot,
+      readSourceIdentity: async () => ({ ok: true, sourceHead: laterHead, expectedHead: laterHead,
+        branch: 'main', expectedHeadMatch: true }),
+    }),
+  });
+  assert.equal(execution.ok, true);
+  assert.equal(execution.result.finalVerdict, 'MAILBOX_RECEIPT_READ_READY');
+  const receipt = buildBattleBridgeGitHubCommandReceipt({ command: readCommand,
+    state: 'DONE', processSourceHead: laterHead,
+    acceptedAt: '2026-11-16T23:31:00.000Z', heartbeatAt: '2026-11-16T23:31:01.000Z',
+    completedAt: '2026-11-16T23:31:01.000Z', result: execution,
+    proofRefs: original.proofRefs,
+  });
+  return { receipt, receiptPath };
+}
+
+for (const healthy of [false, true]) {
+  test(`Core producer ${healthy ? 'DONE' : 'BLOCKED'} survives first persistence and real READ without fixture identity enrichment`, async () => {
+    const { command: original, execution, receipt, calls } = await produceCoreStatusExecution({ healthy });
+    const expected = execution.coreDaemonStatus;
+    assert.equal(execution.ok, healthy);
+    assert.equal(execution.verdict, healthy ? 'COMMAND_EXECUTION_COMPLETE' : 'BLOCKED');
+    for (const key of CORE_EXECUTION_RICH_KEYS) assert.equal(Object.hasOwn(expected, key), true, key);
+    assert.equal(expected.sourceHead, healthy ? HEAD : CORE_EXECUTION_STALE_HEAD);
+    assert.equal(expected.processCount, healthy ? 1 : null);
+    assert.equal(expected.heartbeatAgeSeconds, healthy ? 3 : null);
+    const receiptRoot = await mkdtemp(join(tmpdir(), 'core-produced-readback-'));
+    try {
+      // Same canonical byte path as writeReceipt; no fields are added to the
+      // executor output or receipt before the first serializer consumes it.
+      const storedJson = serializeBoundedReceiptJson(receipt, 256 * 1024) + '\n';
+      const stored = JSON.parse(storedJson);
+      assert.deepEqual(stored.result.result.coreDaemonStatus, expected);
+      assert.equal(execution.operation, original.operation);
+      assert.equal(execution.requestId, original.requestId);
+      assert.equal(execution.result.sourceHead, HEAD);
+      assert.equal(execution.result.branch, 'main');
+      assert.equal(execution.result.expectedHead, HEAD);
+      assert.equal(execution.result.expectedHeadMatch, true);
+      assert.equal(execution.result.coreDaemonStatus, execution.coreDaemonStatus);
+      if (healthy) assert.equal(execution.maintenance.proofHash, 'b'.repeat(64));
+      else assert.equal(Object.hasOwn(execution, 'maintenance'), false);
+      const state = {};
+      checkpointTerminalMailboxReceipt(state, receipt, { persist() {} });
+      assert.deepEqual(state.lastReceipt.result.result.coreDaemonStatus, expected);
+      for (const budget of [9 * 1024, 5 * 1024]) {
+        const publishedJson = serializeBoundedReceiptJson(stored, budget);
+        const published = JSON.parse(publishedJson);
+        assert.ok(Buffer.byteLength(publishedJson) <= budget);
+        assert.deepEqual(published.result.result.coreDaemonStatus, expected);
+        const normalized = createSanitizedMailboxReceiptProjection(published);
+        assert.deepEqual(normalized.operationResult.coreDaemonStatus, expected);
+        assert.deepEqual(JSON.parse(serializeBoundedReceiptJson(normalized, budget)).result.result.coreDaemonStatus, expected);
+        if (budget === 5 * 1024) assert.equal(Object.hasOwn(published.result.result, 'monitorCount'), false);
+      }
+      const readback = await readCoreStatusThroughDispatcher(receipt, storedJson, receiptRoot);
+      for (const budget of [256 * 1024, 9 * 1024, 5 * 1024]) {
+        const json = serializeBoundedReceiptJson(readback.receipt, budget);
+        const outer = JSON.parse(json), selected = outer.result.result.receipt;
+        assert.ok(Buffer.byteLength(json) <= budget);
+        assert.equal(outer.expectedHead, 'b'.repeat(40));
+        for (const key of ['requestId', 'operation', 'state', 'acceptedAt', 'heartbeatAt', 'completedAt',
+          'expectedHead', 'processSourceHead', 'blocker']) assert.equal(selected[key], receipt[key], key);
+        assert.equal(selected.execution.verdict, execution.verdict);
+        assert.equal(selected.operationResult.sourceHead, HEAD);
+        assert.deepEqual(selected.operationResult.coreDaemonStatus, expected);
+        assert.deepEqual(createSanitizedMailboxReceiptProjection(selected).operationResult.coreDaemonStatus, expected);
+        assert.deepEqual(JSON.parse(serializeBoundedReceiptJson(selected, budget)).result.result.coreDaemonStatus, expected);
+        assert.doesNotMatch(json, /PRIVATE_CORE_PRODUCER|12345|"mergeAuthority":true|"schedulerAuthority":true|"sourceMutationAllowed":true/);
+      }
+      assert.equal(await readFile(readback.receiptPath, 'utf8'), storedJson);
+      assert.equal(calls.filter(call => JSON.parse(call.options.body || '{}').params?.name === 'maintenance_action').length, 1);
+    } finally { await rm(receiptRoot, { recursive: true, force: true }); }
+  });
+}
+
+test('Core producer envelope preserves source and native-proof refusals before a qualifying result', async () => {
+  for (const [options, blocker] of [
+    [{ observedHead: 'a'.repeat(40) }, 'SOVEREIGN_COMMANDER_REMOTE_HEAD_MISMATCH'],
+    [{ observedBranch: 'foreign' }, 'SOVEREIGN_COMMANDER_REMOTE_CANONICAL_BRANCH_REQUIRED'],
+    [{ maintenanceChanges: { proofHash: '' } }, 'SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY'],
+    [{ maintenanceChanges: { command: { plan: { processId: 'foreign' } } } }, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID'],
+  ]) {
+    const { execution, receipt, calls } = await produceCoreStatusExecution({ healthy: true, ...options });
+    assert.equal(execution.ok, false);
+    assert.equal(execution.verdict, 'BLOCKED');
+    assert.equal(execution.blocker, blocker);
+    if (blocker === 'SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY') {
+      assert.equal(execution.coreDaemonStatus.available, false);
+    } else assert.equal(Object.hasOwn(execution, 'coreDaemonStatus'), false);
+    const stored = JSON.parse(serializeBoundedReceiptJson(receipt));
+    for (const key of CORE_EXECUTION_RICH_KEYS) assert.equal(Object.hasOwn(stored.result.result.coreDaemonStatus || {}, key), false);
+    if (options.observedHead || options.observedBranch) assert.equal(calls.length, 0);
+  }
+});
+
+test('Core produced identities cannot be relabeled or resurrected by repeated storage and READ', async () => {
+  const inner = r => r.result.result || r.result;
+  for (const healthy of [false, true]) {
+    const { receipt } = await produceCoreStatusExecution({ healthy });
+    for (const mutate of [
+      r => { r.requestId = 'foreign-parent'; }, r => { r.operation = 'READ_DEPLOYMENT_STATUS'; },
+      r => { r.result.requestId = 'foreign-execution'; }, r => { r.result.operation = 'READ_DEPLOYMENT_STATUS'; },
+      r => { inner(r).remoteAction = 'battle-bridge-status'; }, r => { inner(r).sourceHead = 'a'.repeat(40); },
+      r => { r.processSourceHead = 'a'.repeat(40); }, r => { r.expectedHead = 'a'.repeat(40); },
+      r => { r.branch = 'foreign'; }, r => { inner(r).branch = 'foreign'; },
+      r => { inner(r).expectedHeadMatch = false; }, r => { inner(r).expectedHead = 'a'.repeat(40); },
+      r => { r.completedAt = '2026-11-16T23:29:00.000Z'; },
+    ]) {
+      const foreign = structuredClone(receipt); mutate(foreign);
+      for (const budget of [256 * 1024, 5 * 1024]) {
+        let value = foreign;
+        for (let cycle = 0; cycle < 3; cycle++) {
+          const stored = JSON.parse(serializeBoundedReceiptJson(value, budget));
+          for (const key of CORE_EXECUTION_RICH_KEYS) {
+            assert.equal(Object.hasOwn(stored.result.result.coreDaemonStatus || {}, key), false, key);
+          }
+          value = createSanitizedMailboxReceiptProjection(stored);
+          for (const key of CORE_EXECUTION_RICH_KEYS) assert.equal(Object.hasOwn(value.operationResult.coreDaemonStatus || {}, key), false, key);
+        }
+      }
+    }
+    const receiptRoot = await mkdtemp(join(tmpdir(), 'core-produced-target-'));
+    try {
+      const { receipt: readback } = await readCoreStatusThroughDispatcher(receipt,
+        serializeBoundedReceiptJson(receipt, 256 * 1024) + '\n', receiptRoot);
+      for (const mutate of [
+        r => { r.result.result.targetRequestId = 'foreign-target'; },
+        r => { r.result.result.receipt.execution.requestId = 'foreign-selected'; },
+        r => { r.operation = 'READ_DEPLOYMENT_STATUS'; },
+        r => { r.result.requestId = 'foreign-read-execution'; },
+      ]) {
+        const foreign = structuredClone(readback); mutate(foreign);
+        const stored = JSON.parse(serializeBoundedReceiptJson(foreign));
+        assert.equal(stored.result.result.receipt ?? null, null);
+      }
+    } finally { await rm(receiptRoot, { recursive: true, force: true }); }
+  }
+});
+
+test('Core e75 commissioning loss remains historical absence through the real READ dispatcher', async () => {
+  // Authentic untruncated public terminal 6932354201: metadata was added only
+  // after the first projection discarded all eleven custody fields.
+  const historicalJson = await readFile(new URL('./fixtures/battleBridgeCoreStatusTerminal6932354201.json', import.meta.url), 'utf8');
+  const original = JSON.parse(historicalJson);
+  assert.equal(original.result.result.originalBytes, 5931);
+  assert.equal(original.expectedHead, 'e75e83c18f9a8fa7730d4006008438c19878145f');
+  assert.equal(original.completedAt, '2026-11-16T23:19:52.908Z');
+  const receiptRoot = await mkdtemp(join(tmpdir(), 'core-e75-history-'));
+  try {
+    const { receipt, receiptPath } = await readCoreStatusThroughDispatcher(original, historicalJson, receiptRoot);
+    for (const budget of [256 * 1024, 9 * 1024, 5 * 1024]) {
+      const selected = JSON.parse(serializeBoundedReceiptJson(receipt, budget)).result.result.receipt;
+      assert.equal(selected.expectedHead, original.expectedHead);
+      assert.equal(selected.state, 'BLOCKED');
+      assert.equal(selected.completedAt, original.completedAt);
+      assert.equal(selected.operationResult.coreDaemonStatus.sourceHead, CORE_EXECUTION_STALE_HEAD);
+      assert.equal(selected.operationResult.coreDaemonStatus.processCount, null);
+      assert.equal(selected.operationResult.coreDaemonStatus.heartbeatAgeSeconds, 990082);
+      for (const key of CORE_EXECUTION_RICH_KEYS) assert.equal(Object.hasOwn(selected.operationResult.coreDaemonStatus, key), false, key);
+    }
+    assert.equal(await readFile(receiptPath, 'utf8'), historicalJson);
+  } finally { await rm(receiptRoot, { recursive: true, force: true }); }
+});
+
 test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge packet', async () => {
   const observation = {
     schemaVersion: 'stephanos.battle-bridge-observation.v1',
@@ -3283,7 +4045,7 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
     ollama: { reachable: true, installedModelCount: 1, loadedModelCount: 0, installedModels: [{ name: 'qwen3.5:27b', sizeBytes: 1 }], loadedModels: [] },
     services: {
       ui: { reachable: true, ready: true, httpStatus: 200 },
-      backend: { reachable: true, ready: true, httpStatus: 200 },
+      backend: { reachable: true, ready: true, httpStatus: 200, connection: backendConnection({ controlTowerOriginConfigured: false }) },
       openclaw: { reachable: true, ready: true, httpStatus: 200 },
       'sovereign-commander': { reachable: true, ready: true, httpStatus: 200 },
       ollama: { reachable: true, ready: true, httpStatus: 200 },
@@ -3449,6 +4211,7 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
   );
 
   assert.equal(result.ok, true);
+  assert.deepEqual(result.visibilitySnapshot.observation.services.backend.connection, backendConnection({ controlTowerOriginConfigured: false }));
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_VISIBILITY_SNAPSHOT_COMPLETE');
   assert.equal(result.visibilitySnapshot.repository.head, HEAD);
   assert.equal(result.visibilitySnapshot.repository.remoteMainHead, HEAD);
@@ -3463,6 +4226,35 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
   assert.equal(result.visibilitySnapshot.health.core, 'GREEN');
   const serialized = JSON.stringify(result);
   assert.doesNotMatch(serialized, /MUST_NOT_ESCAPE|privatePath|privateReceiptPath|privateRemote|rawCommandLine|C:\\\\secret|PRIVATE RAW OUTPUT|PRIVATE STDERR/);
+  // A malformed native counter must remain unknown, never become observed zero.
+  for (const [field, invalid] of [
+    ['changedEntryCount', false],
+    ['changedEntryCount', null],
+    ['trackedChangeCount', '0'],
+    ['untrackedCount', ''],
+    ['untrackedCount', true],
+  ]) {
+    const injectedSnapshot = { ...snapshot, repository: { ...snapshot.repository, [field]: invalid } };
+    const injectedMaintenance = {
+      ...maintenance,
+      structuredContent: {
+        ...maintenance.structuredContent,
+        stdout: 'SOVEREIGN_COMMANDER_VISIBILITY_SNAPSHOT_RESULT=' + JSON.stringify(injectedSnapshot),
+      },
+    };
+    const injectedFetch = mcpFetch({ maintenance: injectedMaintenance });
+    const checked = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'visibility-snapshot' }),
+      {
+        spawnSyncFn: spawnForHead(),
+        readFileFn: readToken,
+        fetchFn: injectedFetch.fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Operator' },
+      },
+    );
+    assert.equal(checked.ok, true, field);
+    assert.equal(checked.visibilitySnapshot.repository[field], null, field);
+  }
 });
 
 
@@ -4504,4 +5296,299 @@ test('remote Ignition diagnosis returns bounded live repair truth without privat
   assert.equal(serialized.includes('PRIVATE STDOUT'), false);
   assert.equal(serialized.includes('PRIVATE STDERR'), false);
   assert.equal(serialized.includes('PRIVATE CONTENT MUST NOT ESCAPE'), false);
+});
+
+
+test('native maintenance status must be a real integer, never Number-coerced (original #2573)', async () => {
+  const invalidStatuses = [null, '', '0', '2', false, true, [], [0], {}, undefined];
+  for (const status of invalidStatuses) {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'battle-bridge-status' } },
+      structuredContent: {
+        ok: true, status,
+        stdout: 'PRIVATE_INVALID_NATIVE_OUTPUT_MUST_NOT_ESCAPE',
+        stderr: '', errorCode: '',
+      },
+    };
+    for (const candidate of [maintenance, { structuredContent: maintenance }]) {
+      const { fetchFn } = mcpFetch({ maintenance: candidate });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command({ remoteAction: 'battle-bridge-status' }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+      );
+      assert.equal(result.ok, false, 'invalid native status must not pass');
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+      assert.equal(result.publicReceiptSafe, true);
+      assert.equal(result.secretMaterialReturned, false);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INVALID_NATIVE_OUTPUT/);
+    }
+  }
+  const valid = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'battle-bridge-status' } },
+    structuredContent: { ok: true, status: 0, stdout: '', stderr: '', errorCode: '' },
+  };
+  const { fetchFn } = mcpFetch({ maintenance: valid });
+  const success = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'battle-bridge-status' }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+  );
+  assert.equal(success.ok, true);
+  assert.equal(success.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.equal(success.status, 0);
+});
+
+test('preservation receipt refuses non-integer native status even with correct protected proof (original #2573)', async () => {
+  const targetHead = '1'.repeat(40), newHead = '2'.repeat(40);
+  const targetBranch = 'feature/self-repair-loop', targetPrNumber = 2698;
+  const core = {
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    timestampUtc: '2026-10-03T20:00:00.000Z',
+    canonicalOwnerGoal: '#2573', relatedPr: targetPrNumber,
+    branch: targetBranch, oldHead: targetHead, protectedMainHead: HEAD,
+    newHead, changed: true, pushed: true, diffCheckPassed: true,
+    oldHeadAncestorPreserved: true, mainAncestorPreserved: true,
+    exactHeadWriterGuard: true, nonForcePushOnly: true,
+    mergeAuthority: false, directMainWriteAllowed: false,
+    forcePushAllowed: false, rebaseAllowed: false,
+    resetAllowed: false, leaseSeizureAllowed: false,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+  };
+  const sealed = { ok: true, ...core,
+    proofHash: createHash('sha256').update(JSON.stringify(core)).digest('hex') };
+  for (const status of [null, '', '0', false, [], [0], {}, undefined]) {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: '8'.repeat(64),
+      command: { plan: { processId: 'preservation-converge-pr-branch' } },
+      structuredContent: {
+        ok: true, status,
+        stdout: 'SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=' + JSON.stringify(sealed) + '\n',
+        stderr: '', errorCode: '',
+      },
+    };
+    for (const candidate of [maintenance, { structuredContent: maintenance }]) {
+      const { fetchFn } = mcpFetch({ maintenance: candidate });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command({ remoteAction: 'preservation-converge-pr-branch',
+          targetPrNumber, targetBranch, targetHead }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+      );
+      assert.equal(result.ok, false, 'malformed native status must not assert a protected source update');
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID');
+      assert.notEqual(result.mergeAuthority, true);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INVALID_NATIVE_OUTPUT/);
+    }
+  }
+});
+test('parity generic-success envelope cannot substitute for a typed positive parity marker in single or plan (#2573)', async () => {
+  const action = 'reconcile-remote-commander-parity';
+  for (const stdout of [
+    'PRIVATE_PARITY_WITHOUT_TYPED_MARKER',
+    'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT={not valid JSON}',
+    'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT=' + JSON.stringify({
+      ok: false, canonicalOwnerGoal: '#2573',
+      finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+    }),
+  ]) {
+    const maintenance = {
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'e'.repeat(64),
+      command: { plan: { processId: action } },
+      structuredContent: { ok: true, status: 0, stdout, stderr: '', errorCode: '' },
+    };
+    for (const plan of [false, true]) {
+      const { fetchFn } = mcpFetch({ maintenanceByAction: { [action]: maintenance } });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command(plan ? { remoteAction: '', remotePlan: [action] } : { remoteAction: action }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+          ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }) },
+      );
+      assert.equal(result.ok, false, 'generic success must not count as parity proof');
+      assert.equal(result.blocker, plan
+        ? 'SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID'
+        : 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+      assert.equal(result.capabilityParityPresent, false);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_PARITY_WITHOUT_TYPED_MARKER/);
+    }
+  }
+});
+
+test('positive typed parity proof remains admitted within the original bounded remote plan (#2573)', async () => {
+  const action = 'reconcile-remote-commander-parity';
+  const parity = {
+    ok: true, canonicalOwnerGoal: '#2573',
+    retainedCapabilityCount: 14, parityPresentCount: 12,
+    buildableGapCount: 0, boundaryHoldCount: 2,
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+  };
+  const maintenance = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'e'.repeat(64),
+    command: { plan: { processId: action } },
+    structuredContent: {
+      ok: true, status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT=' + JSON.stringify(parity),
+      stderr: '', errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenanceByAction: { [action]: maintenance } });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: '', remotePlan: [action] }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+      ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }) },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE');
+  assert.equal(result.completedSteps.length, 1);
+  assert.equal(result.completedSteps[0].remoteAction, action);
+  assert.equal(result.completedSteps[0].status, 0);
+  assert.notEqual(result.mergeAuthority, true);
+});
+
+test('native child success predicate must reject coerced exit statuses on three fixed probes (#2573)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
+  const guarded = source.match(/ok: !result\?\.error && result\?\.status === 0,/g) || [];
+  assert.equal(guarded.length, 3, 'fixed native child-result consumers require exact numeric zero');
+  assert.doesNotMatch(source, /ok: !result\?\.error && Number\(result\?\.status\) === 0,/);
+  const admitted = (result) => !result?.error && result?.status === 0;
+  assert.equal(admitted({ status: 0 }), true);
+  assert.equal(admitted({ status: 0, error: new Error('failed child') }), false);
+  assert.equal(admitted({ status: 2 }), false);
+  for (const status of [null, undefined, false, true, '', '0', '2']) {
+    assert.equal(admitted({ status }), false, `invalid child status ${String(status)}`);
+  }
+});
+
+
+test('material outcome counters cannot bypass same-run controller proof with zero actions and lanes (#2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'material-outcome-proof-v1', observedEnabled: true,
+    executionState: 'ACTIVE', materialActionsSucceeded: 0,
+    safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  assert.equal(check(activity).ok, true, 'status-only observation remains allowed');
+  assert.equal(check({ ...activity, safeEligibleWorkRemaining: 3 }).ok, true,
+    'remaining work is not a completed-material claim');
+  for (const field of ['goalsAdvanced', 'sourceChanges', 'reviewsAdvanced', 'mergesCompleted']) {
+    for (const proofRefs of [undefined, ['proof/from-another-run']]) {
+      const result = check({ ...activity, [field]: 1, ...(proofRefs ? { proofRefs } : {}) });
+      assert.equal(result.ok, false, `${field} escaped same-run proof requirement`);
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED');
+    }
+    const allowed = check({ ...activity, [field]: 1, materialActionsSucceeded: 1,
+      proofRefs: ['proof/same-run'] });
+    assert.equal(allowed.ok, true, `${field} blocked with declared material action and proof ref`);
+  }
+});
+
+
+test('CPU pressure native process fields reject coerced zeros, missing PID and numeric strings', () => {
+  const baseline = {
+    schemaVersion: 'stephanos.battle-bridge-cpu-pressure.v1',
+    capturedAtUtc: '2026-11-20T05:00:00.000Z',
+    sampleSeconds: 5, processorCount: 8,
+    rows: [{
+      pid: 1901, parentPid: 0, processName: 'node',
+      startedAtUtc: '2026-11-20T04:59:00.000Z',
+      script: 'stephanos-core-daemon.mjs',
+      cpuPercent: 32, sampleMatched: true,
+    }],
+    readOnly: true,
+    sourceMutationAllowed: false,
+    processTerminationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawCommandLinesReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED',
+  };
+  const project = (packet) => safeCpuPressureSnapshotProjection({
+    structuredContent: { stdout: JSON.stringify(packet) },
+  }, 'cpu-pressure-snapshot');
+  const valid = project(baseline);
+  assert.equal(valid.rows[0].parentPid, 0);
+  assert.equal(valid.rows[0].cpuPercent, 32);
+  assert.equal(project({ ...baseline, sampleSeconds: '5' }), null);
+  assert.equal(project({ ...baseline, processorCount: '8' }), null);
+  for (const [field, invalid] of [
+    ['pid', '1901'], ['pid', null], ['parentPid', null],
+    ['parentPid', false], ['parentPid', '0'],
+    ['cpuPercent', false], ['cpuPercent', ''],
+    ['cpuPercent', '0'],
+  ]) {
+    const packet = { ...baseline, rows: [{ ...baseline.rows[0], [field]: invalid }] };
+    assert.equal(project(packet), null, field + '=' + JSON.stringify(invalid));
+  }
+  const noSample = project({
+    ...baseline, rows: [{ ...baseline.rows[0], cpuPercent: null, sampleMatched: false }],
+  });
+  assert.equal(noSample.rows[0].cpuPercent, null);
+  assert.equal(noSample.rows[0].sampleMatched, false);
+  assert.equal(safeCpuPressureSnapshotProjection({
+    structuredContent: { stdout: JSON.stringify(baseline) },
+  }, 'other-operation'), null);
+});
+
+test('bounded native failure evidence rejects coerced exit statuses for Starfield preflight and Air Link (#2573)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
+  const wired = source.match(/strictNativeFailureExitStatusV1\(failureEnvelope\?\.structuredContent\?\.status\)/g) || [];
+  assert.equal(wired.length, 2, 'both original bounded-failure paths must use strict integer evidence');
+  assert.doesNotMatch(source, /Number\(failureEnvelope\?\.structuredContent\?\.status\)/);
+  for (const invalid of [undefined, null, false, true, '', '0', '2', [], {}, NaN, Infinity, -Infinity, 2.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(strictNativeFailureExitStatusV1(invalid), null,
+      'coerced or malformed native failure status must not produce a bounded receipt');
+  }
+  for (const nativeExit of [0, 1, 2, 75, -1]) {
+    assert.equal(strictNativeFailureExitStatusV1(nativeExit), nativeExit,
+      'valid numeric native exit status must be retained exactly');
+  }
+});
+
+test('Starfield resource preflight requires a genuinely numeric native child exit status', () => {
+  const governor = {
+    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    active: true,
+    profile: { parkAllModels: true },
+    localModelAllowed: false,
+    zeroLocalModelInvariant: true,
+    evictionHealthy: true,
+    loadedModelsAfter: [],
+  };
+  const observation = (status) => ({
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    command: { plan: { processId: 'starfield-vr-resource-preflight' } },
+    structuredContent: {
+      ok: true, status, stdout: JSON.stringify(governor), stderr: '', errorCode: '',
+    },
+  });
+
+  const valid = safeStarfieldVrResourcePreflightProjection(observation(0));
+  assert.equal(valid.ok, true);
+  assert.equal(valid.status, 0);
+  assert.equal(valid.finalVerdict, 'STARFIELD_VR_RESOURCE_PREFLIGHT_PASSED');
+  for (const malformed of [null, undefined, false, true, '', '0', '2', [], {}]) {
+    const projected = safeStarfieldVrResourcePreflightProjection(observation(malformed));
+    assert.ok(projected, 'malformed exit should yield a bounded failed projection');
+    assert.equal(projected.ok, false, 'malformed exit must fail closed');
+    assert.equal(projected.status, null);
+    assert.equal(projected.finalVerdict, 'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED');
+  }
+  const failed = safeStarfieldVrResourcePreflightProjection(observation(2));
+  assert.equal(failed.ok, false);
+  assert.equal(failed.status, 2);
 });

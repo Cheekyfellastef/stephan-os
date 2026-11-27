@@ -5,10 +5,12 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {win32} from 'node:path';
+import {makeFixedRuntimeSourceProofFixtureV1} from './sovereign-fixed-runtime-source-proof-fixture-v1.mjs';
+import {FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1,fixedRuntimeGitClosureSha256V1} from '../sovereign-fixed-runtime-installer-candidate-v1.mjs';
 
 const source=readFileSync(new URL('../sovereign-fixed-runtime-parent-v1.mjs',import.meta.url),'utf8');
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-const head='a'.repeat(40), manifest='c'.repeat(64), custody='b'.repeat(64);
+const evidence=makeFixedRuntimeSourceProofFixtureV1(),head=evidence.head,manifest='c'.repeat(64),custody='b'.repeat(64);
 const pe=Buffer.from('NONEXECUTABLE-INSPECTION-FIXTURE');
 const root='C:\\Program Files\\Stephanos\\SovereignFixedRuntimeV1';
 const directory=win32.join(root,head), sourceRoot='C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
@@ -19,6 +21,8 @@ const denial=reason=>({SchemaVersion:'stephanos.fixed-runtime-inventory.v1',Ok:f
   Profiles:[],RuntimeActivationGranted:false,MutationAttempted:false});
 const base=denial('RUNTIME_NORMAL_OPERATOR_REQUIRED');
 const success={SchemaVersion:'stephanos.fixed-runtime-inventory.v1',Ok:true,SourceHead:head,
+  InstallationSourceHead:head,SourceProofSha256:evidence.sourceProofSha256,GitClosureSha256:evidence.gitClosureSha256,
+  SourceTree:evidence.tree,InstallationSourceTree:evidence.tree,
   HelperSha256:hash(pe),ManifestSha256:manifest,AuthenticatedCustodyIdle:true,
   RuntimeActivationGranted:false,MutationAttempted:false,CustodyRecordSha256:custody,
   NativeRecordId:27,Profiles:['MAINTENANCE_GOAL_BUILDER_V1','SOURCE_TASK_V1'],
@@ -74,14 +78,52 @@ add('redirected version',{fsFailure:'version-link',expectedInspections:0},
 add('helper changed',{pendingChange:'helper',expectedInspections:0},'FIXED_RUNTIME_PENDING_IDENTITY_UNPROVEN');
 add('pending source changed',{pendingChange:'head',expectedInspections:0},'FIXED_RUNTIME_PENDING_IDENTITY_UNPROVEN');
 add('denial on zero remains unqualified',{row:base,status:0},'FIXED_RUNTIME_AUTHENTICATED_IDLE_UNPROVEN');
+const gamingHold=reason=>({ok:false,finalVerdict:'STEPHANOS_NATIVE_CAPACITY_GAMING_HOLD',reason});
+for(const [name,reason,code] of [
+  ['prepare lease retained','native-capacity-gaming-prepare-pending','FIXED_RUNTIME_GOVERNOR_PREPARE_PENDING'],
+  ['stale observation','native-capacity-gaming-observation-stale','FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE'],
+  ['gaming active','native-capacity-gaming-permission-denied','FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED'],
+  ['workspace proof missing','native-capacity-gaming-workspace-unproved','FIXED_RUNTIME_GOVERNOR_WORKSPACE_UNPROVEN'],
+  ['hostile private reason',privateText,'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE'],
+])add(name,{governorReceipt:gamingHold(reason),governorHoldCode:code,expectedInspections:0},'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+add('untrusted hold envelope',{governorReceipt:{...gamingHold('native-capacity-gaming-prepare-pending'),
+  finalVerdict:'FOREIGN_GOVERNOR'},governorHoldCode:'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',
+  expectedInspections:0},'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+add('governor read failure',{governorThrow:true,
+  governorHoldCode:'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',expectedInspections:0},
+  'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+const governorPermission=Object.freeze({observedAtUtc:'2026-11-20T21:08:15.000Z',
+  failed:Object.freeze(['LOAD','LOCAL_MODEL','HEAVY_MODEL'])});
+const permissionReceipt=Object.freeze({...gamingHold('native-capacity-gaming-permission-denied'),governorPermission});
+add('initial permission denial preserves the producer sample',{governorReceipt:permissionReceipt,
+  governorPermission,governorHoldCode:'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED',
+  expectedInspections:0,expectedGovernorReads:1},'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+add('terminal permission denial preserves the terminal producer sample',{row:success,status:0,
+  governorTerminalReceipt:permissionReceipt,governorPermission,
+  governorHoldCode:'FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED',expectedGovernorReads:2},
+  'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+for(const [suffix,code] of [['observation-stale','FIXED_RUNTIME_GOVERNOR_OBSERVATION_STALE'],
+  ['prepare-pending','FIXED_RUNTIME_GOVERNOR_PREPARE_PENDING']]) {
+  add(suffix+' cannot carry permission detail',{governorReceipt:{...gamingHold('native-capacity-gaming-'+suffix),
+    governorPermission:privateText},governorHoldCode:code,expectedInspections:0,expectedGovernorReads:1},
+    'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+}
+add('foreign denial cannot carry permission detail',{governorReceipt:{...permissionReceipt,
+  finalVerdict:'FOREIGN_GOVERNOR',governorPermission:privateText},
+  governorHoldCode:'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE',expectedInspections:0,expectedGovernorReads:1},
+  'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
+cases.push({name:'positive admission does not carry permission diagnostics',row:success,status:0,ok:true,
+  governorReceipt:{ok:true,governorPermission:privateText},expectedGovernorReads:2});
 cases.push({name:'unchanged positive inventory',row:success,status:0,ok:true});
 
 for(const entry of cases) {
-  let inspections=0,executions=0;
-  const context=vm.createContext({Buffer,performance,setTimeout,clearTimeout,setInterval,clearInterval,
+  let inspections=0,executions=0,governorReads=0;
+  const context=vm.createContext({Buffer,TextDecoder,performance,setTimeout,clearTimeout,setInterval,clearInterval,
     AbortController,process:{platform:'win32',pid:12345,env:{}}});
   const pending={SchemaVersion:'stephanos.fixed-runtime-pending.v1',SourceHead:entry.pendingChange==='head'?'d'.repeat(40):head,
-    HelperSha256:entry.pendingChange==='helper'?'d'.repeat(64):hash(pe),ManifestSha256:manifest};
+    SourceTree:evidence.tree,
+    HelperSha256:entry.pendingChange==='helper'?'d'.repeat(64):hash(pe),ManifestSha256:manifest,
+    GitClosureSha256:evidence.gitClosureSha256};
   const fail=code=>{throw Object.assign(new Error(privateText),{code});};
   const fs={lstatSync:path=>{
     if(path===directory && entry.fsFailure==='version-missing') fail('ENOENT');
@@ -91,8 +133,10 @@ for(const entry of cases) {
     return {isFile:()=>true,isDirectory:()=>true,nlink:1,size:128,
       isSymbolicLink:()=>path===directory && entry.fsFailure==='version-link'};
   },readFileSync:path=>path.endsWith('host.exe')?pe:path.endsWith('pending.json')?Buffer.from(JSON.stringify(pending)):
-    path.endsWith('HEAD')?Buffer.from('ref: refs/heads/main\n'):Buffer.from(head+'\n')};
+    path.endsWith('HEAD')?Buffer.from('ref: refs/heads/main\n'):Buffer.from(head+'\n'),
+    opendirSync:()=>({readSync:()=>null,closeSync(){}})};
   const spawnSync=(executable,args)=>{
+    if(args.at(-3)==='cat-file')return {status:0,stdout:args.at(-2)==='commit'?evidence.commit.bytes:evidence.trees.get(args.at(-1))};
     if(args[0]!=='--inspect-v1') return {status:0,stdout:'FIXED_RUNTIME_PROTECTED_V1'};
     inspections++;
     assert.equal(executable,win32.join(directory,'host.exe'));
@@ -103,8 +147,17 @@ for(const entry of cases) {
   };
   const mocks={'node:child_process':{spawn:()=>{executions++;throw new Error('EXECUTION_NOT_PERMITTED_IN_FIXTURE');},spawnSync},
     'node:crypto':{createHash},'node:fs':fs,'node:path':{dirname:win32.dirname,join:win32.join},
-    '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs':{inspectStephanosNativeCapacityGamingAdmissionV1:()=>({ok:true})},
-    '../shared/agents/battleBridgeExecutionBoundaryV1.mjs':{createBattleBridgeMinimalChildEnvironment:()=>({})}};
+    '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs':{inspectStephanosNativeCapacityGamingAdmissionV1:()=>{
+      governorReads++;
+      if(entry.governorThrow)return fail('EACCES');
+      return governorReads===2 && entry.governorTerminalReceipt
+        ? entry.governorTerminalReceipt : (entry.governorReceipt??{ok:true});
+    }},
+    '../shared/agents/battleBridgeExecutionBoundaryV1.mjs':{createBattleBridgeMinimalChildEnvironment:()=>({}),
+      resolveBattleBridgeGitExecution:()=>({executable:'FIXTURE_GIT',fixedConfigArgs:[],environment:{}})},
+    '../shared/agents/battleBridgeGitProbeContextV1.mjs':{createBattleBridgeGitProbeContextV1:()=>({assert(){},close(){},repositoryArgs:()=>[]}),isBattleBridgeGitProbeContextV1:()=>true},
+    './sovereign-maintenance-custody-store-v1.mjs':{readMaintenanceRecoverySourceV1:()=>head},
+    './sovereign-fixed-runtime-installer-candidate-v1.mjs':{FIXED_RUNTIME_SOURCE_PATHS_V1:evidence.paths,FIXED_RUNTIME_SOURCE_MEMBER_LIMIT_V1,fixedRuntimeGitClosureSha256V1}};
   const module=new vm.SourceTextModule(source,{context});
   await module.link(specifier=>{
     const values=mocks[specifier];assert.ok(values,specifier);
@@ -117,9 +170,17 @@ for(const entry of cases) {
   assert.equal(result.ok,entry.ok===true,entry.name);
   assert.equal(Object.isFrozen(result),true,entry.name);
   assert.equal(inspections,entry.expectedInspections??1,entry.name);
+  if(entry.expectedGovernorReads)assert.equal(governorReads,entry.expectedGovernorReads,entry.name);
   assert.equal(JSON.stringify(result).includes(privateText),false,entry.name);
   assert.equal(Object.hasOwn(result,'stdout'),false,entry.name);
   assert.equal(Object.hasOwn(result,'stderr'),false,entry.name);
+  if(entry.governorHoldCode)assert.equal(result.governorHoldCode,entry.governorHoldCode,entry.name);
+  else assert.equal(Object.hasOwn(result,'governorHoldCode'),false,entry.name);
+  if(entry.governorPermission) {
+    assert.equal(result.governorPermission,entry.governorPermission,entry.name);
+    assert.equal(Object.isFrozen(result.governorPermission),true,entry.name);
+    assert.equal(Object.isFrozen(result.governorPermission.failed),true,entry.name);
+  } else assert.equal(Object.hasOwn(result,'governorPermission'),false,entry.name);
   if(entry.ok) {
     assert.equal(result.sourceHead,head,entry.name);
     assert.equal(result.dispatchAllowed,true,entry.name);
@@ -133,6 +194,7 @@ for(const entry of cases) {
       {onPrepared:()=>true});
     assert.equal(attempted.reason,'FIXED_RUNTIME_FRESH_QUALIFICATION_REQUIRED',entry.name);
     assert.equal(attempted.dispatchAllowed,false,entry.name);
+    assert.equal(Object.hasOwn(attempted,'governorPermission'),false,entry.name);
   }
   assert.equal(executions,0,entry.name);
 }

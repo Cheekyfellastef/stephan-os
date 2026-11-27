@@ -1,6 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$FixtureNodePath,
   [ValidateSet('None','Cancel','ParentDeath')][string]$FixtureTerminalGuardBaseline='None',
-  [ValidateSet('Atomic','VisiblePartial')][string]$FixtureWitnessPublication='Atomic')
+  [ValidateSet('Atomic','VisiblePartial')][string]$FixtureWitnessPublication='Atomic',
+  [ValidateSet('ReadDelete','LegacyNoDeleteSharing')][string]$FixtureWitnessReader='ReadDelete')
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -65,13 +66,40 @@ namespace Stephanos.Sovereign {
    public FixedRuntimeReceiptV1 HostProjection;
    public bool RootCaptured, RootEndedByHandle, DescendantCaptured, DescendantEndedByHandle;
    public bool BoundBeforeExecution, TerminalDrainObserved, PartialWitnessIgnored;
-   public string ObserverFaultCode="", ObserverFaultType="";
+   public bool DeleteHandleHeldBeforeCommit, SameFileAcrossRename;
+   public string ObserverFaultCode="", ObserverFaultType="", ObserverFaultPhase="";
+   public int ObserverFaultHResult, ObserverFaultWin32;
    public bool SourceMutationAllowed=false, RuntimeQualified=false;
  }
  public static partial class CoreJobCustodyV1 {
   [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
   static extern bool QueryFullProcessImageNameW(IntPtr process,uint flags,StringBuilder name,ref uint size);
-  public static FixedRuntimeFixtureResultV1 FixedRuntimeFixtureV1(string directory,string mode,string fixtureNode,string publicationVariant) {
+  static void FixtureObserverFault(FixedRuntimeFixtureResultV1 result,Exception error,string phase,string code) {
+    result.ObserverFaultCode=code;result.ObserverFaultType=error.GetType().FullName;result.ObserverFaultPhase=phase;
+    result.ObserverFaultHResult=error.HResult;
+    result.ObserverFaultWin32=error is System.ComponentModel.Win32Exception?((System.ComponentModel.Win32Exception)error).NativeErrorCode:
+      (unchecked((uint)error.HResult)&0xffff0000u)==0x80070000u?error.HResult&0xffff:0;
+  }
+  static string ReadCommittedFixtureWitness(string path,Microsoft.Win32.SafeHandles.SafeFileHandle renameHandle,out bool sameFile) {
+    sameFile=false;
+    // Commit publishes complete bytes, but its rename may still hold DELETE
+    // access. Permit that metadata lifetime; continue to deny every writer.
+    using(var file=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Delete)) {
+      if(renameHandle!=null) {
+        FILE_INFO expected,actual;Require(GetFileInformationByHandle(renameHandle,out expected));Require(GetFileInformationByHandle(file.SafeFileHandle,out actual));
+        if(expected.volume!=actual.volume || expected.indexHigh!=actual.indexHigh || expected.indexLow!=actual.indexLow)
+          throw new IOException("WITNESS_COMMITTED_IDENTITY_CHANGED");
+        sameFile=true;
+      }
+      long length=file.Length;if(length<1 || length>64)throw new FormatException("WITNESS_COMMITTED_BOUND_INVALID");
+      var bytes=new byte[(int)length];int at=0;
+      while(at<bytes.Length){int read=file.Read(bytes,at,bytes.Length-at);if(read<=0)throw new IOException("WITNESS_COMMITTED_SHORT_READ");at+=read;}
+      if(file.ReadByte()!=-1 || file.Length!=length)throw new IOException("WITNESS_COMMITTED_BYTES_CHANGED");
+      foreach(byte value in bytes)if(value<32 || value>126)throw new FormatException("WITNESS_COMMITTED_ASCII_INVALID");
+      return Encoding.ASCII.GetString(bytes);
+    }
+  }
+  public static FixedRuntimeFixtureResultV1 FixedRuntimeFixtureV1(string directory,string mode,string fixtureNode,string publicationVariant,string readerVariant) {
    if(!System.Text.RegularExpressions.Regex.IsMatch(mode,
      "^(normal|failed|input|deadline|orphan|overflow|query|cancel|parent-death|spawn-fail|bind-denied|drain-cancel|drain-parent-death|witness-paused)$"))
      throw new InvalidOperationException("FIXTURE_MODE_INVALID");
@@ -79,6 +107,10 @@ namespace Stephanos.Sovereign {
      throw new InvalidOperationException("FIXTURE_PUBLICATION_VARIANT_INVALID");
    if(publicationVariant=="VisiblePartial" && mode!="witness-paused")
      throw new InvalidOperationException("FIXTURE_PUBLICATION_MODE_INVALID");
+   if(readerVariant!="ReadDelete" && readerVariant!="LegacyNoDeleteSharing")
+     throw new InvalidOperationException("FIXTURE_READER_VARIANT_INVALID");
+   if(readerVariant=="LegacyNoDeleteSharing" && (publicationVariant!="Atomic" || mode!="witness-paused"))
+     throw new InvalidOperationException("FIXTURE_READER_MODE_INVALID");
    var result=new FixedRuntimeFixtureResultV1 { Mode=mode };
    string witness=Path.Combine(directory,mode+".witness"),ack=Path.Combine(directory,mode+".ack");
    var current=Process.GetCurrentProcess(); Process fakeOwner=null;
@@ -105,26 +137,39 @@ namespace Stephanos.Sovereign {
     limits.basic.flags=0x2000|0x400|0x8; limits.basic.activeLimit=16;
     Require(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(EXTENDED_LIMIT))));
     observer=Task.Factory.StartNew(delegate {
+     Microsoft.Win32.SafeHandles.SafeFileHandle renameHandle=null;
+     try {
       var wait=Stopwatch.StartNew();
+      bool publicationReleased=false;
       while(wait.ElapsedMilliseconds<10000 && Interlocked.CompareExchange(ref finished,0,0)==0) {
-        if(mode=="witness-paused" && File.Exists(witness+".pending") && !File.Exists(witness)) {
+        if(mode=="witness-paused" && !publicationReleased && File.Exists(witness+".pending") && !File.Exists(witness)) {
           // Never read or parse a staged publication. Only its atomic commit
           // can become a process witness; release the deliberately paused writer.
           result.PartialWitnessIgnored=true;
-          try { File.WriteAllText(witness+".publish","release"); }
+          try {
+            // Retain a real DELETE-access handle on the SAME staged file across
+            // the atomic rename. This deterministically exercises the Windows
+            // sharing window without sleeping or weakening native deadlines.
+            renameHandle=CreateFileW(witness+".pending",0x10080u,7u,IntPtr.Zero,3u,0x00200000u,IntPtr.Zero);
+            Require(!renameHandle.IsInvalid);result.DeleteHandleHeldBeforeCommit=true;
+            File.WriteAllText(witness+".publish","release");publicationReleased=true;
+          }
           catch(Exception error) {
-            result.ObserverFaultCode="WITNESS_PUBLICATION_RELEASE_FAILED";
-            result.ObserverFaultType=error.GetType().FullName;
+            FixtureObserverFault(result,error,"STAGING_RELEASE","WITNESS_PUBLICATION_RELEASE_FAILED");
             Interlocked.Exchange(ref observerFailed,1); return;
           }
         }
         if(File.Exists(witness)) {
+          string phase="COMMITTED_READ";
           try {
-            string raw=File.ReadAllText(witness);
+            string raw=readerVariant=="LegacyNoDeleteSharing"?File.ReadAllText(witness):
+              ReadCommittedFixtureWitness(witness,renameHandle,out result.SameFileAcrossRename);
+            phase="COMMITTED_PARSE";
             if(!System.Text.RegularExpressions.Regex.IsMatch(raw,"^[1-9][0-9]*[|][0-9]+$"))
               throw new FormatException("WITNESS_COMMITTED_FORMAT_INVALID");
             string[] ids=raw.Split('|');
             int rootPid=Int32.Parse(ids[0]), childPid=Int32.Parse(ids[1]);
+            phase="PROCESS_BIND";
             rootHandle=RuntimeOpenProcessV1(0x101000,false,(uint)rootPid);
             if(rootHandle==IntPtr.Zero) throw new InvalidOperationException("ROOT_CAPTURE_FAILED");
             bool member; Require(IsProcessInJob(rootHandle,job,out member)); Require(member);
@@ -145,20 +190,22 @@ namespace Stephanos.Sovereign {
               result.DescendantCaptured=true;
             }
             Interlocked.Exchange(ref captured,1);
+            phase="ACK_PUBLICATION";
             File.WriteAllText(ack,"ack");
             return;
           } catch(Exception error) {
             if(rootHandle!=IntPtr.Zero) { CloseHandle(rootHandle); rootHandle=IntPtr.Zero; }
             if(descendant!=IntPtr.Zero) { CloseHandle(descendant); descendant=IntPtr.Zero; }
             result.RootCaptured=false; result.DescendantCaptured=false;
-            result.ObserverFaultCode=error is IOException?"WITNESS_READ_FAILED":
-              error is FormatException?"WITNESS_FORMAT_INVALID":"WITNESS_BINDING_UNPROVEN";
-            result.ObserverFaultType=error.GetType().FullName;
+            string code=phase=="ACK_PUBLICATION"?"WITNESS_ACK_PUBLICATION_FAILED":
+              error is FormatException?"WITNESS_FORMAT_INVALID":phase=="COMMITTED_READ"?"WITNESS_READ_FAILED":"WITNESS_BINDING_UNPROVEN";
+            FixtureObserverFault(result,error,phase,code);
             Interlocked.Exchange(ref observerFailed,1); return;
           }
         }
         Thread.Sleep(5);
       }
+     } finally {if(renameHandle!=null)renameHandle.Dispose();}
     },CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
     if(mode=="parent-death") killer=Task.Factory.StartNew(delegate {
       while(Interlocked.CompareExchange(ref captured,0,0)==0 &&
@@ -253,9 +300,23 @@ if ($FixtureWitnessPublication -ceq 'VisiblePartial') {
   if ($FixtureTerminalGuardBaseline -cne 'None') { throw 'FIXTURE_COMBINED_MUTANTS_UNSUPPORTED' }
   $modes = @('witness-paused')
 }
+if ($FixtureWitnessReader -ceq 'LegacyNoDeleteSharing') {
+  if ($FixtureTerminalGuardBaseline -cne 'None' -or $FixtureWitnessPublication -cne 'Atomic') { throw 'FIXTURE_COMBINED_MUTANTS_UNSUPPORTED' }
+  $modes = @('witness-paused')
+}
 foreach($mode in $modes) {
-  $r = [Stephanos.Sovereign.CoreJobCustodyV1]::FixedRuntimeFixtureV1($fixtureRoot,$mode,$fixtureNode,$FixtureWitnessPublication)
+  $r = [Stephanos.Sovereign.CoreJobCustodyV1]::FixedRuntimeFixtureV1($fixtureRoot,$mode,$fixtureNode,$FixtureWitnessPublication,$FixtureWitnessReader)
   if ($r.RuntimeQualified -ne $false -or $r.SourceMutationAllowed -ne $false) { throw 'FIXTURE_AUTHORITY_INVALID' }
+  if ($FixtureWitnessReader -ceq 'LegacyNoDeleteSharing') {
+    if ($r.ObserverFaultCode -cne 'WITNESS_READ_FAILED' -or $r.ObserverFaultPhase -cne 'COMMITTED_READ' -or
+        $r.ObserverFaultWin32 -ne 32 -or -not $r.DeleteHandleHeldBeforeCommit -or $r.RootCaptured -or
+        $r.Receipt.OperationOk -or -not $r.Receipt.CancellationRequested -or
+        -not $r.Receipt.ExecutionCustodyReleased -or -not $r.Receipt.ZeroActiveProcessesObserved) {
+      throw ('FIXTURE_SHARING_COUNTEREXAMPLE_INVALID:'+ ($r|ConvertTo-Json -Depth 6 -Compress))
+    }
+    $cases += $r
+    continue
+  }
   if ($FixtureWitnessPublication -ceq 'VisiblePartial') {
     if ($r.ObserverFaultCode -notin @('WITNESS_READ_FAILED','WITNESS_FORMAT_INVALID') -or
         $r.RootCaptured -or $r.Receipt.OperationOk -or -not $r.Receipt.Launched -or
@@ -267,6 +328,9 @@ foreach($mode in $modes) {
     continue
   }
   if ($r.ObserverFaultCode -cne '') { throw ('FIXTURE_OBSERVER_FAILED:'+ ($r|ConvertTo-Json -Depth 6 -Compress)) }
+  if ($mode -ceq 'witness-paused' -and (-not $r.DeleteHandleHeldBeforeCommit -or -not $r.SameFileAcrossRename)) {
+    throw ('FIXTURE_RENAME_IDENTITY_UNPROVEN:'+ ($r|ConvertTo-Json -Depth 6 -Compress))
+  }
   if ($mode -ne 'spawn-fail') {
     if (-not $r.RootCaptured -or -not $r.RootEndedByHandle -or
         $r.RootCreatedAtUtc -cne $r.Receipt.RootCreatedAtUtc) { throw ('FIXTURE_ROOT_WITNESS_INVALID:'+ ($r | ConvertTo-Json -Depth 6 -Compress)) }
@@ -291,4 +355,4 @@ foreach($mode in $modes) {
   if ($mode -eq 'overflow' -and (-not $r.Receipt.OutputOverflow -or $r.Receipt.OutputComplete)) { throw 'FIXTURE_OUTPUT_FALSE_PROOF' }
   $cases += $r
 }
-@{schemaVersion='stephanos.fixed-runtime-native-fixture.v1';ok=($FixtureTerminalGuardBaseline -ceq 'None' -and $FixtureWitnessPublication -ceq 'Atomic');witnessPublicationVariant=$FixtureWitnessPublication;counterfactualVariant=$FixtureTerminalGuardBaseline;fixtureExecutable=$fixtureNode;fixtureExecutableSha256=$copyDigest;cases=$cases;runtimeQualified=$false;fixtureRoot=$fixtureRoot} | ConvertTo-Json -Depth 8 -Compress
+@{schemaVersion='stephanos.fixed-runtime-native-fixture.v1';ok=($FixtureTerminalGuardBaseline -ceq 'None' -and $FixtureWitnessPublication -ceq 'Atomic' -and $FixtureWitnessReader -ceq 'ReadDelete');witnessPublicationVariant=$FixtureWitnessPublication;witnessReaderVariant=$FixtureWitnessReader;counterfactualVariant=$FixtureTerminalGuardBaseline;fixtureExecutable=$fixtureNode;fixtureExecutableSha256=$copyDigest;cases=$cases;runtimeQualified=$false;fixtureRoot=$fixtureRoot} | ConvertTo-Json -Depth 8 -Compress
