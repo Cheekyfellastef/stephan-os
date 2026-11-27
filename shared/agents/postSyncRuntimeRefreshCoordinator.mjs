@@ -223,6 +223,9 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 ]);
 
 const NATURAL_EXACT = new Set([
+  // Fixed on-demand source tools: adoption does not invoke these tools.
+  'scripts/starfield-vr-aer-native-build-readiness.mjs',
+  'scripts/stephanos-github-operator-briefing.mjs',
   // Manual guarded fresh invocation only; source adoption never retargets an
   // installed shortcut or claims installation/startup acceptance.
   'scripts/windows/retarget-stephanos-local-shortcut.ps1',
@@ -384,6 +387,10 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  // Hosted review job (requires GitHub Actions) and its parse-only proof fixture.
+  // Source adoption is not reviewer qualification or local execution.
+  'scripts/independent-merge-security-review-v2.mjs',
+  'scripts/fixtures/sovereign-specialist-authority-closure-v1.mjs',
   ...STARFIELD_NATIVE_BUILD_ACTIVATION.offlineBuild,
   ...STARFIELD_NATIVE_BUILD_ACTIVATION.offlinePackage,
   'scripts/windows/Test-StarfieldMonitorSplash.ps1',
@@ -637,7 +644,8 @@ function isOpenClawPath(path) {
 }
 
 function isUiPath(path) {
-  return LAUNCHER_CRITICAL_SOURCE_PATHS.has(path)
+  return path === 'shared/skill-forge/skillGrowthProjectionV1.mjs'
+    || LAUNCHER_CRITICAL_SOURCE_PATHS.has(path)
     || UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS.has(path)
     // This exact stylesheet is imported by stephanos-ui/src/main.jsx.
     // Classify it as a UI reload, not no-runtime or a generic styles allowance.
