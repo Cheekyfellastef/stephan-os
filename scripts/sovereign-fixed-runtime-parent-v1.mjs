@@ -69,7 +69,9 @@ const resourceObservation=()=>{
     const code=receipt?.ok===false && receipt.finalVerdict==='STEPHANOS_NATIVE_CAPACITY_GAMING_HOLD'
       && typeof receipt.reason==='string' && Object.hasOwn(GOVERNOR_HOLD_CODES_V1,receipt.reason)
       ? GOVERNOR_HOLD_CODES_V1[receipt.reason] : 'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE';
-    return Object.freeze({ok:false,governorHoldCode:code});
+    return Object.freeze({ok:false,governorHoldCode:code,
+      ...(code==='FIXED_RUNTIME_GOVERNOR_PERMISSION_DENIED' && Object.hasOwn(receipt,'governorPermission')
+        ? {governorPermission:receipt.governorPermission} : {})});
   } catch {return Object.freeze({ok:false,governorHoldCode:'FIXED_RUNTIME_GOVERNOR_EVIDENCE_UNAVAILABLE'});}
 };
 const resourceAllowed=()=>resourceObservation().ok;
@@ -243,6 +245,12 @@ function captureFixedRuntimeSourceProofV1(head) {
 const denied = (reason,binding,governorHoldCode='') => {const result=Object.freeze({ok:false, reason, executionCustodyReleased:true,
   taskRootCreated:false, taskExecuted:false, dispatchAllowed:false,
   ...(governorHoldCode?{governorHoldCode}:{})});if(binding)exclusions.set(result,Object.freeze({...binding}));return result;};
+// Permission diagnostics belong only to inspection denials. Execution and
+// one-use qualification/exclusion provenance remain unchanged.
+const governorInspectionDenied = observation => Object.freeze({
+  ...denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',null,observation.governorHoldCode),
+  ...(Object.hasOwn(observation,'governorPermission') ? {governorPermission:observation.governorPermission} : {}),
+});
 export function consumeFixedRuntimePrelaunchExclusionV1(result,binding) {
   const stored=exclusions.get(result);exclusions.delete(result);
   return Boolean(stored && binding && ['requestId','sourceHead','custodyRecordSha256','nativeRecordId','actionId','missionId','claimSha256'].every(k=>stored[k]===binding[k]));
@@ -406,7 +414,7 @@ export function inspectFixedRuntimeQualificationV1() {
   if(process.platform!=='win32') return denied('FIXED_RUNTIME_WINDOWS_REQUIRED');
   try {
     const initialGovernor=resourceObservation();
-    if(!initialGovernor.ok)return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',null,initialGovernor.governorHoldCode);
+    if(!initialGovernor.ok)return governorInspectionDenied(initialGovernor);
     // This is the real fixed-URL canonical source observer, not an injectable
     // success flag or caller-selected head. Merkle integrity cannot replace it.
     const authorityStarted=performance.now();
@@ -436,7 +444,7 @@ export function inspectFixedRuntimeQualificationV1() {
       !SHA.test(row.CustodyRecordSha256??'') || !Number.isSafeInteger(row.NativeRecordId) || row.NativeRecordId<1)
       return denied('FIXED_RUNTIME_AUTHENTICATED_IDLE_UNPROVEN');
     const terminalGovernor=resourceObservation();
-    if(!terminalGovernor.ok)return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',null,terminalGovernor.governorHoldCode);
+    if(!terminalGovernor.ok)return governorInspectionDenied(terminalGovernor);
     if(performance.now()-authorityStarted>=25000 || exactHead()!==executionHead)
       return denied('FIXED_RUNTIME_CANONICAL_SOURCE_EXPIRED');
     const qualified=Object.freeze({ok:true,sourceHead:installation.executionHead,installationSourceHead:installation.head,

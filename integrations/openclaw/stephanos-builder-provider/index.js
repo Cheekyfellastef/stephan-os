@@ -14,6 +14,57 @@ import {
   executeOpenClawOc2GatewayRequest,
 } from './lib/oc2-gateway-provider.mjs';
 
+
+const SHARED_CONVERSATION_METHOD = 'stephanos-builder-provider.sharedConversation';
+const SHARED_CONVERSATION_SCHEMA = 'stephanos.openclaw-shared-conversation-gateway.v1';
+const SHARED_CONVERSATION_KEYS = Object.freeze([
+  'schemaVersion', 'requestId', 'messageId', 'threadId', 'turnId',
+  'relatedIssue', 'text', 'issuedAtUtc', 'expiresAtUtc',
+]);
+const SHARED_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i;
+const SHARED_ISSUE = /^#[1-9][0-9]{0,6}$/;
+const SHARED_SECRET = /(?:BEGIN (?:RSA |OPENSSH )?PRIVATE KEY|gh[pousr]_[a-z0-9_]+|sk-[a-z0-9_-]{20,})/i;
+
+// A real, authenticated Gateway receive/reply proof, not a model completion
+// and never a source-write, lease, approval, or permission grant.
+export function receiveOpenClawSharedConversationTurn(params = {}, context = {}, now = Date.now()) {
+  const deny = (reason) => Object.freeze({
+    schemaVersion: SHARED_CONVERSATION_SCHEMA,
+    success: false, blocker: reason,
+    arbitraryShellAllowed: false, sourceMutationAllowed: false, mergeAuthority: false,
+  });
+  if (!params || typeof params !== 'object' || Array.isArray(params)
+      || Object.keys(params).sort().join(',') !== [...SHARED_CONVERSATION_KEYS].sort().join(',')) {
+    return deny('OPENCLAW_CONVERSATION_ENVELOPE_INVALID');
+  }
+  const fields = ['requestId', 'messageId', 'threadId', 'turnId'];
+  if (params.schemaVersion !== SHARED_CONVERSATION_SCHEMA
+      || fields.some((key) => typeof params[key] !== 'string' || !SHARED_ID.test(params[key]))
+      || typeof params.relatedIssue !== 'string' || !SHARED_ISSUE.test(params.relatedIssue)
+      || typeof params.text !== 'string' || !params.text.trim() || params.text.length > 1200
+      || SHARED_SECRET.test(params.text)) return deny('OPENCLAW_CONVERSATION_SCOPE_INVALID');
+  const issued = Date.parse(params.issuedAtUtc), expiry = Date.parse(params.expiresAtUtc);
+  if (!Number.isFinite(issued) || !Number.isFinite(expiry)
+      || issued > now + 60_000 || expiry <= now || expiry <= issued
+      || expiry - issued > 30 * 60_000) return deny('OPENCLAW_CONVERSATION_EXPIRED');
+  if (context.executingInsideOpenClawGateway !== true
+      || context.pluginId !== 'stephanos-builder-provider'
+      || context.method !== SHARED_CONVERSATION_METHOD
+      || !/^openclaw-gateway:[1-9][0-9]*$/.test(context.providerInstance || '')) {
+    return deny('OPENCLAW_CONVERSATION_NATIVE_CONTEXT_REQUIRED');
+  }
+  return Object.freeze({
+    schemaVersion: SHARED_CONVERSATION_SCHEMA,
+    success: true, executionSurface: 'openclaw-gateway-plugin',
+    providerInstance: context.providerInstance,
+    requestId: params.requestId, messageId: params.messageId,
+    threadId: params.threadId, turnId: params.turnId, relatedIssue: params.relatedIssue,
+    replyText: 'OpenClaw Gateway received the shared conversation turn. Native assistant reasoning is not yet qualified by this handshake.',
+    sourceHeadProven: false, modelResponseProven: false,
+    arbitraryShellAllowed: false, sourceMutationAllowed: false, mergeAuthority: false,
+  });
+}
+
 function gatewayContext(method) {
   return {
     executingInsideOpenClawGateway: true,
@@ -41,6 +92,12 @@ export default definePluginEntry({
         gatewayRuntimeContext: gatewayContext(OPENCLAW_OC2_GATEWAY_METHOD),
       }),
       { scope: 'operator.write' },
+    );
+
+    api.registerGatewayMethod(
+      SHARED_CONVERSATION_METHOD,
+      async (params) => receiveOpenClawSharedConversationTurn(params, gatewayContext(SHARED_CONVERSATION_METHOD)),
+      { scope: 'operator.read' },
     );
 
     api.registerCommand({

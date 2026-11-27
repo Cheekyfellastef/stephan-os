@@ -23,7 +23,9 @@ export const MAX_SYNC_REFRESH_CYCLES = 3;
 // consume the whole Windows Scheduled Task window.
 export const SYNC_AND_REFRESH_CHILD_BUDGET_MS = 180_000;
 export const SYNC_AND_REFRESH_MIN_REMAINING_MS = 5_000;
-export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: 60_000, refresh: 150_000, mailbox: 30_000 });
+// An epoch sync performs two fresh drain preflights. Let it use the remaining
+// child envelope; the parent still reserves cleanup and bounds later phases.
+export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: SYNC_AND_REFRESH_CHILD_BUDGET_MS, refresh: 150_000, mailbox: 30_000 });
 export const SYNC_CONTENTION_WAIT_MS = 30_000;
 export const SYNC_CONTENTION_POLL_MS = 1_000;
 const MAX_SYNC_CONTENTION_POLLS = SYNC_CONTENTION_WAIT_MS / SYNC_CONTENTION_POLL_MS;

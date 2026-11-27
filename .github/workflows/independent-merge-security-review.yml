@@ -49,6 +49,23 @@ jobs:
       issues: write
       pull-requests: read
     steps:
+      - name: Hold draft reviews before installation GitHub API reads
+        id: prebudget_draft_gate
+        env:
+          REVIEW_EVENT_KIND: ${{ github.event_name }}
+          REVIEW_DRAFT_JSON: ${{ toJSON(github.event.pull_request.draft) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Preserve an explicit failed check for drafts, never a false green.
+          # Only the trusted GitHub event JSON is used; there are no REST reads.
+          if [[ "$REVIEW_EVENT_KIND" == "workflow_dispatch" ]]; then
+            exit 0
+          fi
+          if [[ "$REVIEW_EVENT_KIND" != "pull_request_target" || "$REVIEW_DRAFT_JSON" != "false" ]]; then
+            echo "::warning::INDEPENDENT_REVIEW_DRAFT_PRE_BUDGET_HOLD"
+            exit 1
+          fi
       - name: Gate hosted review on its own GitHub installation API budget
         id: github_budget
         env:

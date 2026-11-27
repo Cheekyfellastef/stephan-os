@@ -30,6 +30,9 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
+  safeCpuPressureSnapshotProjection,
+  strictNativeFailureExitStatusV1,
+  safeStarfieldVrResourcePreflightProjection,
   diagnoseRescueIslandNativeReceiptInvalidV1,
   sovereignCommanderRemoteNetworkTimeoutMs,
   sovereignCommanderRemotePlanStepTimeoutMs,
@@ -2288,11 +2291,14 @@ test('maintenance receipt must contain exact completion proof', async () => {
     command: { plan: { processId: 'battle-bridge-status' } },
     structuredContent: { ok: true, status: 0, errorCode: '' },
   };
-  for (const maintenance of [
-    { ...baseline, finalVerdict: 'SOMETHING_ELSE' },
-    { ...baseline, proofHash: 'bad' },
-    { ...baseline, command: { plan: { processId: 'other-action' } } },
-    { ...baseline, structuredContent: { ok: false, status: 1, errorCode: 'FAILED' } },
+  for (const [maintenance, expectedFailure] of [
+    [{ ...baseline, finalVerdict: 'SOMETHING_ELSE' }, 'COMMANDER_ACTION_COMPLETION_UNVERIFIED'],
+    // Invalid proof hashes are rejected by sovereignCommanderCompletionEnvelope
+    // before a native completion is trusted, so do not infer a specific child failure.
+    [{ ...baseline, proofHash: 'bad' }, 'COMMANDER_ACTION_COMPLETION_UNVERIFIED'],
+    [{ ...baseline, command: { plan: { processId: 'other-action' } } }, 'COMMANDER_ACTION_PROCESS_ID_MISMATCH'],
+    [{ ...baseline, structuredContent: { ok: false, status: 1, errorCode: 'FAILED' } }, 'COMMANDER_ACTION_NATIVE_EXIT_NONZERO'],
+    [{ ...baseline, structuredContent: { ok: true, status: null, errorCode: '' } }, 'COMMANDER_ACTION_EXIT_UNVERIFIED'],
   ]) {
     const { fetchFn } = mcpFetch({ maintenance });
     const result = await executeSovereignCommanderRemoteOnBattleBridge(
@@ -2306,6 +2312,28 @@ test('maintenance receipt must contain exact completion proof', async () => {
     );
     assert.equal(result.ok, false);
     assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+    assert.equal(result.finalVerdict, expectedFailure);
+    assert.equal(result.executionBlocker, expectedFailure);
+    assert.equal(result.publicReceiptSafe, true);
+    assert.equal(result.secretMaterialReturned, false);
+    const receipt = {
+      schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+      requestId: 'commander-proof-failure-typed-v1', operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      repository: 'Cheekyfellastef/stephan-os', issueNumber: activeMailboxIssueForTest,
+      branch: 'main', expectedHead: HEAD, processSourceHead: HEAD,
+      state: 'BLOCKED', blocker: result.blocker,
+      result: { ok: false, verdict: result.verdict, operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+        requestId: 'commander-proof-failure-typed-v1', result: {
+          ...result, stdout: 'PRIVATE_NATIVE_COMMAND_OUTPUT',
+          codexLastMessage: 'PRIVATE_NATIVE_COMMAND_OUTPUT'.repeat(300),
+        } },
+    };
+    const compact = JSON.parse(serializeBoundedReceiptJson(receipt, 6 * 1024));
+    assert.equal(compact.result.result.finalVerdict, expectedFailure,
+      'bounded public receipt must retain the failure discriminator');
+    assert.equal(compact.result.result.blocker, result.blocker);
+    assert.equal(compact.result.result.ok, false);
+    assert.doesNotMatch(JSON.stringify(compact), /PRIVATE_NATIVE_COMMAND_OUTPUT/);
   }
 });
 
@@ -2808,6 +2836,235 @@ test('controller activity publication is single-action, canonical and returns on
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE RAW OUTPUT'), false);
   assert.equal(serialized.includes('PRIVATE STDERR'), false);
+});
+
+
+
+test('material controller publication binds proofWritten and proofId to the requested run (#2573)', async () => {
+  const controllerId = '6ac3999164b88191a1c866c70ab51bd7';
+  const runId = 'material-proof-identity-v1';
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId, runId, observedEnabled: true, executionState: 'ACTIVE',
+    materialActionsSucceeded: 1, safeEligibleWorkRemaining: 0,
+    proofRefs: ['proof/material-run-verified'],
+  };
+  const publication = {
+    schemaVersion: activity.schemaVersion, ok: true, controllerId, runId,
+    statusWritten: true, statusId: 'controller-' + controllerId + '-activity',
+    proofWritten: true, proofId: 'controller-' + controllerId.slice(0, 12) + '-run-' + runId,
+    executionState: 'ACTIVE', materialLaneCount: 0, materialActionsSucceeded: 1,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false, sourceMutationAllowed: false,
+    mergeAuthority: false, secretMaterialIncluded: false,
+  };
+  const execute = async (requested, published) => {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'publish-controller-activity' } },
+      structuredContent: { ok: true, status: 0,
+        stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT=' + JSON.stringify(published),
+        stderr: '', errorCode: '' },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    return executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'publish-controller-activity', controllerActivity: requested }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+    );
+  };
+  assert.equal((await execute(activity, publication)).ok, true);
+  for (const spoof of [
+    { proofWritten: false, proofId: '' },
+    { proofWritten: false },
+    { proofWritten: true, proofId: '' },
+    { proofWritten: true, proofId: 'controller-other-run-foreign' },
+    { proofWritten: true, proofId: 'controller-' + controllerId.slice(0, 12) + '-run-foreign' },
+  ]) {
+    const result = await execute(activity, { ...publication, ...spoof });
+    assert.equal(result.ok, false, 'material completion admitted missing or foreign proof');
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID');
+  }
+  const noMaterial = { ...activity, materialActionsSucceeded: 0, proofRefs: [] };
+  const noMaterialPublished = { ...publication, materialActionsSucceeded: 0, proofWritten: false, proofId: '' };
+  assert.equal((await execute(noMaterial, noMaterialPublished)).ok, true);
+  const unexpected = await execute(noMaterial, { ...noMaterialPublished, proofWritten: true, proofId: publication.proofId });
+  assert.equal(unexpected.ok, false, 'status-only publication inherited foreign proof');
+});
+
+test('controller publication binds statusId to the exact requested canonical controller (#2573)', async () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'controller-status-identity-bound',
+    observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const published = {
+    schemaVersion: activity.schemaVersion, ok: true,
+    controllerId: activity.controllerId, runId: activity.runId,
+    statusWritten: true, proofWritten: false,
+    statusId: `controller-${activity.controllerId}-activity`, proofId: '',
+    executionState: 'IDLE', materialLaneCount: 0,
+    materialActionsSucceeded: 0,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false, sourceMutationAllowed: false,
+    mergeAuthority: false, secretMaterialIncluded: false,
+  };
+  const execute = async (statusId) => {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'publish-controller-activity' } },
+      structuredContent: {
+        ok: true, status: 0,
+        stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT='
+          + JSON.stringify({ ...published, statusId }),
+        stderr: '', errorCode: '',
+      },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    return executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'publish-controller-activity', controllerActivity: activity }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+    );
+  };
+  assert.equal((await execute(published.statusId)).ok, true);
+  for (const foreignStatusId of [
+    'controller-other-controller-activity',
+    'controller-6ac3999164b88191a1c866c70ab51bd7-other',
+    'controller-6ae722da2e188191b4dc8093fcb76941-activity',
+  ]) {
+    const result = await execute(foreignStatusId);
+    assert.equal(result.ok, false, `foreign status identity admitted: ${foreignStatusId}`);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID');
+  }
+});
+
+test('controller activity identities must be scalar strings before canonical publication (#2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'typed-identity', observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  assert.equal(check(activity).ok, true, 'valid canonical scalar identity must remain admitted');
+  for (const [field, malformed, blocker] of [
+    ['controllerId', [activity.controllerId], 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID'],
+    ['runId', [activity.runId], 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID'],
+    ['runId', 17, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID'],
+    ['executionState', [activity.executionState], 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID'],
+  ]) {
+    const result = check({ ...activity, [field]: malformed });
+    assert.equal(result.ok, false, field + ' admitted non-scalar ' + JSON.stringify(malformed));
+    assert.equal(result.blocker, blocker);
+  }
+});
+
+test('controller activity explicit counters reject coercion while legacy lane-count aliases remain numeric (original #2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'strict-counter-validation',
+    observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  assert.equal(check(activity).ok, true);
+  for (const field of [
+    'materialActionsSucceeded', 'goalsAdvanced', 'sourceChanges',
+    'reviewsAdvanced', 'mergesCompleted', 'safeEligibleWorkRemaining',
+    'activeLaneCount', 'parkedLaneCount',
+  ]) {
+    for (const malformed of [null, false, '0', [], {}]) {
+      const result = check({ ...activity, [field]: malformed });
+      assert.equal(result.ok, false, `${field} accepted coerced ${JSON.stringify(malformed)}`);
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID');
+    }
+  }
+  const legacy = check({ ...activity, activeLanes: '2', activeLaneCount: 2, parkedLanes: '0' });
+  assert.equal(legacy.ok, true, 'retain original documented legacy lane-count normalization');
+  assert.equal(legacy.command.controllerActivity.activeLaneCount, 2);
+  assert.deepEqual(legacy.command.controllerActivity.activeLanes, []);
+  const invalidLegacy = check({ ...activity, activeLanes: '2', activeLaneCount: '2' });
+  assert.equal(invalidLegacy.ok, false);
+  assert.equal(invalidLegacy.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID');
+});
+
+test('legacy lane-count strings obey the bounded metadata model without coercing explicit counters (original #2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'legacy-counter-model', observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  for (const [alias, explicit] of [['activeLanes', 'activeLaneCount'], ['parkedLanes', 'parkedLaneCount']]) {
+    for (let count = 0; count <= 15; count++) {
+      for (const legacy of [count, String(count), ` ${count} `]) {
+        const result = check({ ...activity, [alias]: legacy });
+        assert.equal(result.ok, true, `${alias} rejected bounded legacy ${JSON.stringify(legacy)}`);
+        assert.equal(result.command.controllerActivity[explicit], count);
+        assert.deepEqual(result.command.controllerActivity[alias], []);
+      }
+      assert.equal(check({ ...activity, [alias]: String(count), [explicit]: count }).ok, true);
+      assert.equal(check({ ...activity, [alias]: String(count), [explicit]: String(count) }).ok, false);
+      assert.equal(check({ ...activity, [alias]: String(count), [explicit]: (count + 1) % 16 }).ok, false);
+    }
+    for (const malformed of ['', ' ', '1.0', '1e0', '+1', '-1', 'Infinity', 'NaN', '0x1', '\\d', '16', 16, -1, null, false, {}]) {
+      assert.equal(check({ ...activity, [alias]: malformed }).ok, false,
+        `${alias} accepted malformed legacy ${JSON.stringify(malformed)}`);
+    }
+  }
+});
+
+test('controller activity positive public completion rejects coerced output counters (original #2573)', async () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'strict-publication-receipt',
+    observedEnabled: true, executionState: 'IDLE',
+    materialActionsSucceeded: 0, safeEligibleWorkRemaining: 0,
+  };
+  const published = {
+    schemaVersion: activity.schemaVersion,
+    ok: true, controllerId: activity.controllerId, runId: activity.runId,
+    statusWritten: true, proofWritten: false,
+    statusId: `controller-${activity.controllerId}-activity`,
+    proofId: '', executionState: 'IDLE', materialLaneCount: 0,
+    materialActionsSucceeded: 0, finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false, sourceMutationAllowed: false,
+    mergeAuthority: false, secretMaterialIncluded: false,
+  };
+  for (const field of ['materialLaneCount', 'materialActionsSucceeded']) {
+    for (const malformed of [null, false, '0', [], {}]) {
+      const maintenance = {
+        ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+        proofHash: 'a'.repeat(64),
+        command: { plan: { processId: 'publish-controller-activity' } },
+        structuredContent: {
+          ok: true, status: 0,
+          stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT='
+            + JSON.stringify({ ...published, [field]: malformed }),
+          stderr: '', errorCode: '',
+        },
+      };
+      const { fetchFn } = mcpFetch({ maintenance });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command({ remoteAction: 'publish-controller-activity', controllerActivity: activity }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn },
+      );
+      assert.equal(result.ok, false, `${field} accepted ${JSON.stringify(malformed)}`);
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID');
+    }
+  }
 });
 
 test('controller activity rejects generic maintenance success without a real publication projection', async () => {
@@ -3969,6 +4226,35 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
   assert.equal(result.visibilitySnapshot.health.core, 'GREEN');
   const serialized = JSON.stringify(result);
   assert.doesNotMatch(serialized, /MUST_NOT_ESCAPE|privatePath|privateReceiptPath|privateRemote|rawCommandLine|C:\\\\secret|PRIVATE RAW OUTPUT|PRIVATE STDERR/);
+  // A malformed native counter must remain unknown, never become observed zero.
+  for (const [field, invalid] of [
+    ['changedEntryCount', false],
+    ['changedEntryCount', null],
+    ['trackedChangeCount', '0'],
+    ['untrackedCount', ''],
+    ['untrackedCount', true],
+  ]) {
+    const injectedSnapshot = { ...snapshot, repository: { ...snapshot.repository, [field]: invalid } };
+    const injectedMaintenance = {
+      ...maintenance,
+      structuredContent: {
+        ...maintenance.structuredContent,
+        stdout: 'SOVEREIGN_COMMANDER_VISIBILITY_SNAPSHOT_RESULT=' + JSON.stringify(injectedSnapshot),
+      },
+    };
+    const injectedFetch = mcpFetch({ maintenance: injectedMaintenance });
+    const checked = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'visibility-snapshot' }),
+      {
+        spawnSyncFn: spawnForHead(),
+        readFileFn: readToken,
+        fetchFn: injectedFetch.fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Operator' },
+      },
+    );
+    assert.equal(checked.ok, true, field);
+    assert.equal(checked.visibilitySnapshot.repository[field], null, field);
+  }
 });
 
 
@@ -5097,4 +5383,212 @@ test('preservation receipt refuses non-integer native status even with correct p
       assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INVALID_NATIVE_OUTPUT/);
     }
   }
+});
+test('parity generic-success envelope cannot substitute for a typed positive parity marker in single or plan (#2573)', async () => {
+  const action = 'reconcile-remote-commander-parity';
+  for (const stdout of [
+    'PRIVATE_PARITY_WITHOUT_TYPED_MARKER',
+    'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT={not valid JSON}',
+    'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT=' + JSON.stringify({
+      ok: false, canonicalOwnerGoal: '#2573',
+      finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+    }),
+  ]) {
+    const maintenance = {
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'e'.repeat(64),
+      command: { plan: { processId: action } },
+      structuredContent: { ok: true, status: 0, stdout, stderr: '', errorCode: '' },
+    };
+    for (const plan of [false, true]) {
+      const { fetchFn } = mcpFetch({ maintenanceByAction: { [action]: maintenance } });
+      const result = await executeSovereignCommanderRemoteOnBattleBridge(
+        command(plan ? { remoteAction: '', remotePlan: [action] } : { remoteAction: action }),
+        { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+          ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }) },
+      );
+      assert.equal(result.ok, false, 'generic success must not count as parity proof');
+      assert.equal(result.blocker, plan
+        ? 'SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID'
+        : 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+      assert.equal(result.capabilityParityPresent, false);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_PARITY_WITHOUT_TYPED_MARKER/);
+    }
+  }
+});
+
+test('positive typed parity proof remains admitted within the original bounded remote plan (#2573)', async () => {
+  const action = 'reconcile-remote-commander-parity';
+  const parity = {
+    ok: true, canonicalOwnerGoal: '#2573',
+    retainedCapabilityCount: 14, parityPresentCount: 12,
+    buildableGapCount: 0, boundaryHoldCount: 2,
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+  };
+  const maintenance = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'e'.repeat(64),
+    command: { plan: { processId: action } },
+    structuredContent: {
+      ok: true, status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT=' + JSON.stringify(parity),
+      stderr: '', errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenanceByAction: { [action]: maintenance } });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: '', remotePlan: [action] }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+      ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }) },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE');
+  assert.equal(result.completedSteps.length, 1);
+  assert.equal(result.completedSteps[0].remoteAction, action);
+  assert.equal(result.completedSteps[0].status, 0);
+  assert.notEqual(result.mergeAuthority, true);
+});
+
+test('native child success predicate must reject coerced exit statuses on three fixed probes (#2573)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
+  const guarded = source.match(/ok: !result\?\.error && result\?\.status === 0,/g) || [];
+  assert.equal(guarded.length, 3, 'fixed native child-result consumers require exact numeric zero');
+  assert.doesNotMatch(source, /ok: !result\?\.error && Number\(result\?\.status\) === 0,/);
+  const admitted = (result) => !result?.error && result?.status === 0;
+  assert.equal(admitted({ status: 0 }), true);
+  assert.equal(admitted({ status: 0, error: new Error('failed child') }), false);
+  assert.equal(admitted({ status: 2 }), false);
+  for (const status of [null, undefined, false, true, '', '0', '2']) {
+    assert.equal(admitted({ status }), false, `invalid child status ${String(status)}`);
+  }
+});
+
+
+test('material outcome counters cannot bypass same-run controller proof with zero actions and lanes (#2573)', () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'material-outcome-proof-v1', observedEnabled: true,
+    executionState: 'ACTIVE', materialActionsSucceeded: 0,
+    safeEligibleWorkRemaining: 0,
+  };
+  const check = (candidate) => validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity', controllerActivity: candidate,
+  }));
+  assert.equal(check(activity).ok, true, 'status-only observation remains allowed');
+  assert.equal(check({ ...activity, safeEligibleWorkRemaining: 3 }).ok, true,
+    'remaining work is not a completed-material claim');
+  for (const field of ['goalsAdvanced', 'sourceChanges', 'reviewsAdvanced', 'mergesCompleted']) {
+    for (const proofRefs of [undefined, ['proof/from-another-run']]) {
+      const result = check({ ...activity, [field]: 1, ...(proofRefs ? { proofRefs } : {}) });
+      assert.equal(result.ok, false, `${field} escaped same-run proof requirement`);
+      assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED');
+    }
+    const allowed = check({ ...activity, [field]: 1, materialActionsSucceeded: 1,
+      proofRefs: ['proof/same-run'] });
+    assert.equal(allowed.ok, true, `${field} blocked with declared material action and proof ref`);
+  }
+});
+
+
+test('CPU pressure native process fields reject coerced zeros, missing PID and numeric strings', () => {
+  const baseline = {
+    schemaVersion: 'stephanos.battle-bridge-cpu-pressure.v1',
+    capturedAtUtc: '2026-11-20T05:00:00.000Z',
+    sampleSeconds: 5, processorCount: 8,
+    rows: [{
+      pid: 1901, parentPid: 0, processName: 'node',
+      startedAtUtc: '2026-11-20T04:59:00.000Z',
+      script: 'stephanos-core-daemon.mjs',
+      cpuPercent: 32, sampleMatched: true,
+    }],
+    readOnly: true,
+    sourceMutationAllowed: false,
+    processTerminationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawCommandLinesReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED',
+  };
+  const project = (packet) => safeCpuPressureSnapshotProjection({
+    structuredContent: { stdout: JSON.stringify(packet) },
+  }, 'cpu-pressure-snapshot');
+  const valid = project(baseline);
+  assert.equal(valid.rows[0].parentPid, 0);
+  assert.equal(valid.rows[0].cpuPercent, 32);
+  assert.equal(project({ ...baseline, sampleSeconds: '5' }), null);
+  assert.equal(project({ ...baseline, processorCount: '8' }), null);
+  for (const [field, invalid] of [
+    ['pid', '1901'], ['pid', null], ['parentPid', null],
+    ['parentPid', false], ['parentPid', '0'],
+    ['cpuPercent', false], ['cpuPercent', ''],
+    ['cpuPercent', '0'],
+  ]) {
+    const packet = { ...baseline, rows: [{ ...baseline.rows[0], [field]: invalid }] };
+    assert.equal(project(packet), null, field + '=' + JSON.stringify(invalid));
+  }
+  const noSample = project({
+    ...baseline, rows: [{ ...baseline.rows[0], cpuPercent: null, sampleMatched: false }],
+  });
+  assert.equal(noSample.rows[0].cpuPercent, null);
+  assert.equal(noSample.rows[0].sampleMatched, false);
+  assert.equal(safeCpuPressureSnapshotProjection({
+    structuredContent: { stdout: JSON.stringify(baseline) },
+  }, 'other-operation'), null);
+});
+
+test('bounded native failure evidence rejects coerced exit statuses for Starfield preflight and Air Link (#2573)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
+  const wired = source.match(/strictNativeFailureExitStatusV1\(failureEnvelope\?\.structuredContent\?\.status\)/g) || [];
+  assert.equal(wired.length, 2, 'both original bounded-failure paths must use strict integer evidence');
+  assert.doesNotMatch(source, /Number\(failureEnvelope\?\.structuredContent\?\.status\)/);
+  for (const invalid of [undefined, null, false, true, '', '0', '2', [], {}, NaN, Infinity, -Infinity, 2.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(strictNativeFailureExitStatusV1(invalid), null,
+      'coerced or malformed native failure status must not produce a bounded receipt');
+  }
+  for (const nativeExit of [0, 1, 2, 75, -1]) {
+    assert.equal(strictNativeFailureExitStatusV1(nativeExit), nativeExit,
+      'valid numeric native exit status must be retained exactly');
+  }
+});
+
+test('Starfield resource preflight requires a genuinely numeric native child exit status', () => {
+  const governor = {
+    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    active: true,
+    profile: { parkAllModels: true },
+    localModelAllowed: false,
+    zeroLocalModelInvariant: true,
+    evictionHealthy: true,
+    loadedModelsAfter: [],
+  };
+  const observation = (status) => ({
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    command: { plan: { processId: 'starfield-vr-resource-preflight' } },
+    structuredContent: {
+      ok: true, status, stdout: JSON.stringify(governor), stderr: '', errorCode: '',
+    },
+  });
+
+  const valid = safeStarfieldVrResourcePreflightProjection(observation(0));
+  assert.equal(valid.ok, true);
+  assert.equal(valid.status, 0);
+  assert.equal(valid.finalVerdict, 'STARFIELD_VR_RESOURCE_PREFLIGHT_PASSED');
+  for (const malformed of [null, undefined, false, true, '', '0', '2', [], {}]) {
+    const projected = safeStarfieldVrResourcePreflightProjection(observation(malformed));
+    assert.ok(projected, 'malformed exit should yield a bounded failed projection');
+    assert.equal(projected.ok, false, 'malformed exit must fail closed');
+    assert.equal(projected.status, null);
+    assert.equal(projected.finalVerdict, 'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED');
+  }
+  const failed = safeStarfieldVrResourcePreflightProjection(observation(2));
+  assert.equal(failed.ok, false);
+  assert.equal(failed.status, 2);
 });
