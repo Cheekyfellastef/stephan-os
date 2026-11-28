@@ -427,6 +427,7 @@ jobs:
       - name: Starfield monitor controller and evidence regressions
         run: python -I -S -B -m unittest discover -s scripts/windows/starfield-native-monitor -p "test_*.py" -v
       - name: Parse Spatial preparation and installation scripts
+        if: ${{ !cancelled() }}
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
@@ -440,15 +441,19 @@ jobs:
             }
           }
       - name: Compile Spatial helper in a disposable output directory
+        if: ${{ !cancelled() }}
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           ./scripts/windows/build-spatial-window.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'spatial-helper-build')
       - name: Spatial preparation contracts and Windows process cleanup fixtures
+        if: ${{ !cancelled() }}
         run: node --test shared/agents/sovereignSpatialWorkspaceV1.test.mjs tests/spatial-window-lifecycle-v1.test.mjs tests/spatial-workspace-prepare-windows-v1.test.mjs tests/spatial-install-pins-windows-v1.test.mjs
       - name: Install declared Spatial browser-test dependency
+        if: ${{ !cancelled() }}
         run: npm install --ignore-scripts --no-save --no-package-lock --no-audit --no-fund @playwright/test@1.54.0
       - name: Prove holographic panels in installed Windows Edge
+        if: ${{ !cancelled() }}
         env:
           BROWSER_CHANNEL: msedge
         run: node tests/spatial-workspace-comfort.browser.mjs --output-dir "${{ runner.temp }}/spatial-workspace-browser-proof"

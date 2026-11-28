@@ -255,11 +255,15 @@
       }
       document.getElementById('audio-microphone').value=state.inputId;
       document.getElementById('audio-speakers').value=state.outputId;
-      document.getElementById('audio-test-microphone').disabled=state.microphoneActive||state.microphonePending;
+      document.getElementById('audio-test-microphone').disabled=immersiveActive||state.microphoneActive||state.microphonePending;
+      document.getElementById('audio-test-speakers').disabled=immersiveActive;
       document.getElementById('audio-stop-microphone').disabled=!state.microphoneActive&&!state.microphonePending;
       if(state.microphoneActive){
         if(micMeterTimer===null)micMeterTimer=setInterval(()=>{
           const level=audio.microphoneLevel();
+          // A failed analyser can synchronously revoke the mic and redraw an
+          // inactive meter; this old tick must not overwrite that newer state.
+          if(!audio.getState().microphoneActive)return;
           document.getElementById('audio-meter').textContent=level===null
             ?'Microphone opened, level analyser unavailable.'
             :'Live microphone level: '+Math.min(100,Math.round(level*360))+'% (not recorded)';
@@ -333,7 +337,7 @@
     screen=createHolodeckScreen({client,comfort,furniture,audio,onStatus:state=>{
       refreshKeyboardLabels(state);if(!immersiveActive)drawPreview();refreshInputStatus(screen?.getState()??state);
     },onReload:async()=>{
-      workspaceEntry.stop();comfort.flush();cubeScene.stop();await client.stop();location.reload();
+      workspaceEntry.stop();comfort.flush();cubeScene.stop();stopMicTest();audio.stopSpeakers();await client.stop();location.reload();
     }});
     for(const id of ['settings','chatgpt','tools'])document.getElementById('focus-'+id).addEventListener('click',()=>screen.action('focus-'+id));
     refreshInputStatus(screen.getState());
@@ -380,13 +384,13 @@
     document.getElementById('share-window').addEventListener('click',()=>{void client.shareScreen();});
     windowSelector.addEventListener('change',()=>{screen.selectWindow(windowSelector.value?Number(windowSelector.value):null);});
     connectWindowButton.addEventListener('click',()=>screen.action('connect-window'));
-    document.getElementById('disconnect-window').addEventListener('click',()=>client.stop());
+    document.getElementById('disconnect-window').addEventListener('click',()=>screen.action('disconnect-window'));
     document.getElementById('audio-refresh').addEventListener('click',()=>audio.listDevices());
     document.getElementById('audio-microphone').addEventListener('change',event=>audio.setInput(event.target.value));
     document.getElementById('audio-speakers').addEventListener('change',event=>audio.setOutput(event.target.value));
-    document.getElementById('audio-test-microphone').addEventListener('click',()=>audio.testMicrophone());
+    document.getElementById('audio-test-microphone').addEventListener('click',()=>{if(!immersiveActive)void audio.testMicrophone();});
     document.getElementById('audio-stop-microphone').addEventListener('click',stopMicTest);
-    document.getElementById('audio-test-speakers').addEventListener('click',()=>audio.testSpeakers());
+    document.getElementById('audio-test-speakers').addEventListener('click',()=>{if(!immersiveActive)void audio.testSpeakers();});
     document.getElementById('audio-voice-help').addEventListener('click',()=>{
       screen.action('voice');consoleDetails.open=true;
       consoleDetails.scrollIntoView({block:'center',behavior:'auto'});
@@ -414,13 +418,35 @@
     let inspectCube = false;
     let previewFrame = null;
     let previewTime = null;
+    // Loss of the flat WebGL preview is not successful Quest/room presentation.
+    // Do not reuse GPU objects after browser/Quest context restoration.
+    let previewContextLost = false;
+    canvas.addEventListener('webglcontextlost', event => {
+      event.preventDefault();
+      previewContextLost = true;
+      previewRenderer = null;
+      document.getElementById('preview-status').textContent =
+        'Room preview paused: graphics context lost. Waiting for restoration.';
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      previewContextLost = false;
+      previewRenderer = null;
+      if (!immersiveActive && !document.hidden) playPreview();
+    });
     function drawPreview() {
-      if (!previewReady || immersiveActive || document.hidden) return false;
+      if (!previewReady || immersiveActive || document.hidden || previewContextLost) return false;
       try {
         // The flat holographic pages remain useful even without a WebGL room.
         screen?.render();
         const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
         if (!gl) throw new Error('graphics unavailable');
+        if (gl.isContextLost?.()) {
+          previewContextLost = true;
+          previewRenderer = null;
+          document.getElementById('preview-status').textContent =
+            'Room preview paused: graphics context lost. Waiting for restoration.';
+          return false;
+        }
         previewRenderer ??= createHolodeckRoomRenderer({ gl,screen,comfort,furniture });
         const scale = Math.min(window.devicePixelRatio || 1, 2);
         const width = Math.max(1, Math.round(canvas.clientWidth * scale));
@@ -458,10 +484,10 @@
       previewFrame = requestAnimationFrame(animatePreview);
     }
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) { comfort.flush();furniture.flush();stopMicTest();cubeScene.stop(); previewTime = null; }
+      if (document.hidden) { comfort.flush();furniture.flush();stopMicTest();audio.stopSpeakers();cubeScene.stop(); previewTime = null; }
       else if (!immersiveActive) playPreview();
     });
-    window.addEventListener('pagehide', event => {workspaceEntry.stop();comfort.flush();furniture.flush();stopMicTest();cubeScene.stop();void client.pagehide(event);});
+    window.addEventListener('pagehide', event => {workspaceEntry.stop();comfort.flush();furniture.flush();stopMicTest();audio.stopSpeakers();cubeScene.stop();void client.pagehide(event);});
     window.addEventListener('pageshow', event => {if(event.persisted&&!immersiveActive){playPreview();void refreshCapabilities();}});
     document.getElementById('preview-cube').addEventListener('change', playPreview);
     for (const [id,action] of Object.entries({
@@ -505,6 +531,11 @@
           enterButton.disabled = true;
           sessionReason.textContent = 'Requesting bounded immersive-vr session.';
           immersiveActive = true;
+          // Browser-local mic/speaker checks are not ChatGPT Voice. Never let
+          // a live test or a late local media permission follow entry into VR.
+          stopMicTest();
+          audio.stopSpeakers();
+          refreshAudioUI(audio.getState());
           if (previewFrame !== null) cancelAnimationFrame(previewFrame);
           previewFrame = null;
           for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = true;
@@ -518,6 +549,7 @@
           return;
         }
         immersiveActive = false;
+        refreshAudioUI(audio.getState());
         for (const id of ['cube-drop','cube-throw','cube-reset','cube-inspect','preview-cube']) document.getElementById(id).disabled = false;
         playPreview();
         sessionStatus.textContent = state === 'stopping' ? 'stopping' : 'fallback';

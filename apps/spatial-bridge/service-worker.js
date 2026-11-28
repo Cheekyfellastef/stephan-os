@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stephanos-spatial-workspace-v1-furniture-physics-v9';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-consented-editor-v10';
 const CACHE_PREFIX = 'stephanos-spatial-workspace-v1-';
 const CORE_ASSETS = [
   './',

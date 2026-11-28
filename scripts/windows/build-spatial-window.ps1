@@ -27,7 +27,7 @@ $compiler = Join-Path $compilerRoot 'bin\Hostx64\x64\cl.exe'
 $compileArgs = @('/nologo','/std:c++20','/EHsc','/W4','/O2','/DUNICODE','/D_UNICODE',"/I$compilerRoot\include")
 foreach ($include in @('ucrt','shared','um','winrt','cppwinrt')) { $compileArgs += "/I$sdkRoot\Include\$sdkVersion\$include" }
 # Restrict static DLL imports to System32, including before main executes.
-$compileArgs += @($source,"/Fo$OutputDirectory\SpatialWindow.obj","/Fe$binary",'/link','/DEPENDENTLOADFLAG:0x800','/SUBSYSTEM:WINDOWS','/ENTRY:mainCRTStartup',"/LIBPATH:$compilerRoot\lib\x64","/LIBPATH:$sdkRoot\Lib\$sdkVersion\um\x64","/LIBPATH:$sdkRoot\Lib\$sdkVersion\ucrt\x64",'windowsapp.lib','d3d11.lib','dxgi.lib','dwmapi.lib','windowscodecs.lib','crypt32.lib','ole32.lib','user32.lib','runtimeobject.lib')
+$compileArgs += @($source,"/Fo$OutputDirectory\SpatialWindow.obj","/Fe$binary",'/link','/DEPENDENTLOADFLAG:0x800','/SUBSYSTEM:WINDOWS','/ENTRY:mainCRTStartup',"/LIBPATH:$compilerRoot\lib\x64","/LIBPATH:$sdkRoot\Lib\$sdkVersion\um\x64","/LIBPATH:$sdkRoot\Lib\$sdkVersion\ucrt\x64",'windowsapp.lib','uiautomationcore.lib','d3d11.lib','dxgi.lib','dwmapi.lib','windowscodecs.lib','crypt32.lib','ole32.lib','user32.lib','runtimeobject.lib')
 $compilerHandle = [IO.File]::Open($compiler,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
 try {
     $compilerOutput = @(& $compiler @compileArgs 2>&1)

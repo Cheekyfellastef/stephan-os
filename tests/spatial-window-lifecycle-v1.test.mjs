@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {request} from 'node:http';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
@@ -42,6 +42,38 @@ function clientHarness(fetchRef){
     documentRef:{createElement:()=>({decode:async()=>{}})},setTimer:fn=>{timers.set(++id,fn);return id;},clearTimer:key=>timers.delete(key)});
   return {client,saved,async tick(){const [key,fn]=timers.entries().next().value??[];if(!fn)return;timers.delete(key);return fn();}};
 }
+test('replayed native picture serials and older generations cannot re-enable holographic app input',async()=>{
+  const frames=[
+    {generation:4,serial:8},{generation:4,serial:7},{generation:4,serial:8},
+    {generation:4,serial:9},{generation:3,serial:99},{generation:5,serial:10},
+  ];
+  let served=0,inputs=0;
+  const h=clientHarness(async url=>{
+    const path=new URL(url).pathname;
+    if(path==='/session')return response({token});
+    if(path==='/windows')return response({windows:[{id:1,title:'Constrained fixture'}]});
+    if(path==='/bind')return response({status:'connected'});
+    if(path==='/frame')return response({status:'frame',jpeg:'fixture',...frames[served++]});
+    if(path==='/input'){inputs++;return response({status:'input-posted'});}
+    return response({status:'stopped'});
+  });
+  assert.equal(await h.client.discover(),true);
+  assert.equal(await h.client.connect(1),true);
+  await h.tick();assert.equal(h.client.getState().status,'live');
+  const first=h.client.getFrame();assert.ok(first);
+  await h.tick();assert.equal(h.client.getState().status,'waiting','regressed serial closes the input gate');
+  assert.equal(h.client.getFrame(),null);
+  assert.equal(h.client.input({kind:'scroll',x:.5,y:.5,delta:120}),false);
+  await h.tick();assert.equal(h.client.getState().status,'waiting','same stale serial cannot reopen the gate');
+  await h.tick();assert.equal(h.client.getState().status,'live','new serial restores the real view');
+  assert.notEqual(h.client.getFrame(),first);
+  await h.tick();assert.equal(h.client.getState().status,'waiting','older generation cannot be replayed');
+  assert.equal(h.client.input({kind:'scroll',x:.5,y:.5,delta:120}),false);
+  await h.tick();assert.equal(h.client.getState().status,'live','later generation must be allowed');
+  assert.equal(inputs,0,'no synthetic scroll or key may reach native helper during replay');
+  assert.equal(served,frames.length);
+  await h.client.stop();
+});
 test('two overlapping discoveries cannot both obtain sessions after a slow stop',async()=>{
   const stop=deferred(),calls=[];
   const h=clientHarness(async(url)=>{const path=new URL(url).pathname;calls.push(path);if(path==='/stop')return stop.promise;return response(path==='/session'?{token}:{windows:[{id:1,title:'Test'}]});});
@@ -63,7 +95,9 @@ test('cached-page departure revokes access and allows explicit reconnection afte
     path==='/frame'?{status:'frame',serial:1,generation:1,jpeg:'fixture'}:
     {status:path==='/bind'?'connected':'stopped'});});
   await h.client.discover();await h.client.connect(1);await h.tick();
-  assert.equal(h.client.input({kind:'text',text:'stale'}),true);
+  assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+  assert.equal(h.client.input({kind:'text',text:'stale'}),true,
+    'draft queued behind consented click must be discarded when the page departs');
   await h.client.pagehide({persisted:true});await h.tick();
   assert.equal(h.client.getState().status,'idle');assert.equal(h.client.getFrame(),null);
   assert.equal(h.client.input({kind:'text',text:'hidden'}),false);
@@ -116,7 +150,11 @@ test('installation verification rejects replaced sources, binaries and redirecte
   }finally{rmSync(root,{recursive:true,force:true});}
 });
 test('audio help and reload confirmation do not click through to the concealed app',()=>{
-  const calls=[],screen=createHolodeckScreen({documentRef:{createElement:()=>({getContext:()=>({})})},client:{getFrame:()=>({naturalWidth:1920,naturalHeight:1080}),getState:()=>({status:'live',message:'Synthetic live fixture.'}),input:x=>calls.push(x)}});
+  const calls=[],frame={naturalWidth:1920,naturalHeight:1080};
+  const context={fillRect(){},clearRect(){},strokeRect(){},fillText(){},drawImage(){}};
+  const screen=createHolodeckScreen({documentRef:{createElement:()=>({getContext:()=>context})},
+    client:{getFrame:()=>frame,getState:()=>({status:'live',message:'Synthetic live fixture.'}),input:x=>calls.push(x)}});
+  screen.render(); // A real hologram must have painted a stable frame before any input is admitted.
   assert.equal(screen.point(.5,.5,true),true);screen.action('voice');assert.equal(screen.point(.5,.5,true),false);
   screen.action('voice');screen.action('reload');assert.equal(screen.point(.5,.5,true),false);assert.equal(calls.length,1);
 });
@@ -176,4 +214,16 @@ test('native request timeouts retain their bounded list and consent budgets afte
       assert.equal((await next).status,'windows');
     }finally{h.adapter.stop();}
   }
+});
+
+test('native consent never promises that Disconnect stops Voice in the original app',()=>{
+  // Source guard: a successful local capture stop cannot terminate original
+  // ChatGPT Voice, and an unconfirmed native stop must never claim that it did.
+  const source=readFileSync(new URL('../src/windows/Stephanos.SpatialWindow/SpatialWindow.cpp',import.meta.url),'utf8');
+  const consent=source.match(/const auto prompt=L"Allow the Spatial Workspace[\s\S]*?;\r?\n/);
+  assert.ok(consent,'the real native consent prompt must remain inspectable');
+  assert.match(consent[0],/Disconnect requests stopping workspace capture and input only/);
+  assert.match(consent[0],/does not stop ChatGPT Voice or other audio in the original app/);
+  assert.match(consent[0],/stop Voice there separately/);
+  assert.doesNotMatch(consent[0],/Disconnect in the workspace to stop/);
 });

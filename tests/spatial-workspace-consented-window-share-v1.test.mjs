@@ -513,7 +513,7 @@ async function captureSettled(promise){
   assert.equal(settled,true,'local cancellation must settle without waiting for external completion');
   return value;
 }
-function captureTransitionHarness({initialNative=false,delayStops=false}={}){
+function captureTransitionHarness({initialNative=false,delayStops=false,inputFailure=null,inputOutcome=()=> 'input-posted'}={}){
   const saved=new Map(),pickers=[],plays=[],tracks=[],videos=[],timers=new Map(),calls=[],stops=[];
   if(initialNative)saved.set('stephanos.spatial-window.session.v1','a'.repeat(64));
   let nextTimer=0,sessions=0,hook=()=>{};
@@ -542,7 +542,13 @@ function captureTransitionHarness({initialNative=false,delayStops=false}={}){
       if(path==='/session')return response({token:(++sessions%2?'b':'c').repeat(64)});
       if(path==='/windows')return response({windows:[{id:17,pid:19,title:'Selected app'}]});
       if(path==='/bind')return response({status:'connected'});
-      if(path==='/input')return response({status:'input-posted'});
+      if(path==='/input'){
+        // The application might apply input even when its HTTP reply is lost.
+        const body=JSON.parse(options.body);
+        if(body.kind==='text'&&inputFailure==='network')throw new Error('Response lost after possible native input');
+        if(body.kind==='text'&&inputFailure==='http')return {ok:false,status:503,json:async()=>({status:'unavailable'})};
+        return response({status:inputOutcome(JSON.parse(options.body))});
+      }
       if(path==='/frame')return response({status:'frame',serial:calls.length,generation:1,jpeg:'fixture'});
       throw Error('Unexpected native request');
     },
@@ -651,20 +657,374 @@ test('track loss revokes its sole owner during native stop playback and accepted
   }
 });
 
+
+test('invalid hologram pointer and wheel geometry cannot reach native input or retain a queued draft',async()=>{
+  const h=captureTransitionHarness({inputOutcome:body=>body.kind==='click'?'editor-accessibility-selected':'editor-value-readback'});
+  try{
+    await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+    assert.equal(h.client.getState().status,'live');
+    for(const geometry of [
+      {kind:'click',x:NaN,y:.5},
+      {kind:'click',x:Infinity,y:.5},
+      {kind:'click',x:-.01,y:.5},
+      {kind:'click',x:.5,y:1.01},
+      {kind:'scroll',x:.5,y:undefined,delta:120},
+      {kind:'scroll',x:.5,y:.5,delta:Infinity},
+      {kind:'scroll',x:.5,y:.5,delta:121},
+    ]){
+      assert.equal(h.client.input(geometry),false,'malformed 3D input must fail closed');
+      assert.match(h.client.getState().inputStatus,/Invalid pointer or scroll geometry/);
+    }
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,0,'no malformed native input dispatched');
+    assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true,'normal 3D pointer still works');
+    await h.tick();
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,1);
+    assert.equal(h.client.input({kind:'text',text:'queued draft'}),true);
+    assert.equal(h.client.input({kind:'click',x:NaN,y:.5}),false,'bad retarget revokes older editor proof');
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'bad retarget cannot leave a Send eligible');
+    await h.tick();
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,1,'queued draft cannot reach previous editor');
+  }finally{await h.close();}
+});
+
+test('virtual non-text keys require a current editor acknowledgement before any native request',async()=>{
+  const h=captureTransitionHarness({inputOutcome:body=>body.kind==='click'
+    ?(body.x<.8?'editor-accessibility-selected':'input-posted')
+    :body.kind==='key'?'editor-key-focus-unverified':'editor-value-readback'});
+  try{
+    await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+    assert.equal(h.client.getState().status,'live');
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'binding alone cannot authorise Enter');
+    assert.match(h.client.getState().inputStatus,/No key was sent/);
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,0);
+    assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'queued click is not editor proof');
+    await h.tick();
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),true,'confirmed editor allows native focus check');
+    await h.tick();
+    assert.match(h.client.getState().inputStatus,/has not established keyboard focus/);
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'native focus uncertainty revokes editor acknowledgement');
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
+    assert.equal(h.client.input({kind:'click',x:.9,y:.5}),true);
+    assert.equal(h.client.input({kind:'key',key:'Tab'}),false,'new click invalidates old editor immediately');
+    await h.tick();
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'button click is not an editor selection');
+    assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);await h.tick();
+    assert.equal(h.client.input({kind:'key',key:'Tab'}),true);
+    await h.client.stop();
+    assert.equal(h.client.input({kind:'key',key:'Enter'}),false,'stop revokes editor proof');
+    assert.equal(h.calls.filter(call=>call.path==='/input').length,4,'no unsupported key was forwarded');
+  }finally{await h.close();}
+});
+
+test('lost native input acknowledgement remains unverified and never replays a key',async()=>{
+  for(const inputFailure of ['network','http']){
+    const h=captureTransitionHarness({inputFailure,inputOutcome:body=>
+      body.kind==='click'?'editor-accessibility-selected':'input-posted'});
+    try{
+      await h.client.discover();
+      assert.equal(await h.client.connect(17),true);
+      await h.tick();
+      assert.equal(h.client.getState().status,'live');
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);await h.tick();
+      assert.equal(h.client.input({kind:'text',text:'unsent fixture'}),true);
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2,
+        'an ambiguous transport failure must not replay its native input');
+      assert.equal(h.client.getState().status,'unavailable');
+      assert.match(h.client.getState().inputStatus,/may already have changed/);
+      assert.match(h.client.getState().inputStatus,/do not resend automatically/);
+      assert.match(h.client.getState().message,/original app/);
+      assert.equal(h.timers.size,0,'no background replay or poll after failed input');
+      assert.equal(h.client.input({kind:'text',text:'unsafe retry'}),false);
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
+    }finally{await h.close();}
+  }
+});
+
+test('uncertain editor changes discard queued Enter and require fresh editor selection',async()=>{
+  for(const outcome of ['editor-update-refused','editor-update-unverified','input-rejected']){
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?'editor-accessibility-selected':
+      body.kind==='text'?outcome:'input-posted'});
+    try{
+      await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+      await h.tick();
+      assert.equal(h.client.input({kind:'text',text:'unsent draft'}),true);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),true,
+        'Enter may have been queued before the editor reply');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),false,
+        'uncertain editor result must revoke the prior keyboard acknowledgement');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2,
+        'queued Enter must not be posted after ambiguous text mutation');
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+      await h.tick();
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),true,
+        'only a new explicit editor selection can admit a later deliberate key');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,4);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),false,
+        'a non-text action must not preserve the old keyboard destination');
+    }finally{await h.close();}
+  }
+});
+
 test('native input publication is a transition boundary before fetching the next frame',async()=>{
   for(const operation of ['stop','pagehide','dispose','normal']){
-    const h=captureTransitionHarness();let revoked=false;
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?'editor-accessibility-selected':'input-posted'});let revoked=false;
     try{
       await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
       assert.equal(h.client.getState().status,'live');
-      h.setHook(state=>{if(!revoked&&operation!=='normal'&&state.inputStatus==='Input sent to the selected app.'){
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);await h.tick();
+      const framesBefore=h.calls.filter(call=>call.path==='/frame').length;
+      h.setHook(state=>{if(!revoked&&operation!=='normal'&&state.inputStatus==='Windows queued the pointer/key event, but the app has not confirmed it.'){
         revoked=true;void h.client[operation]();
       }});
       assert.equal(h.client.input({kind:'text',text:'fixture'}),true);await h.tick();
-      assert.equal(h.calls.filter(call=>call.path==='/input').length,1);
-      assert.equal(h.calls.filter(call=>call.path==='/frame').length,operation==='normal'?2:1);
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
+      assert.equal(h.calls.filter(call=>call.path==='/frame').length,framesBefore+(operation==='normal'?1:0));
       assert.equal(h.timers.size,operation==='normal'?1:0);
       assert.equal(h.client.getState().status,operation==='normal'?'live':'idle');
     }finally{await h.close();}
+  }
+});
+
+test('unexpected native text replies revoke queued Enter and require fresh editor selection',async()=>{
+  // An unfamiliar helper response or local refusal must never make the room
+  // assume the original ChatGPT editor remains a safe keyboard destination.
+  for(const outcome of ['editor-length-refused','editor-update-not-started',
+    'editor-unsupported','input-posted','unexpected-native-status']){
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?'editor-accessibility-selected':
+      body.kind==='text'?outcome:'input-posted'});
+    try{
+      await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);await h.tick();
+      assert.equal(h.client.input({kind:'text',text:'unsent draft'}),true);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),true,'Enter queued before native reply');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2);
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),false,
+        'unconfirmed native outcome must invalidate the editor acknowledgement');
+      await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,2,
+        'previously queued Enter must never reach native input');
+      assert.match(h.client.getState().inputStatus,/No key was sent/);
+    }finally{await h.close();}
+  }
+});
+
+test('unverified native clicks discard queued draft text rather than typing into an unknown control',async()=>{
+  for(const outcome of ['input-posted','editor-not-selected','editor-reselect-required',
+    'editor-unsupported','app-control-invoked','unexpected-click-status']){
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?(body.x<.5?outcome:'editor-accessibility-selected')
+      :body.kind==='text'?'editor-value-readback':'input-posted'});
+    try{
+      await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+      assert.equal(h.client.input({kind:'click',x:.2,y:.5}),true);
+      assert.equal(h.client.input({kind:'text',text:'draft waiting for click'}),true,
+        'the draft can be queued while the helper is deciding what received the click');
+      await h.tick();await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,1,
+        outcome+' cannot deliver a queued draft into an unverified target');
+      assert.equal(h.client.input({kind:'key',key:'Enter'}),false,
+        'unverified native click cannot license sending a draft');
+      assert.equal(h.client.input({kind:'click',x:.8,y:.5}),true);
+      assert.equal(h.client.input({kind:'text',text:'draft after explicit editor selection'}),true);
+      await h.tick();await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,3,
+        'confirmed selection retains a deliberately queued text edit');
+    }finally{await h.close();}
+  }
+});
+
+test('unsolicited draft text is held until the original app editor is explicitly selected',async()=>{
+  for(const clickOutcome of ['editor-accessibility-selected','input-posted']){
+    const h=captureTransitionHarness({inputOutcome:body=>
+      body.kind==='click'?clickOutcome:'editor-value-readback'});
+    try{
+      await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+      assert.equal(h.client.input({kind:'text',text:'unsolicited draft'}),false,
+        'binding and a live frame alone are not editor permission');
+      assert.match(h.client.getState().inputStatus,/No draft text was sent/);
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,0);
+      assert.equal(h.client.input({kind:'click',x:.3,y:.5}),true);
+      assert.equal(h.client.input({kind:'text',text:'explicitly queued draft'}),true,
+        'a pending deliberate click may own text only after native acknowledgement');
+      await h.tick();await h.tick();
+      assert.equal(h.calls.filter(call=>call.path==='/input').length,
+        clickOutcome==='editor-accessibility-selected'?2:1,
+        'only an acknowledged editor may receive queued draft text');
+    }finally{await h.close();}
+  }
+});
+
+test('newer deliberate editor click supersedes draft queued for the previous target',async()=>{
+  const observed=[];
+  const h=captureTransitionHarness({inputOutcome:body=>{
+    observed.push(body);
+    return body.kind==='click'?'editor-accessibility-selected':'editor-value-readback';
+  }});
+  try{
+    await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+    assert.equal(h.client.input({kind:'click',x:.2,y:.5}),true);
+    assert.equal(h.client.input({kind:'text',text:'old target draft'}),true);
+    assert.equal(h.client.input({kind:'click',x:.8,y:.5}),true,
+      'a fresh explicit target replaces the older pending click and draft');
+    await h.tick();await h.tick();
+    assert.deepEqual(observed.map(body=>body.kind),['click'],
+      'no obsolete click or queued text may be forwarded to native input');
+    assert.equal(observed[0].x,.8,'the latest deliberate target is retained');
+    assert.equal(h.client.input({kind:'text',text:'deliberate fresh draft'}),true);
+    await h.tick();
+    assert.deepEqual(observed.map(body=>body.kind),['click','text']);
+    assert.equal(observed[1].text,'deliberate fresh draft');
+  }finally{await h.close();}
+});
+
+test('a second click during a native click response revokes text queued for the first editor',async()=>{
+  let h;const observed=[];
+  h=captureTransitionHarness({inputOutcome:body=>{
+    observed.push(body);
+    if(body.kind==='click'&&body.x===.2){
+      assert.equal(h.client.input({kind:'text',text:'queued behind old click'}),true);
+      assert.equal(h.client.input({kind:'click',x:.8,y:.5}),true);
+    }
+    return body.kind==='click'?'editor-accessibility-selected':'editor-value-readback';
+  }});
+  try{
+    await h.client.discover();assert.equal(await h.client.connect(17),true);await h.tick();
+    assert.equal(h.client.input({kind:'click',x:.2,y:.5}),true);
+    await h.tick();await h.tick();await h.tick();
+    assert.deepEqual(observed.map(body=>body.kind),['click','click'],
+      'in-flight click is not replayed, and old queued draft is discarded');
+    assert.deepEqual(observed.map(body=>body.x),[.2,.8]);
+    assert.equal(h.client.input({kind:'text',text:'freshly selected editor only'}),true);
+    await h.tick();
+    assert.deepEqual(observed.map(body=>body.kind),['click','click','text']);
+  }finally{await h.close();}
+});
+
+
+test('native stop refusal is not reported as a verified disconnect and blocks automatic reconnect',async()=>{
+  const key='stephanos.spatial-window.session.v1',saved=new Map([[key,'a'.repeat(64)]]);
+  const paths=[];let stopAllowed=false;
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},
+    sessionStore:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value),
+      removeItem:key=>saved.delete(key)},
+    setTimer:()=>1,clearTimer:()=>{},
+    fetchRef:async url=>{
+      const path=new URL(url).pathname;paths.push(path);
+      if(path==='/stop')return stopAllowed
+        ?{ok:true,status:200,json:async()=>({status:'stopped'})}
+        :{ok:false,status:403,json:async()=>({status:'refused'})};
+      if(path==='/session')return {ok:true,status:200,json:async()=>({token:'b'.repeat(64)})};
+      if(path==='/windows')return {ok:true,status:200,json:async()=>({windows:[]})};
+      throw Error('Unexpected native request '+path);
+    }
+  });
+  assert.equal(await client.stop(),false,'a refused native stop is not release proof');
+  assert.equal(client.getState().status,'unavailable');
+  assert.match(client.getState().message,/did not confirm capture release/);
+  assert.equal(saved.get(key),'a'.repeat(64),'retain the old token for a deliberate later stop attempt');
+  assert.equal(await client.discover(),false,'automatic discovery cannot proceed after unverified stop');
+  assert.deepEqual(paths,['/stop','/stop'],'no fresh session is allocated while prior capture may live');
+  stopAllowed=true;
+  await client.discover();
+  assert.equal(client.getState().status,'selecting');
+  assert.deepEqual(paths.slice(2),['/stop','/session','/windows']);
+  assert.equal(saved.get(key),'b'.repeat(64),'a verified stop permits fresh native consent');
+  await client.stop();
+});
+
+test('browser view-only fallback never adopts a capture after an unverified native stop',async()=>{
+  const key='stephanos.spatial-window.session.v1',saved=new Map([[key,'a'.repeat(64)]]);
+  let stops=0;
+  const track={readyState:'live',stop(){stops++;this.readyState='ended';},addEventListener(){}};
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},
+    sessionStore:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value),
+      removeItem:key=>saved.delete(key)},
+    navigatorRef:{mediaDevices:{getDisplayMedia:()=>Promise.resolve({
+      getVideoTracks:()=>[track],getTracks:()=>[track]})}},
+    fetchRef:async(url)=>{assert.equal(new URL(url).pathname,'/stop');
+      return {ok:false,status:503,json:async()=>({status:'unavailable'})};},
+    setTimer:()=>1,clearTimer:()=>{},
+  });
+  assert.equal(await client.shareScreen(),false);
+  assert.equal(track.readyState,'ended');assert.equal(stops,1);
+  assert.equal(client.getFrame(),null);assert.equal(client.getState().status,'unavailable');
+  assert.match(client.getState().message,/Native window release unverified/);
+  assert.equal(saved.get(key),'a'.repeat(64),'unverified native session must not be forgotten');
+  await client.stop();
+});
+
+test('a cancelled delayed native session grant must be released before any next native session',async()=>{
+  // A /session response can arrive after Stop. Its later /stop may fail even
+  // though no token existed when Stop ran; that is not proof of release.
+  const lateSession=captureStep(),paths=[],originalToken='d'.repeat(64);
+  let sessions=0,stopAllowed=false;
+  const answer=(data,ok=true)=>({ok,status:ok?200:403,json:async()=>data});
+  const client=createHolodeckWindowClient({
+    locationRef:{hostname:'localhost',port:'4173'},sessionStore:null,
+    setTimer:()=>1,clearTimer:()=>{},
+    fetchRef:url=>{
+      const path=new URL(url).pathname;paths.push(path);
+      if(path==='/session')return ++sessions===1
+        ?lateSession.promise:Promise.resolve(answer({token:'e'.repeat(64)}));
+      if(path==='/stop')return Promise.resolve(stopAllowed
+        ?answer({status:'stopped'}):answer({status:'refused'},false));
+      if(path==='/windows')return Promise.resolve(answer({windows:[]}));
+      throw Error('Unexpected native request '+path);
+    }
+  });
+  const opening=client.discover();
+  await drainCaptureTransitions();
+  assert.equal(sessions,1,'one pending native session is being allocated');
+  assert.equal(await client.stop(),true,'local Stop cannot know a token not yet returned');
+  assert.equal(await client.discover(),false,'second discovery must not allocate while the first grant is pending');
+  assert.equal(sessions,1);
+  lateSession.resolve(answer({token:originalToken}));
+  assert.equal(await opening,false,'cancelled grant can never be adopted');
+  assert.deepEqual(paths,['/session','/stop'],'late grant receives one bounded release attempt');
+  assert.equal(await client.discover(),false,'failed late release keeps the token as an in-memory fence');
+  assert.deepEqual(paths,['/session','/stop','/stop']);
+  assert.equal(sessions,1,'no second session may be allocated after denied release');
+  stopAllowed=true;
+  assert.equal(await client.discover(),true,'verified release admits a subsequent explicit discovery');
+  assert.deepEqual(paths.slice(3),['/stop','/session','/windows']);
+  assert.equal(sessions,2);
+  await client.stop();
+});
+
+test('blocked sessionStorage property getter cannot prevent Spatial console bootstrap',async()=>{
+  // Some privacy modes throw while obtaining sessionStorage itself, before
+  // getItem is reached. Native consent must remain off and the room must load.
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'sessionStorage');
+  assert.ok(!previous||previous.configurable,'isolated test must be able to restore the global');
+  Object.defineProperty(globalThis,'sessionStorage',{configurable:true,
+    get(){throw new Error('SecurityError: storage access denied');}});
+  try {
+    let nativeRequests=0;
+    const client=createHolodeckWindowClient({
+      locationRef:{hostname:'localhost',port:'4173'},
+      fetchRef:async()=>{nativeRequests++;throw Error('no native request expected');},
+      setTimer:()=>1,clearTimer:()=>{},
+    });
+    assert.equal(client.getState().status,'idle');
+    assert.equal(client.getFrame(),null);
+    assert.equal(nativeRequests,0,'startup must not request a Windows grant');
+    assert.equal(await client.stop(),true);
+    assert.equal(nativeRequests,0,'inert disconnect must not contact the helper');
+  } finally {
+    if(previous)Object.defineProperty(globalThis,'sessionStorage',previous);
+    else delete globalThis.sessionStorage;
   }
 });

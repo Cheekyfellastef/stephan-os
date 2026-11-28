@@ -5,6 +5,8 @@
 #include <dxgi1_2.h>
 #include <wincodec.h>
 #include <wincrypt.h>
+#include <UIAutomation.h>
+#include <oleacc.h>
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 #include <winrt/Windows.Foundation.h>
@@ -48,6 +50,14 @@ static std::string Base64(std::vector<BYTE> const& data){DWORD n=0;CryptBinaryTo
 static unsigned long long ProcessBirth(DWORD pid){HANDLE p=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!p)return 0;FILETIME start,stop,kernel,user;bool ok=GetProcessTimes(p,&start,&stop,&kernel,&user)!=0;CloseHandle(p);return ok?((unsigned long long)start.dwHighDateTime<<32)|start.dwLowDateTime:0;}
 struct Surface : std::enable_shared_from_this<Surface> {
   HWND root{},target{},inputChild{};DWORD pid{};unsigned long long birth{};
+  // Accessibility acts only inside the already consented native window. Never
+  // synthesise global keyboard events or change the VR browser's foreground.
+  com_ptr<IUIAutomation2> accessibility;
+  com_ptr<IUIAutomationElement> selectedEditor;
+  POINT selectedEditorPoint{};
+  // Selecting an accessible editor does not transfer Windows keyboard focus.
+  // Keep this fence even if that editor disappears, until a new native bind.
+  bool editorKeyboardFocusUnverified=false;
   GraphicsCaptureItem item{nullptr};Direct3D11CaptureFramePool pool{nullptr};GraphicsCaptureSession session{nullptr};
   com_ptr<ID3D11Device> device;com_ptr<ID3D11DeviceContext> context;IDirect3DDevice direct{nullptr};
   com_ptr<IWICImagingFactory> wic;std::mutex mutex;std::string jpeg;int width{},height{};
@@ -63,14 +73,16 @@ struct Surface : std::enable_shared_from_this<Surface> {
     {std::lock_guard lock(mutex);closed=true;captureEpoch++;generation++;jpeg.clear();oldSession=std::exchange(session,nullptr);oldPool=std::exchange(pool,nullptr);item=nullptr;}
     if(oldSession)oldSession.Close();if(oldPool)oldPool.Close();
   }
-  void Stop(){CloseCapture();std::lock_guard lock(mutex);root=nullptr;target=nullptr;inputChild=nullptr;}
+  void Stop(){CloseCapture();std::lock_guard lock(mutex);root=nullptr;target=nullptr;inputChild=nullptr;selectedEditor=nullptr;editorKeyboardFocusUnverified=false;}
   bool Identity(){DWORD current=0;GetWindowThreadProcessId(root,&current);return RootWindow(root)&&current==pid&&birth&&birth==ProcessBirth(pid);}
   bool TargetValid(){DWORD cloaked=0;DwmGetWindowAttribute(target,DWMWA_CLOAKED,&cloaked,sizeof(cloaked));return !cloaked&&Identity()&&(target==root||GetAncestor(target,GA_ROOTOWNER)==root)&&RootWindow(target);}
   void Bind(HWND w,DWORD expected){
     Stop();DWORD current=0;GetWindowThreadProcessId(w,&current);
     if(!SelectableWindow(w)||current!=expected||IsIconic(w))throw std::runtime_error("Window is no longer available");
     const auto identity=ProcessBirth(current);
-    const auto prompt=L"Allow the Spatial Workspace to view and control this window?\n\n"+Title(w)+L"\n\nOnly your console pointer and keyboard actions are forwarded. Audio stays in the original app. Disconnect in the workspace to stop.";
+    const auto prompt=L"Allow the Spatial Workspace to view and control this window?\n\n"+Title(w)
+      +L"\n\nOnly your console pointer and keyboard actions are forwarded. Audio stays in the original app."
+      +L"\nDisconnect requests stopping workspace capture and input only. It does not stop ChatGPT Voice or other audio in the original app; stop Voice there separately.";
     if(MessageBoxW(nullptr,prompt.c_str(),L"Stephanos Spatial Console",MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2|MB_TOPMOST)!=IDYES)throw std::runtime_error("Operator declined");
     DWORD after=0;GetWindowThreadProcessId(w,&after);
     if(!RootWindow(w)||after!=expected||!identity||identity!=ProcessBirth(after))throw std::runtime_error("Window changed during consent");
@@ -79,7 +91,10 @@ struct Surface : std::enable_shared_from_this<Surface> {
   void StartTarget(HWND w){
     if(!device)InitGraphics();
     CloseCapture();
-    std::lock_guard lock(mutex);target=w;inputChild=nullptr;jpeg.clear();closed=false;generation++;
+    // A popup capture switch clears stale pointers, NOT the keyboard-focus
+    // uncertainty left by selecting an editor via UIA. Only Stop/new Bind
+    // revokes that uncertainty after the old native session is torn down.
+    std::lock_guard lock(mutex);target=w;inputChild=nullptr;selectedEditor=nullptr;jpeg.clear();closed=false;generation++;
     auto factory=get_activation_factory<GraphicsCaptureItem,IGraphicsCaptureItemInterop>();
     check_hresult(factory->CreateForWindow(w,guid_of<GraphicsCaptureItem>(),put_abi(item)));
     const auto size=item.Size();if(!CaptureSizeValid(size.Width,size.Height))throw std::runtime_error("Invalid window size");
@@ -140,10 +155,181 @@ struct Surface : std::enable_shared_from_this<Surface> {
     if(closed||jpeg.empty()||!TargetValid()||IsIconic(target))return Reply(L"waiting");
     auto o=Reply(L"frame");Str(o,L"jpeg",to_hstring(jpeg).c_str());Num(o,L"width",width);Num(o,L"height",height);Num(o,L"generation",(double)generation);Num(o,L"serial",(double)serial);return o;
   }
+
+  static bool AtPoint(RECT const& bounds,POINT p){
+    return bounds.right>bounds.left&&bounds.bottom>bounds.top&&
+      p.x>=bounds.left&&p.x<bounds.right&&p.y>=bounds.top&&p.y<bounds.bottom;
+  }
+  bool InitAccessibility(){
+    if(accessibility)return true;
+    if(FAILED(CoCreateInstance(CLSID_CUIAutomation8,nullptr,CLSCTX_INPROC_SERVER,
+      IID_PPV_ARGS(accessibility.put()))))return false;
+    // Provider calls must not hang the frame producer indefinitely or force
+    // focus away from the WebXR browser. Each provider has a bounded timeout.
+    if(FAILED(accessibility->put_AutoSetFocus(FALSE))||
+      FAILED(accessibility->put_ConnectionTimeout(1500))||
+      FAILED(accessibility->put_TransactionTimeout(1500))){
+      // Timeout and no-autofocus are safety requirements, not cosmetic hints.
+      accessibility=nullptr;return false;
+    }
+    return true;
+  }
+  static bool ReadEditorValue(IUIAutomationElement* element,std::wstring& value,
+    com_ptr<IUIAutomationValuePattern>& direct,
+    com_ptr<IUIAutomationLegacyIAccessiblePattern>& legacy){
+    if(!element)return false;
+    CONTROLTYPEID type{};
+    BOOL focusable=FALSE;
+    if(FAILED(element->get_CurrentControlType(&type))||
+       (type!=UIA_EditControlTypeId&&type!=UIA_DocumentControlTypeId)||
+       FAILED(element->get_CurrentIsKeyboardFocusable(&focusable))||!focusable)return false;
+    com_ptr<IUnknown> raw;
+    if(SUCCEEDED(element->GetCurrentPattern(UIA_ValuePatternId,raw.put()))&&raw){
+      auto pattern=raw.try_as<IUIAutomationValuePattern>();
+      BOOL readOnly=TRUE;
+      // A positive read-only UIA result is authoritative. A readable Legacy
+      // value cannot undo it (Chromium root documents expose get_accValue).
+      if(!pattern||FAILED(pattern->get_CurrentIsReadOnly(&readOnly))||readOnly)
+        return false;
+      BSTR text=nullptr;
+      if(SUCCEEDED(pattern->get_CurrentValue(&text))){
+        value.assign(text?text:L"",text?SysStringLen(text):0);SysFreeString(text);
+        direct=std::move(pattern);return true;
+      }
+      SysFreeString(text);
+    }
+    // Documents need affirmative editable TextPattern evidence. Browser root
+    // documents and mixed/read-only ranges cannot become a compose target.
+    if(type==UIA_DocumentControlTypeId){
+      raw=nullptr;
+      if(FAILED(element->GetCurrentPattern(UIA_TextPatternId,raw.put()))||!raw)
+        return false;
+      auto pattern=raw.try_as<IUIAutomationTextPattern>();
+      com_ptr<IUIAutomationTextRange> range;
+      if(!pattern||FAILED(pattern->get_DocumentRange(range.put()))||!range)
+        return false;
+      VARIANT attribute;VariantInit(&attribute);
+      const HRESULT check=range->GetAttributeValue(UIA_IsReadOnlyAttributeId,&attribute);
+      const bool editable=SUCCEEDED(check)&&attribute.vt==VT_BOOL
+        &&attribute.boolVal==VARIANT_FALSE;
+      VariantClear(&attribute);
+      if(!editable)return false;
+    }
+    raw=nullptr;
+    if(SUCCEEDED(element->GetCurrentPattern(UIA_LegacyIAccessiblePatternId,raw.put()))&&raw){
+      auto pattern=raw.try_as<IUIAutomationLegacyIAccessiblePattern>();
+      DWORD flags=0;
+      // A readable value alone never makes a document writable. Require the
+      // MSAA provider to affirm a known non-readonly/non-protected state.
+      if(!pattern||FAILED(pattern->get_CurrentState(&flags))||
+         (flags&(STATE_SYSTEM_READONLY|STATE_SYSTEM_PROTECTED|STATE_SYSTEM_UNAVAILABLE)))
+        return false;
+      BSTR text=nullptr;
+      if(SUCCEEDED(pattern->get_CurrentValue(&text))){
+        value.assign(text?text:L"",text?SysStringLen(text):0);SysFreeString(text);
+        legacy=std::move(pattern);return true;
+      }
+      SysFreeString(text);
+    }
+    return false;
+  }
+  // Search the *selected* window's accessibility subtree, not the desktop
+  // point's topmost window. The real app may be behind the VR browser.
+  com_ptr<IUIAutomationElement> AccessibleAt(POINT point,bool editorOnly){
+    if(!InitAccessibility()||!TargetValid()||IsIconic(target))return {};
+    com_ptr<IUIAutomationElement> root;
+    if(FAILED(accessibility->ElementFromHandle(target,root.put()))||!root)return {};
+    VARIANT type{};type.vt=VT_I4;
+    type.lVal=editorOnly?UIA_EditControlTypeId:UIA_ButtonControlTypeId;
+    com_ptr<IUIAutomationCondition> first,condition;
+    if(FAILED(accessibility->CreatePropertyCondition(UIA_ControlTypePropertyId,type,first.put())))return {};
+    if(editorOnly){
+      type.lVal=UIA_DocumentControlTypeId;
+      com_ptr<IUIAutomationCondition> second;
+      if(FAILED(accessibility->CreatePropertyCondition(UIA_ControlTypePropertyId,type,second.put()))
+        ||FAILED(accessibility->CreateOrCondition(first.get(),second.get(),condition.put())))return {};
+    }else condition=std::move(first);
+    com_ptr<IUIAutomationElementArray> elements;
+    if(FAILED(root->FindAll(TreeScope_Descendants,condition.get(),elements.put()))||!elements)return {};
+    int length=0;
+    if(FAILED(elements->get_Length(&length))||length<0||length>256)return {};
+    com_ptr<IUIAutomationElement> best;
+    unsigned long long bestArea=~0ULL;
+    for(int i=0;i<length;i++){
+      com_ptr<IUIAutomationElement> candidate;
+      if(FAILED(elements->GetElement(i,candidate.put()))||!candidate)continue;
+      RECT rectangle{};BOOL enabled=FALSE,password=TRUE,offscreen=TRUE;
+      if(FAILED(candidate->get_CurrentBoundingRectangle(&rectangle))
+        ||FAILED(candidate->get_CurrentIsEnabled(&enabled))
+        ||FAILED(candidate->get_CurrentIsPassword(&password))
+        ||FAILED(candidate->get_CurrentIsOffscreen(&offscreen))
+        ||!enabled||password||offscreen||!AtPoint(rectangle,point))continue;
+      if(editorOnly){
+        std::wstring current;com_ptr<IUIAutomationValuePattern> value;
+        com_ptr<IUIAutomationLegacyIAccessiblePattern> legacy;
+        if(!ReadEditorValue(candidate.get(),current,value,legacy))continue;
+      }else{
+        com_ptr<IUnknown> raw;
+        if(FAILED(candidate->GetCurrentPattern(UIA_InvokePatternId,raw.put()))
+          ||!raw||!raw.try_as<IUIAutomationInvokePattern>())continue;
+      }
+      auto area=static_cast<unsigned long long>(rectangle.right-rectangle.left)*
+        static_cast<unsigned long long>(rectangle.bottom-rectangle.top);
+      if(area<bestArea){bestArea=area;best=std::move(candidate);}
+    }
+    return best;
+  }
+  JsonObject EditSelected(std::wstring const& kind,std::wstring const& payload){
+    if(!selectedEditor)return Reply(L"editor-not-selected");
+    RECT rectangle{};BOOL enabled=FALSE,password=TRUE,offscreen=TRUE;
+    if(!TargetValid()||FAILED(selectedEditor->get_CurrentBoundingRectangle(&rectangle))
+      ||FAILED(selectedEditor->get_CurrentIsEnabled(&enabled))
+      ||FAILED(selectedEditor->get_CurrentIsPassword(&password))
+      ||FAILED(selectedEditor->get_CurrentIsOffscreen(&offscreen))
+      ||!enabled||password||offscreen||!AtPoint(rectangle,selectedEditorPoint)){
+      selectedEditor=nullptr;return Reply(L"editor-reselect-required");
+    }
+    std::wstring current;com_ptr<IUIAutomationValuePattern> direct;
+    com_ptr<IUIAutomationLegacyIAccessiblePattern> legacy;
+    if(!ReadEditorValue(selectedEditor.get(),current,direct,legacy)){
+      selectedEditor=nullptr;return Reply(L"editor-unsupported");
+    }
+    if(current.size()>8192||payload.size()>256||current.size()+payload.size()>8192)
+      return Reply(L"editor-length-refused");
+    std::wstring next=current;
+    if(kind==L"text")next+=payload;
+    else if(kind==L"Backspace"){
+      if(next.empty())return Reply(L"editor-value-unchanged");
+      const bool pair=next.size()>1&&next.back()>=0xDC00&&next.back()<=0xDFFF
+        &&next[next.size()-2]>=0xD800&&next[next.size()-2]<=0xDBFF;
+      next.resize(next.size()-(pair?2:1));
+    }else return Reply(L"editor-unsupported");
+    bool attempted=false;
+    HRESULT changed=E_FAIL;
+    if(direct){
+      // UIA ValuePattern uses an owning BSTR; LegacyIAccessible takes LPCWSTR.
+      BSTR input=SysAllocStringLen(next.data(),static_cast<UINT>(next.size()));
+      if(input){attempted=true;changed=direct->SetValue(input);SysFreeString(input);}
+    }else if(legacy){attempted=true;changed=legacy->SetValue(next.c_str());}
+    if(!attempted)return Reply(L"editor-update-not-started");
+    // A timed-out SetValue may already have applied its change. Read back
+    // before reporting, but an unmatched value is UNKNOWN, not a refusal.
+    std::wstring observed;com_ptr<IUIAutomationValuePattern> readDirect;
+    com_ptr<IUIAutomationLegacyIAccessiblePattern> readLegacy;
+    if(!ReadEditorValue(selectedEditor.get(),observed,readDirect,readLegacy)||observed!=next)
+      return Reply(L"editor-update-unverified");
+    // An accessibility value readback is stronger than PostMessage queueing,
+    // but cannot prove the app's React state or its Send action accepted text.
+    return Reply(L"editor-value-readback");
+  }
   JsonObject Input(JsonObject const& command){
     RefreshPopup();
     std::lock_guard lock(mutex);
     if(closed||!TargetValid()||IsIconic(target)||jpeg.empty()||command.GetNamedNumber(L"generation",-1)!=generation)throw std::runtime_error("Surface changed; refresh before input");
+    // An app can redraw a different control at the same coordinate without
+    // changing its popup or generation. Never activate a stale picture target.
+    if(command.HasKey(L"serial")&&command.GetNamedNumber(L"serial",-1)!=static_cast<double>(serial))
+      return Reply(L"surface-frame-stale");
     RECT current{};check_hresult(DwmGetWindowAttribute(target,DWMWA_EXTENDED_FRAME_BOUNDS,&current,sizeof(current)));
     if(memcmp(&bounds,&current,sizeof(current))!=0)throw std::runtime_error("Window moved; refresh before input");
     auto kind=command.GetNamedString(L"kind",L"");
@@ -161,6 +347,28 @@ struct Surface : std::enable_shared_from_this<Surface> {
       if(child!=target&&!IsChild(target,child))throw std::runtime_error("Input target changed");
       inputChild=child;POINT local=screen;ScreenToClient(child,&local);
       if(kind==L"click"){
+        selectedEditor=nullptr;
+        // Only an explicit pointer click may select an editor or invoke one
+        // control. Never search another application or silently Send/approve.
+        auto editor=AccessibleAt(screen,true);
+        if(editor){
+          selectedEditor=std::move(editor);selectedEditorPoint=screen;
+          editorKeyboardFocusUnverified=true;
+          return Reply(L"editor-accessibility-selected");
+        }
+        auto button=AccessibleAt(screen,false);
+        if(button){
+          com_ptr<IUnknown> raw;
+          if(SUCCEEDED(button->GetCurrentPattern(UIA_InvokePatternId,raw.put()))&&raw){
+            auto invoke=raw.try_as<IUIAutomationInvokePattern>();
+            if(invoke){
+              // Once a provider call was attempted its side effect is unknown
+              // on timeout; never replay this same operator click via WM_*.
+              const HRESULT result=invoke->Invoke();
+              return Reply(SUCCEEDED(result)?L"app-control-invoked":L"app-control-outcome-unverified");
+            }
+          }
+        }
         Post(child,WM_MOUSEMOVE,0,MAKELPARAM(local.x,local.y));
         Post(child,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(local.x,local.y));
         Post(child,WM_LBUTTONUP,0,MAKELPARAM(local.x,local.y));
@@ -176,8 +384,12 @@ struct Surface : std::enable_shared_from_this<Surface> {
       if(kind==L"text"){
         auto text=command.GetNamedString(L"text",L"");if(text.empty()||text.size()>256)throw std::runtime_error("Invalid text length");
         for(auto ch:text){if(ch<32||ch==127)throw std::runtime_error("Control character rejected");}
-        for(auto ch:text)Post(child,WM_CHAR,ch,1);
+        return EditSelected(L"text",text.c_str());
       }else if(kind==L"key"){
+        if(command.GetNamedString(L"key",L"")==L"Backspace")return EditSelected(L"Backspace",L"");
+        // Selecting a UIA editor does not establish Windows keyboard focus.
+        // Do not send Enter/Tab/navigation to another focused composer.
+        if(editorKeyboardFocusUnverified)return Reply(L"editor-key-focus-unverified");
         auto name=command.GetNamedString(L"key",L"");UINT key=name==L"Enter"?VK_RETURN:name==L"Backspace"?VK_BACK:name==L"Tab"?VK_TAB:name==L"Escape"?VK_ESCAPE:name==L"Left"?VK_LEFT:name==L"Right"?VK_RIGHT:0;
         if(!key)throw std::runtime_error("Key not supported");
         auto scan=MapVirtualKeyW(key,MAPVK_VK_TO_VSC);Post(child,WM_KEYDOWN,key,1|(scan<<16));
