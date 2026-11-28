@@ -3,7 +3,7 @@
 **Date:** 2026-11-28
 **Goal:** #2315 — Switch canonical mailbox to #3552
 **PR:** #3574 — feat(#3552): switch canonical mailbox to issue #3552
-**Status:** IN PROGRESS (addressing code review findings)
+**Status:** FINDINGS RESOLVED (awaiting review response)
 
 ## Problem Statement
 
@@ -29,28 +29,28 @@ if(actions.complete!==true && !Object.hasOwn(actions,'rotationInventoryFailure')
   ||!Array.isArray(actions.pendingRuns))return false;
 ```
 
-## Code Review Findings (Pending Resolution)
+## Code Review Findings (Resolved)
 
-### P1 Finding: Inventory Failure Should Not Certify Quiescence
+### P1 Finding: Inventory Failure Should Not Certify Quiescence ✅ RESOLVED
 
-**Issue:** When `readRotationActions()` throws, setting `{complete:false, pendingRuns:[], rotationInventoryFailure: ...}` causes `mailboxActionsExecutionQuiescent()` to return `true` (line 193: `if(actions.pendingRuns.length===0)return true;`). This allows FROZEN certification even though workflows might still be running - we simply couldn't verify.
+**Original Issue:** When `readRotationActions()` throws, setting `{complete:false, pendingRuns:[], rotationInventoryFailure: ...}` causes `mailboxActionsExecutionQuiescent()` to return `true` (line 193: `if(actions.pendingRuns.length===0)return true;`). This allows FROZEN certification even though workflows might still be running - we simply couldn't verify.
 
 **AGENTS.md Violation:** [No fabricated proof](https://github.com/Cheekyfellastef/stephan-os/blob/main/AGENTS.md#constitutional-rules)
 
-**Required Fix:** When `rotationInventoryFailure` is present, return `false` from `mailboxActionsExecutionQuiescent()` - we cannot certify quiescence when we cannot observe the Actions inventory.
+**Fix Applied (commit 16d1b9ac8):** Modified `mailboxActionsExecutionQuiescent()` to return `false` when `rotationInventoryFailure` is present - we cannot certify quiescence when we cannot observe the Actions inventory. This enforces fail-closed behavior.
 
-### P2 Finding: Documentation Claims Unimplemented Feature
+### P2 Finding: Documentation Claims Unimplemented Feature ✅ RESOLVED
 
-**Issue:** Previous documentation claimed "Fix 2" allows quiescence with `rotationInventoryFailure`, but this was never actually implemented correctly due to the P1 finding above.
+**Original Issue:** Previous documentation claimed "Fix 2" allows quiescence with `rotationInventoryFailure`, but this was never actually implemented correctly due to the P1 finding above.
 
-**Required Fix:** Remove claims about recovery implementation; mark as architectural debt requiring explicit design review before any future implementation attempt.
+**Fix Applied:** Removed claims about recovery implementation; updated status to reflect that only null-safety fix is implemented. Any future recovery implementation requires explicit design review.
 
 ## Next Steps
 
-1. Fix `mailboxActionsExecutionQuiescent()` to return `false` when `rotationInventoryFailure` is present
-2. Update documentation to accurately reflect null-safety fix only (no quiescence allowance)
-3. Address code review findings in PR #3574
-4. Once resolved, continue with merge approval and deployment
+1. ✅ Fix `mailboxActionsExecutionQuiescent()` to return `false` when `rotationInventoryFailure` is present
+2. ✅ Update documentation to accurately reflect null-safety fix only (no quiescence allowance)
+3. ⏳ Wait for code review responses on PR #3574
+4. ⏳ Once resolved, continue with merge approval and deployment
 
 ## Related Artifacts
 - PR: https://github.com/Cheekyfellastef/stephan-os/pull/3574
