@@ -36,8 +36,27 @@ function healthyMailbox() {
 
 function healthyMesh() {
   return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'battle-bridge-recovery-mesh-current',
+    meshSchema: 'stephanos.battle-bridge-recovery-mesh-runner.v1',
     classification: 'RECOVERY_MESH_ALL_SERVICES_HEALTHY',
+    status: 'RECOVERY_MESH_ALL_SERVICES_HEALTHY',
     timestampUtc: NOW_ISO,
+    proofRefs: ['PROOF_1'],
+    final: {
+      workerHealthy: true,
+      mailboxHealthy: true,
+      backendHealthy: true,
+      gatewayHealthy: true,
+      sourceHead: EXACT_HEAD,
+    },
+    oneExecutorEnforced: true,
+    duplicateWorkerAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryTaskNameAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
   };
 }
 

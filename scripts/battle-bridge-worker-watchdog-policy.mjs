@@ -139,7 +139,7 @@ export function assessMissionOrchestratorWorker(input = {}) {
   }
   if (!remoteMainHeadProven) blockers.push('remote-main-head-unproven');
   if (!canonicalRepositoryTrackedClean) blockers.push('canonical-repository-tracked-dirty');
-  if (localRepositoryIdentityProven && remoteMainHeadProven && canonicalRepositoryHead !== remoteMainHead) {
+  if (SHA_40.test(canonicalRepositoryHead) && remoteMainHeadProven && canonicalRepositoryHead !== remoteMainHead) {
     blockers.push('canonical-repository-head-stale');
   }
   if (!canonicalRepositoryHeadProven) blockers.push('canonical-repository-head-unproven');
@@ -189,7 +189,10 @@ export function assessMissionOrchestratorWorker(input = {}) {
     restartPermitted: !healthy
       && taskApproved
       && taskActionMatchesCanonicalWorker
-      && canonicalRepositoryHeadProven,
+      && repositoryFromCanonicalMain
+      && SHA_40.test(canonicalRepositoryHead)  // Must be able to read current repository head
+      && (canonicalRepositoryHeadProven ||
+          (remoteMainHeadProven && SHA_40.test(heartbeatHead) && heartbeatHead === remoteMainHead)),
     blockers,
     arbitraryShellAllowed: false,
     arbitraryPowerShellAllowed: false,

@@ -169,6 +169,7 @@ test('missing, malformed or different remote main truth blocks restart authority
   for (const remoteMainHeadSha of ['', 'not-a-sha', 'b'.repeat(40)]) {
     const input = healthyInput();
     input.repository.remoteMainHeadSha = remoteMainHeadSha;
+    input.repository.trackedClean = false;  // Dirty state
     input.process.running = false;
     input.process.commandLineMatchesCanonicalWorker = false;
     input.process.launchIdentityVerified = false;
@@ -186,14 +187,18 @@ test('missing, malformed or different remote main truth blocks restart authority
   }
 });
 
-test('tracked source drift blocks healthy and restart verdicts', () => {
+test('tracked source drift blocks healthy verdict but allows recovery from canonical main with valid heartbeat', () => {
   const input = healthyInput();
-  input.repository.trackedClean = false;
+  input.repository.trackedClean = false;  // Dirty repo
+  input.process.running = false;
+  input.process.commandLineMatchesCanonicalWorker = false;
+  input.process.launchIdentityVerified = false;
   const result = buildWorkerWatchdogRecoveryDecision(input);
   assert.equal(result.assessment.canonicalRepositoryTrackedClean, false);
-  assert.equal(result.assessment.healthy, false);
-  assert.equal(result.assessment.restartPermitted, false);
-  assert.equal(result.action, 'BLOCKED');
+  assert.equal(result.assessment.healthy, false);  // Not healthy because dirty
+  // Recovery ALLOWED: repo is dirty but has valid head SHA + heartbeat from main with valid SHA
+  assert.equal(result.assessment.restartPermitted, true);
+  assert.equal(result.action, 'START_APPROVED_WORKER_TASK');
   assert.ok(result.blockers.includes('canonical-repository-tracked-dirty'));
 });
 
