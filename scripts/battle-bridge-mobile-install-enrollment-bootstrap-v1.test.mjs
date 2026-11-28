@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +18,43 @@ import { MOBILE_INSTALL_NATIVE_SOURCE_PATHS_V1 } from './fixtures/sovereign-mobi
 import { makeFixedRuntimeSourceProofFixtureV1 } from './fixtures/sovereign-fixed-runtime-source-proof-fixture-v1.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
+
+test('positive Windows enrollment file writes use actual production bindings, closed paths and create-new collision refusal',
+  { skip: process.platform !== 'win32', timeout: 40000 }, t => {
+    const base=mkdtempSync(join(tmpdir(),'stephanos-enrollment-write-'));
+    mkdirSync(join(base,'state'));
+    const entry=fileURLToPath(new URL('./windows/install-battle-bridge-mobile-installer-v1.ps1',import.meta.url));
+    const literal=value=>"'"+value.replaceAll("'","''")+"'";
+    try {
+      const script=String.raw`$ErrorActionPreference='Stop'
+$root=__ROOT__;$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile(__ENTRY__,[ref]$tokens,[ref]$errors);if($errors.Count){throw 'PRODUCTION_PARSE_FAILED'}
+$functions=@($ast.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Write-MobileNew'},$true))
+if($functions.Count -ne 1){throw 'EXACT_PRODUCTION_FUNCTION_REQUIRED'}
+. ([scriptblock]::Create($functions[0].Extent.Text))
+# Only the separate ACL assertion is replaced: this fixture verifies the real
+# production file-opening/writing/readback semantics in a temporary root.
+$script:checks=0
+function Assert-MobileProtected([string]$candidate){if(-not $candidate.StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'FIXTURE_ROOT_ESCAPE'};$script:checks++}
+$bytes=[byte[]]@(0,1,255,42);$vectors=0
+foreach($name in @('enrollment.json','enrollment-authorization.v2','release.pin','runtime-package.json','runtime-bootstrap.ps1','release-evidence.json','state\approval-journal.wal')) {
+ Write-MobileNew $name $bytes
+ $path=[IO.Path]::Combine($root,$name)
+ if([Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -cne [Convert]::ToBase64String($bytes)){throw 'POSITIVE_WRITE_READBACK_FAILED'};$vectors++
+ $refused=$false;try{Write-MobileNew $name ([byte[]]@(9,8,7))}catch{if($_.Exception -is [IO.IOException] -or $_.Exception.InnerException -is [IO.IOException]){$refused=$true}else{throw}}
+ if(-not $refused -or [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -cne [Convert]::ToBase64String($bytes)){throw 'CREATE_NEW_OVERWRITE_REFUSAL_FAILED'};$vectors++
+}
+foreach($name in @('other.ps1','..\outside')){$refused=$false;try{Write-MobileNew $name $bytes}catch{if($_.Exception.Message -ceq 'MOBILE_ENROLLMENT_FILE_NOT_ADMITTED'){$refused=$true}else{throw}};if(-not $refused){throw 'FOREIGN_NAME_ACCEPTED'};$vectors++}
+if($script:checks -ne 7 -or $vectors -ne 16){throw 'POSITIVE_PRODUCTION_PATH_COVERAGE_INCOMPLETE'}
+[Console]::Write((@{vectors=$vectors;actualProductionFunction=$true;fixtureAclAssertionOnly=$true;productionRootTouched=$false;keyTouched=$false}|ConvertTo-Json -Compress))`.replace('__ROOT__',literal(base)).replace('__ENTRY__',literal(entry));
+      const result=spawnSync('C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
+        ['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],
+        {windowsHide:true,encoding:'utf8',timeout:30000,maxBuffer:20000});
+      assert.equal(result.status,0,result.stderr);const observed=JSON.parse(result.stdout);
+      assert.equal(observed.vectors,16);assert.equal(observed.actualProductionFunction,true);assert.equal(observed.productionRootTouched,false);assert.equal(observed.keyTouched,false);
+      t.diagnostic('16 actual WindowsPowerShell production write vectors; temporary files only, no production root/key or qualified-enrollment claim');
+    }finally{rmSync(base,{recursive:true,force:true});}
+  });
 const nativePaths = [...MOBILE_INSTALL_NATIVE_SOURCE_PATHS_V1,
   'scripts/windows/install-battle-bridge-mobile-installer-v1.ps1', 'shared/agents/sovereignMobileInstallerNativeClosureV1.json'];
 const paths = [...new Set([...FIXED_RUNTIME_SOURCE_PATHS_V1, ...nativePaths])];
