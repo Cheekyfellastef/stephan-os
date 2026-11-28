@@ -179,7 +179,11 @@ function validEvidenceEnvelope(actions){
 }
 
 export function mailboxActionsExecutionQuiescent(actions,{now,mainHead,activationHead}={}){
- if(actions?.complete!==true||!Array.isArray(actions.pendingRuns))return false;
+ // Settlement-to-receipt ordering correction (memory/2026-11-26.md line 744):
+ // allow quiescence when rotationInventoryFailure present and pendingRuns empty,
+ // preventing FROZEN→DRAINING regression from non-fatal Actions inventory read failures.
+ if(actions?.complete!==true && !Object.hasOwn(actions,'rotationInventoryFailure')
+   ||!Array.isArray(actions.pendingRuns))return false;
  if(now!==undefined&&(!Number.isFinite(Date.parse(now))||!Number.isFinite(Date.parse(actions.observedAt))
    ||Date.parse(now)-Date.parse(actions.observedAt)<0||Date.parse(now)-Date.parse(actions.observedAt)>120000))return false;
  if(Object.hasOwn(actions,'executionEvidence')||Object.hasOwn(actions,'evidenceDigest')){
