@@ -12,11 +12,11 @@ const ownerScript = fileURLToPath(new URL('./windows/read-sovereign-maintenance-
 const principalConstruction = '[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())';
 function ownerTokenFixture(t, principalType) {
   const source = readFileSync(ownerScript, 'utf8');
-  assert.equal(source.split(principalConstruction).length, 2, 'one actual token boundary must be exercised');
+  assert.equal(source.split(principalConstruction).length, 3, 'both fixed normal-operator token boundaries must be exercised');
   const root = mkdtempSync(join(tmpdir(), 'owner-token-fixture-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const path = join(root, 'owner.ps1');
-  writeFileSync(path, source.replace(principalConstruction, `[${principalType}]::new()`));
+  writeFileSync(path, source.replaceAll(principalConstruction, `[${principalType}]::new()`));
   return path.replace(/'/g, "''");
 }
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -144,6 +144,8 @@ test('shared native identity adapter requests only limited read rights and retai
   assert.match(source, /OpenProcess\(0x101000, false, pid\)/);
   assert.match(source, /GetProcessTimes\(process/);
   assert.match(source, /QueryFullProcessImageNameW\(process, 0/);
+  assert.match(source, /ObserveTailscale\(uint pid, long expectedCreatedUtcTicks\)/);
+  assert.match(source, /ObserveExact\(pid, expectedCreatedUtcTicks, @"C:\\Program Files\\Tailscale\\tailscaled\.exe"\)/);
   assert.match(source, /\.Ticks \/ 10L != expectedCreatedUtcTicks \/ 10L/);
   assert.match(source, /finally \{ CloseHandle\(process\); \}/);
   assert.match(source, /if \(\$MyInvocation\.InvocationName -ne '\.'\)/);
@@ -194,12 +196,16 @@ Add-Type -TypeDefinition @'
 namespace Stephanos { public static class ReadOnlyCanonicalNodeIdentityV1 {
  public static string Code=""; public static int Calls;
  public static string Observe(uint pid,long ticks) { Calls++; if(pid!=10 || ticks<=0) throw new System.Exception(); return Code; }
+ public static string TailCode=""; public static int TailCalls;
+ public static string ObserveTailscale(uint pid,long ticks) { TailCalls++; if(pid!=20 || ticks<=0) throw new System.Exception(); return TailCode; }
 } }
 '@
 function Get-StephanosCanonicalNodeImageHashV1 { return ('b'*64) }
 $script:row=[pscustomobject]@{Name='node.exe';ProcessId=10;CreationDate=[datetime]::UtcNow.AddMinutes(-1);ExecutablePath=$null;
  CommandLine='"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-commander-http.mjs"'}
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'})
+$script:tailRow=[pscustomobject]@{Name='tailscaled.exe';ProcessId=20;CreationDate=[datetime]::UtcNow.AddMinutes(-2);
+ ExecutablePath='C:\\Program Files\\Tailscale\\tailscaled.exe'}
 $script:queryFailure=''
 function Get-CimInstance {
  param($Namespace,$ClassName,$Filter)
@@ -209,13 +215,15 @@ function Get-CimInstance {
    if($script:queryFailure -eq 'listener'){throw 'PRIVATE_ERROR'}
    return $script:connections
  }
- if($ClassName -cne 'Win32_Process' -or $Filter -cne 'ProcessId=10'){throw 'WRONG_PROCESS_QUERY'}
+ if($ClassName -cne 'Win32_Process'){throw 'WRONG_PROCESS_QUERY'}
  if($script:queryFailure -eq 'process'){throw 'PRIVATE_ERROR'}
+ if($Filter -ceq 'ProcessId=20'){return $script:tailRow}
+ if($Filter -cne 'ProcessId=10'){throw 'WRONG_PROCESS_QUERY'}
  return $script:row
 }
 function Assert-Held([string]$expected) {
  try { $null=Get-SovereignMaintenanceNativeOwnerV2; throw 'FALSE_OWNER_ACCEPTANCE' }
- catch { if($_.Exception.Message -cne $expected){throw ('WRONG_OWNER_BLOCKER:'+ $_.Exception.Message)} }
+ catch { if($_.Exception.Message -cne $expected){throw ('WRONG_OWNER_BLOCKER:EXPECTED='+$expected+':OBSERVED='+$_.Exception.Message)} }
 }
 $valid=Get-SovereignMaintenanceNativeOwnerV2
 if($valid.pid -ne 10 -or $valid.imageSha256 -cne ('b'*64) -or [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::Calls -ne 1){throw 'MISSING_BOUND_FALLBACK'}
@@ -232,7 +240,44 @@ foreach($code in @('OWNER_NATIVE_ACCESS_DENIED','OWNER_NATIVE_OPEN_FAILED','OWNE
 $script:row.ProcessId=11; Assert-Held 'OWNER_PROCESS_UNPROVEN'; $script:row.ProcessId=10
 $script:connections=@(); Assert-Held 'OWNER_LISTENER_UNPROVEN'
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='0.0.0.0'}); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
+$script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='::'}); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},[pscustomobject]@{OwningProcess=11;LocalAddress='::1'}); Assert-Held 'OWNER_LISTENER_UNPROVEN'
+# Genuine Tailscale Serve uses distinct tailnet-specific sockets, not 127.0.0.1.
+$script:connections=@(
+ [pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='100.116.99.92'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='fd7a:115c:a1e0::f01:63ab'}
+)
+$tailValid=Get-SovereignMaintenanceNativeOwnerV2
+if($tailValid.pid -ne 10 -or $tailValid.imageSha256 -cne ('b'*64)){throw 'TAILSCALE_LOOPBACK_OWNER_NOT_BOUND'}
+# A limited token can read the owner birth/name through CIM but not the
+# SYSTEM-owned Tailscale image path. The native path must stay pinned and read-only.
+$script:tailRow.ExecutablePath=$null
+$nativeTailValid=Get-SovereignMaintenanceNativeOwnerV2
+if($nativeTailValid.pid -ne 10 -or [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::TailCalls -ne 2){
+ throw 'TAILSCALE_NATIVE_FALLBACK_NOT_BOUND'
+}
+[Stephanos.ReadOnlyCanonicalNodeIdentityV1]::TailCode='OWNER_NATIVE_IMAGE_MISMATCH'
+Assert-Held 'OWNER_LISTENER_UNPROVEN'
+[Stephanos.ReadOnlyCanonicalNodeIdentityV1]::TailCode=''
+$script:tailRow.ExecutablePath='C:\\Program Files\\Tailscale\\tailscaled.exe'
+$script:tailRow.Name='imposter.exe'; Assert-Held 'OWNER_LISTENER_UNPROVEN'; $script:tailRow.Name='tailscaled.exe'
+$script:tailRow.ExecutablePath='C:\\Users\\Public\\tailscaled.exe'; Assert-Held 'OWNER_LISTENER_UNPROVEN'
+$script:tailRow.ExecutablePath='C:\\Program Files\\Tailscale\\tailscaled.exe'
+$script:tailRow.CreationDate=$null; Assert-Held 'OWNER_LISTENER_UNPROVEN'
+$script:tailRow.CreationDate=[datetime]::UtcNow.AddMinutes(-2)
+$script:connections=@(
+ [pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='192.168.1.17'}
+); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
+$script:connections=@(
+ [pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='0.0.0.0'}
+); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
+$script:connections=@(
+ [pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'},
+ [pscustomobject]@{OwningProcess=20;LocalAddress='fd7a:115c:a1e1::1'}
+); Assert-Held 'OWNER_LISTENER_NOT_PRIVATE'
 $script:connections=@([pscustomobject]@{OwningProcess=10;LocalAddress='127.0.0.1'})
 $script:queryFailure='listener'; Assert-Held 'OWNER_CIM_LISTENER_QUERY_FAILED'
 $script:queryFailure='process'; Assert-Held 'OWNER_CIM_PROCESS_QUERY_FAILED'

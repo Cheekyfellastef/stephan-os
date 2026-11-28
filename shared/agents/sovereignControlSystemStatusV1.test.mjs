@@ -208,6 +208,83 @@ function governorInspection(governorHoldCode = 'FIXED_RUNTIME_GOVERNOR_OBSERVATI
   return input;
 }
 
+function ownerRefusal(diagnosticCode = 'OWNER_NATIVE_ACCESS_DENIED') {
+  const input = governorInspection();
+  input.blocker = 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN';
+  input.owner = { available: false, stable: false, reason: input.blocker, diagnosticCode };
+  input.protocol = { available: false, matches: false, reason: input.blocker };
+  return input;
+}
+
+test('owner detail is an optional closed refusal leaf and preserves every existing authority field', () => {
+  const baseline = ownerRefusal(); delete baseline.owner.diagnosticCode;
+  for (const code of MAINTENANCE_OWNER_DIAGNOSTIC_CODES_V1) {
+    assert.equal(sovereignControlSystemOwnerDiagnosticCodeV1(code), code);
+    assert.equal(sovereignControlSystemDiagnosticCodeV1(code), 'SOVEREIGN_CONTROL_SYSTEM_OBSERVATION_UNPROVEN');
+    const result = projectSovereignControlSystemStatusV1(ownerRefusal(code));
+    const { diagnosticCode, ...owner } = result.owner;
+    assert.equal(diagnosticCode, code);
+    assert.deepEqual({ ...result, owner }, projectSovereignControlSystemStatusV1(baseline));
+    assert.equal(result.owner.available, false); assert.equal(result.owner.stable, false);
+    assert.equal(result.guardian.available, false); assert.equal(result.protocol.available, false);
+    assert.equal(result.nativeRuntime.qualificationObserved, false);
+    assert.equal(Object.isFrozen(result.owner), true);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(result))), result);
+    assert.ok(Buffer.byteLength(JSON.stringify(result)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+  }
+});
+
+test('owner detail never survives a different owner state or unbound source', () => {
+  for (const change of [row => { row.owner.available = true; }, row => { row.owner.stable = true; },
+    row => { row.owner.reason = ''; }, row => { row.owner.reason = 'SOVEREIGN_CONTROL_SYSTEM_OWNER_CHANGED'; },
+    row => { delete row.owner.available; }, row => { delete row.owner.stable; },
+    row => { row.source.available = false; }, row => { row.source.stable = false; },
+    row => { row.source.expectedMain = 'e'.repeat(40); },
+    row => { row.source.reason = 'SOVEREIGN_CONTROL_SYSTEM_SOURCE_CHANGED'; }]) {
+    const input = ownerRefusal(); change(input);
+    const result = projectSovereignControlSystemStatusV1(input);
+    assert.equal(Object.hasOwn(result.owner, 'diagnosticCode'), false);
+  }
+  const success = inspection(); success.owner.diagnosticCode = 'OWNER_NATIVE_ACCESS_DENIED';
+  assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(success).owner, 'diagnosticCode'), false);
+});
+
+test('public owner diagnostics discard private strings, coercions and accessor inputs', () => {
+  let invoked = 0;
+  for (const value of [null, 1, true, [], {}, 'PRIVATE_TOKEN', 'OWNER_PRIVATE_TOKEN',
+    'C:\\PRIVATE\\owner', 'PRIVATE_'.repeat(1000), { toString() { invoked++; return 'PRIVATE_TOKEN'; } }]) {
+    const result = projectSovereignControlSystemStatusV1(ownerRefusal(value));
+    assert.equal(result.owner.diagnosticCode, 'OWNER_OBSERVER_INVALID_RECEIPT');
+    assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
+    assert.deepEqual(projectSovereignControlSystemStatusV1(result), result);
+  }
+  const input = ownerRefusal();
+  Object.defineProperty(input.owner, 'diagnosticCode', { get() { invoked++; return 'PRIVATE_TOKEN'; } });
+  assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(input).owner, 'diagnosticCode'), false);
+  assert.equal(invoked, 0);
+});
+
+test('owner refusal detail survives actual Control Tower receipt readback with its original proof hash', () => {
+  const status = projectSovereignControlSystemStatusV1(ownerRefusal()), nowMs = Date.parse(NOW);
+  const bytes = JSON.stringify(status), observationProofHash = createHash('sha256').update(bytes).digest('hex');
+  const request = { ...controlTowerFixture().request, operation: 'OBSERVE_CONTROL_SYSTEM',
+    artifactId: 200, artifactSha256: 'c'.repeat(64),
+    createdAtUtc: new Date(nowMs - 1000).toISOString(), expiresAtUtc: new Date(nowMs + 599000).toISOString() };
+  let receipt = createControlTowerRequestObservationV1(request, { commandDigest: 'd'.repeat(64),
+    acceptedAtUtc: NOW, observedAtUtc: NOW, state: 'OBSERVATION_COMPLETED', blocker: '',
+    controlSystemStatus: status, observationProofHash, nowMs });
+  assert(receipt);
+  for (let count = 0; count < 3; count++) {
+    receipt = projectControlTowerRequestObservationV1(JSON.parse(JSON.stringify(receipt)), { nowMs });
+    assert(receipt);
+    assert.equal(receipt.controlSystemStatus.owner.diagnosticCode, 'OWNER_NATIVE_ACCESS_DENIED');
+    assert.equal(JSON.stringify(receipt.controlSystemStatus), bytes);
+    assert.equal(receipt.observationProofHash, observationProofHash);
+    assert.equal(receipt.wakeProofHash, ''); assert.equal(receipt.nativePickupProven, false);
+    assert.ok(Buffer.byteLength(JSON.stringify(receipt)) <= CONTROL_TOWER_REQUEST_OBSERVATION_MAX_BYTES_V1);
+  }
+});
+
 test('governor subcode is a bounded optional denial leaf and not a generic public reason', () => {
   const input = governorInspection(), baseline = governorInspection();
   delete baseline.nativeRuntime.governorHoldCode;

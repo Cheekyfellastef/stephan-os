@@ -20,6 +20,14 @@ namespace Stephanos {
         [DllImport("kernel32.dll", SetLastError=true)]
         static extern bool CloseHandle(IntPtr handle);
         public static string Observe(uint pid, long expectedCreatedUtcTicks) {
+            return ObserveExact(pid, expectedCreatedUtcTicks, @"C:\Program Files\nodejs\node.exe");
+        }
+        // Fixed, no caller-selected path. Used when the normal operator cannot
+        // read the SYSTEM-owned Tailscale service image through CIM.
+        public static string ObserveTailscale(uint pid, long expectedCreatedUtcTicks) {
+            return ObserveExact(pid, expectedCreatedUtcTicks, @"C:\Program Files\Tailscale\tailscaled.exe");
+        }
+        private static string ObserveExact(uint pid, long expectedCreatedUtcTicks, string expectedImage) {
             if (pid == 0 || pid > Int32.MaxValue || expectedCreatedUtcTicks <= 0 || expectedCreatedUtcTicks > DateTime.UtcNow.Ticks)
                 return "OWNER_PROCESS_BIRTH_UNAVAILABLE";
             // Query-limited information and a zero-time liveness wait only.
@@ -41,7 +49,7 @@ namespace Stephanos {
                 var image = new StringBuilder(1024); uint length = 1024;
                 if (!QueryFullProcessImageNameW(process, 0, image, ref length))
                     return "OWNER_NATIVE_IMAGE_UNPROVEN";
-                if (!String.Equals(image.ToString(), @"C:\Program Files\nodejs\node.exe", StringComparison.OrdinalIgnoreCase))
+                if (!String.Equals(image.ToString(), expectedImage, StringComparison.OrdinalIgnoreCase))
                     return "OWNER_NATIVE_IMAGE_MISMATCH";
                 state = WaitForSingleObject(process, 0);
                 if (state == 0) return "OWNER_NATIVE_PROCESS_EXITED";
@@ -103,10 +111,60 @@ function Get-SovereignMaintenanceNativeOwnerV2 {
     Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\CimCmdlets\CimCmdlets.psd1' -ErrorAction Stop
     try { $connections = @(Get-CimInstance -Namespace 'root/StandardCimv2' -ClassName MSFT_NetTCPConnection -Filter 'LocalPort = 18791 AND State = 2') }
     catch { throw 'OWNER_CIM_LISTENER_QUERY_FAILED' }
-    $owners = @($connections | ForEach-Object { [long]$_.OwningProcess } | Select-Object -Unique)
-    if ($owners.Count -ne 1 -or $owners[0] -lt 1 -or $connections.Count -lt 1) { throw 'OWNER_LISTENER_UNPROVEN' }
+    # The maintenance identity is the unique loopback owner. Tailscale Serve may
+    # hold this port on its own tailnet interfaces without owning 127.0.0.1.
+    # Never treat an unverified foreign or wildcard listener as a Commander.
+    $loopback = @($connections | Where-Object { $_.LocalAddress -in @('127.0.0.1','::1') })
+    # Preserve the original refusal for a public wildcard-only listener.
+    # Neither this classification nor a Tailscale-only socket proves ownership.
+    if ($loopback.Count -eq 0 -and @($connections | Where-Object {
+        $_.LocalAddress -in @('0.0.0.0','::')
+    }).Count -gt 0) { throw 'OWNER_LISTENER_NOT_PRIVATE' }
+    $owners = @($loopback | ForEach-Object { [long]$_.OwningProcess } | Select-Object -Unique)
+    if ($owners.Count -ne 1 -or $owners[0] -lt 1 -or $loopback.Count -lt 1) { throw 'OWNER_LISTENER_UNPROVEN' }
     foreach ($connection in $connections) {
-        if ($connection.LocalAddress -notin @('127.0.0.1','::1')) { throw 'OWNER_LISTENER_NOT_PRIVATE' }
+        $address = [string]$connection.LocalAddress
+        if ($address -in @('127.0.0.1','::1')) {
+            if ([long]$connection.OwningProcess -ne $owners[0]) { throw 'OWNER_LISTENER_UNPROVEN' }
+            continue
+        }
+        try { $ip = [System.Net.IPAddress]::Parse($address) }
+        catch { throw 'OWNER_LISTENER_NOT_PRIVATE' }
+        $octets = $ip.GetAddressBytes()
+        $tailnetAddress = [bool](
+            ($octets.Length -eq 4 -and $octets[0] -eq 100 -and $octets[1] -ge 64 -and $octets[1] -le 127) -or
+            ($octets.Length -eq 16 -and $octets[0] -eq 253 -and $octets[1] -eq 122 -and
+             $octets[2] -eq 17 -and $octets[3] -eq 92 -and $octets[4] -eq 161 -and $octets[5] -eq 224)
+        )
+        if (-not $tailnetAddress) { throw 'OWNER_LISTENER_NOT_PRIVATE' }
+        $tailPid = [long]$connection.OwningProcess
+        if ($tailPid -lt 1 -or $tailPid -eq $owners[0]) { throw 'OWNER_LISTENER_UNPROVEN' }
+        try { $tail = @(Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + [string]$tailPid)) }
+        catch { throw 'OWNER_CIM_PROCESS_QUERY_FAILED' }
+        if ($tail.Count -ne 1 -or [long]$tail[0].ProcessId -ne $tailPid -or
+            [string]$tail[0].Name -cne 'tailscaled.exe' -or
+            $tail[0].CreationDate -isnot [datetime] -or
+            $tail[0].CreationDate.ToUniversalTime() -gt [datetime]::UtcNow) {
+            throw 'OWNER_LISTENER_UNPROVEN'
+        }
+        $tailImage = [string]$tail[0].ExecutablePath
+        if ($tailImage) {
+            if ($tailImage -ine 'C:\Program Files\Tailscale\tailscaled.exe') {
+                throw 'OWNER_LISTENER_UNPROVEN'
+            }
+        } else {
+            # SYSTEM service image paths are commonly opaque to a limited-user
+            # CIM query. The existing read-only native query pins PID/birth/image
+            # using PROCESS_QUERY_LIMITED_INFORMATION, with no token elevation.
+            $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+            if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                throw 'OWNER_LISTENER_UNPROVEN'
+            }
+            Initialize-StephanosCanonicalNodeIdentityV1
+            $tailCode = [Stephanos.ReadOnlyCanonicalNodeIdentityV1]::ObserveTailscale(
+                [uint32]$tailPid, [long]$tail[0].CreationDate.ToUniversalTime().Ticks)
+            if ($tailCode -cne '') { throw 'OWNER_LISTENER_UNPROVEN' }
+        }
     }
     try { $rows = @(Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + [string]$owners[0])) }
     catch { throw 'OWNER_CIM_PROCESS_QUERY_FAILED' }

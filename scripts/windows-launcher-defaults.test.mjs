@@ -124,8 +124,8 @@ test('desktop Ignite approval helper resolves and logs PR worktree root', async 
 
 test('desktop Ignite approval helper preserves operator-gated recovery safety locks', async () => {
   const script = await readFile(WINDOWS_IGNITE_APPROVAL_PS1, 'utf8');
-  assert.match(script, /\$normalIgniteCommand = 'npm run stephanos:ignite'/m, 'normal desktop Ignite must run safe default ignition first');
-  assert.match(script, /\$approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'/m, 'approved path must run the explicit approved recovery command');
+  assert.match(script, /\$normalIgniteCommand = "npm run stephanos:ignite -- --expected-main \$requestedHead"/m, 'normal desktop Ignite must run safe default ignition pinned to the requesting head');
+  assert.match(script, /\$approvedIgniteCommand = "npm run stephanos:ignite -- --approve-local-merge --expected-main \$requestedHead"/m, 'approved path must preserve explicit recovery approval and the requesting head');
   assert.match(script, /Test-GeneratedDistRecoveryAvailable[\s\S]*?\$Packet\.localOnlyDistOnly -eq \$true[\s\S]*?--approve-local-merge/m, 'approve button must be gated by generated-dist-only recovery availability');
   assert.match(script, /if \(\$approvalAvailable\) \{[\s\S]*?Approve local recovery/m, 'approve button must only be added when recovery is available');
   assert.match(script, /elseif \(\$sourceDivergence\) \{[\s\S]*?View source divergence details[\s\S]*?Copy source merge repair packet[\s\S]*?Start approved source merge check/m, 'source divergence popup must offer assistance instead of generated-dist approval');
@@ -135,7 +135,7 @@ test('desktop Ignite approval helper preserves operator-gated recovery safety lo
   assert.match(script, /Popup failed[\s\S]*?run: \$approvedIgniteCommand/m, 'generated-dist popup failure must fall back to clear CLI repair instruction');
   assert.match(script, /Popup failed[\s\S]*?source-merge-repair-packet/m, 'source divergence popup failure must emit a repair packet');
   assert.match(script, /no auto-push[\s\S]*?no Codex auto-dispatch[\s\S]*?no OpenClaw unlock[\s\S]*?no merge-ready flip/m, 'popup must show safety locks remain closed');
-  assert.match(script, /\$approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-openclaw-service-restart'/m, 'OpenClaw recovery must use explicit approved restart command');
+  assert.match(script, /\$approvedOpenClawRestartCommand = "npm run stephanos:ignite -- --approve-openclaw-service-restart --expected-main \$requestedHead"/m, 'OpenClaw recovery must retain its explicit approved restart and requesting head');
   assert.match(script, /Test-OpenClawRestartAvailable[\s\S]*?connectionVerdict -eq 'openclaw-service-running-not-connected'[\s\S]*?details.service.exists -eq \$true[\s\S]*?details.service.verified -eq \$true[\s\S]*?endpointIdentityVerified -eq \$true[\s\S]*?portOwnerVerified -eq \$true/m, 'OpenClaw restart button must be gated by known safe readiness state');
   assert.match(script, /Restart OpenClaw service/m, 'desktop popup must expose the exact safe OpenClaw restart button label');
   assert.match(script, /OpenClaw appears to have started on power-up, but failed readiness\/connection health/m, 'OpenClaw popup must explain startup connect recovery cause');

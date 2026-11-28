@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -29,11 +29,11 @@ test('wake invocation is fully fixed and cannot accept a command, task or route'
 });
 
 test('host proof writer rejects a linked workspace ancestor', async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'openclaw-recovery-proof-'));
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'openclaw-recovery-proof-')));
   const victim = path.join(root, 'victim');
   mkdirSync(victim);
   mkdirSync(path.join(root, 'Documents'));
-  symlinkSync(victim, path.join(root, 'Documents', 'Stephanos-openclaw-workspace'), 'dir');
+  symlinkSync(victim, path.join(root, 'Documents', 'Stephanos-openclaw-workspace'), process.platform === 'win32' ? 'junction' : 'dir');
   const result = await wakeBattleBridgeRecoveryMesh({ platform: 'win32', env: { USERPROFILE: root }, authenticatedContext,
     now: new Date('2026-08-01T03:00:00.000Z'), nonce: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', fetchFn: identityFetch });
   assert.equal(result.blocker, 'RECOVERY_WAKE_HOST_PROOF_LINKED_ANCESTOR');

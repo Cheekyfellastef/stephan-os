@@ -465,10 +465,11 @@ export async function inspectSovereignControlSystemV1(options = {}) {
       try { return { ok: true, value: validOwner(await deps.readOwner(), Date.parse(instant(deps.now))) }; }
       catch (error) {
         const reason = diagnosticCode(error, 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN');
+        const detail = reason === 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN' && error && typeof error === 'object'
+          ? Object.getOwnPropertyDescriptor(error, 'diagnosticCode') : undefined;
         return { ok: false, reason,
-          ...(reason === 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN' && Object.hasOwn(error, 'diagnosticCode')
-            ? { diagnosticCode: sovereignControlSystemOwnerDiagnosticCodeV1(
-              Object.getOwnPropertyDescriptor(error, 'diagnosticCode')?.value) } : {}) };
+          ...(detail && Object.hasOwn(detail, 'value')
+            ? { diagnosticCode: sovereignControlSystemOwnerDiagnosticCodeV1(detail.value) } : {}) };
       }
     };
     const before = await observeOwner();

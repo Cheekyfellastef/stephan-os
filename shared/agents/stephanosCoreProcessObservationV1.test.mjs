@@ -26,7 +26,13 @@ test('missing-image fallback is fixed, birth-bound, bounded and never widens opa
   assert.doesNotMatch(source, /^\.\s*\(Join-Path \$PSScriptRoot 'read-sovereign-maintenance-owner-v2\.ps1'\)$/m);
   assert.match(source, /ReadAllBytes\(\$ownerNativePath\)/);
   assert.match(source, /\[ScriptBlock\]::Create\(\$canonicalSource\)/);
-  assert.match(source, /d3c82d73d6d1354864e006179a4e3840294fc738b84c731305d3154a027bf956/);
+  // Independently bind the production helper bytes, before the mocked token seam.
+  const { createHash } = await import('node:crypto');
+  const owner = await readFile(new URL('../../scripts/windows/read-sovereign-maintenance-owner-v2.ps1', import.meta.url), 'utf8');
+  const canonical = owner.replace(/\r\n/g, '\n');
+  assert.ok(!canonical.includes('\r'));
+  const productionDigest = createHash('sha256').update(canonical, 'utf8').digest('hex');
+  assert.equal(source.match(/\$sourceDigest -cne '([a-f0-9]{64})'/)?.[1], productionDigest);
   const guard = source.indexOf('CORE_PROCESS_NATIVE_FALLBACK_REQUIRES_LIMITED_TOKEN');
   assert.ok(guard > 0 && guard < source.indexOf('ReadAllBytes($ownerNativePath)'));
   assert.match(source, /Get-StephanosCanonicalNodeIdentityV1 -ProcessRow \$row/);
@@ -52,8 +58,8 @@ test('Windows Core actual observer reconciles only visible exact command and mat
     // Actual limited-token/native capability proof is a separate test.
     const limitedPrincipal = '$principal = [pscustomobject]@{}; $principal | Add-Member -MemberType ScriptMethod -Name IsInRole -Value { param($role) $false }';
     const ownerSource = await readFile(new URL('../../scripts/windows/read-sovereign-maintenance-owner-v2.ps1', import.meta.url), 'utf8');
-    assert.equal(ownerSource.split(principal).length, 2);
-    const fixtureOwner = ownerSource.replace(principal, limitedPrincipal).replace(/\r\n/g, '\n');
+    assert.equal(ownerSource.split(principal).length, 3);
+    const fixtureOwner = ownerSource.replaceAll(principal, limitedPrincipal).replace(/\r\n/g, '\n');
     const fixtureDigest = createHash('sha256').update(fixtureOwner).digest('hex');
     const pin = source.match(/\$sourceDigest -cne '([a-f0-9]{64})'/)?.[0];
     assert.ok(pin, 'actual loader must retain an exact content binding');

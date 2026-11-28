@@ -13,6 +13,8 @@ import { projectSovereignControlSystemStatusV1, SOVEREIGN_CONTROL_SYSTEM_STATUS_
   from '../shared/agents/sovereignControlSystemStatusV1.mjs';
 import { callSovereignMaintenanceOwnerV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
+import { MAINTENANCE_OWNER_DIAGNOSTIC_CODES_V1, readMaintenanceNativeOwnerV2 }
+  from './sovereign-maintenance-owner-observation-v2.mjs';
 
 const HEAD = 'a'.repeat(40), NOW = '2026-10-31T13:00:00.000Z';
 const REQUEST = 'control-tower-build-41192328171-1';
@@ -266,7 +268,7 @@ test('owner error diagnostics reject private data and ignore accessors or inheri
     { diagnosticCode: 'OWNER_NATIVE_ACCESS_DENIED' }));
   const unrelated = Object.assign(Error('SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN'),
     { diagnosticCode: 'OWNER_NATIVE_ACCESS_DENIED' });
-  for (const [error, expected] of [[accessor, 'OWNER_OBSERVER_INVALID_RECEIPT'], [inherited, undefined],
+  for (const [error, expected] of [[accessor, undefined], [inherited, undefined],
     [unrelated, undefined]]) {
     const report = await inspectSovereignControlSystemV1(fixture({ readOwner: () => { throw error; } }).options);
     assert.equal(report.owner.diagnosticCode, expected);
@@ -296,6 +298,79 @@ test('owner failure detail is withdrawn when its exact source moves or never mat
   assert.equal(mismatched.blocker, 'SOVEREIGN_CONTROL_SYSTEM_EXPECTED_MAIN_MISMATCH');
   assert.equal(ownerReads, 0);
   assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(mismatched).owner, 'diagnosticCode'), false);
+});
+
+test('native owner refusal detail survives either observation bracket without granting admission', async () => {
+  for (const diagnosticCode of MAINTENANCE_OWNER_DIAGNOSTIC_CODES_V1) {
+    for (const failedAt of [1, 2]) {
+      let reads = 0;
+      const report = await inspectSovereignControlSystemV1(fixture({ readOwner: () => {
+        if (++reads !== failedAt) return nativeOwner();
+        return readMaintenanceNativeOwnerV2({ platform: 'win32', spawnSyncFn: () => ({ status: 2,
+          stdout: JSON.stringify({ schemaVersion: 'stephanos.maintenance-owner-native-diagnostic.v1',
+            ok: false, observationOnly: true, diagnosticCode }) }) });
+      } }).options);
+      assert.equal(reads, 2);
+      assert.equal(report.owner.diagnosticCode, diagnosticCode);
+      assert.equal(report.owner.reason, 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+      const published = projectSovereignControlSystemStatusV1(report);
+      assert.equal(published.owner.diagnosticCode, diagnosticCode);
+      for (const result of [report, published]) {
+        assert.equal(result.blocker, 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+        assert.equal(result.owner.available, false); assert.equal(result.owner.stable, false);
+        assert.equal(result.guardian.available, false); assert.equal(result.protocol.available, false);
+        assert.equal(result.nativeRuntime.qualificationObserved, false);
+        assert.equal(result.source.loadedSourceBytesProven, false);
+      }
+      assert.deepEqual(projectSovereignControlSystemStatusV1(JSON.parse(JSON.stringify(published))), published);
+      assert.ok(Buffer.byteLength(JSON.stringify(published)) <= SOVEREIGN_CONTROL_SYSTEM_STATUS_MAX_BYTES_V1);
+    }
+  }
+});
+
+test('owner detail follows the original first failure and disappears on source movement', async () => {
+  const failure = code => Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'), { diagnosticCode: code });
+  for (const first of [failure('OWNER_NATIVE_ACCESS_DENIED'), Error('PRIVATE_FIRST_OWNER_FAILURE')]) {
+    let reads = 0;
+    const report = await inspectSovereignControlSystemV1(fixture({ readOwner: () => {
+      throw ++reads === 1 ? first : failure('OWNER_COMMAND_LINE_UNAVAILABLE');
+    } }).options);
+    assert.equal(report.owner.diagnosticCode, first.diagnosticCode);
+    assert.equal(report.owner.reason, first.diagnosticCode
+      ? 'MAINTENANCE_MIGRATION_OWNER_UNPROVEN' : 'SOVEREIGN_CONTROL_SYSTEM_OWNER_UNPROVEN');
+    assert.equal(JSON.stringify(report).includes('PRIVATE_'), false);
+  }
+  let heads = 0;
+  const moved = await inspectSovereignControlSystemV1(fixture({
+    readSourceHead: () => ++heads === 1 ? HEAD : 'e'.repeat(40),
+    readOwner: () => { throw failure('OWNER_NATIVE_ACCESS_DENIED'); },
+  }).options);
+  assert.equal(moved.source.stable, false); assert.equal(moved.observationCompleted, false);
+  assert.equal(Object.hasOwn(moved.owner, 'diagnosticCode'), false);
+  assert.equal(Object.hasOwn(projectSovereignControlSystemStatusV1(moved).owner, 'diagnosticCode'), false);
+});
+
+test('owner diagnostics never evaluate values or copy private and unrelated errors', async () => {
+  let invoked = 0;
+  for (const value of [null, 1, true, [], {}, 'PRIVATE_TOKEN', 'OWNER_PRIVATE_TOKEN',
+    'C:\\PRIVATE\\owner', 'PRIVATE_'.repeat(1000), { toString() { invoked++; return 'PRIVATE_TOKEN'; } }]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ readOwner: () => {
+      throw Object.assign(Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'), { diagnosticCode: value });
+    } }).options);
+    assert.equal(report.owner.diagnosticCode, 'OWNER_OBSERVER_INVALID_RECEIPT');
+    assert.equal(JSON.stringify(report).includes('PRIVATE'), false);
+  }
+  const accessor = Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+  Object.defineProperty(accessor, 'diagnosticCode', { get() { invoked++; return 'PRIVATE_TOKEN'; } });
+  const inherited = Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN');
+  Object.setPrototypeOf(inherited, Object.assign(Object.create(Error.prototype), { diagnosticCode: 'OWNER_NATIVE_ACCESS_DENIED' }));
+  for (const error of [accessor, inherited, Error('MAINTENANCE_MIGRATION_OWNER_UNPROVEN'),
+    Object.assign(Error('PRIVATE_OTHER_FAILURE'), { diagnosticCode: 'OWNER_NATIVE_ACCESS_DENIED' })]) {
+    const report = await inspectSovereignControlSystemV1(fixture({ readOwner: () => { throw error; } }).options);
+    assert.equal(Object.hasOwn(report.owner, 'diagnosticCode'), false);
+    assert.equal(JSON.stringify(report).includes('PRIVATE'), false);
+  }
+  assert.equal(invoked, 0);
 });
 
 test('governor diagnostics reject invalid data, extra authority and out-of-capture timestamps', async () => {

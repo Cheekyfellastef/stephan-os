@@ -6,6 +6,8 @@ import process from 'node:process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { executePostSyncRefreshPlan, buildPostSyncRefreshProjection, projectThreeAppDesktopStartupAdmissionV1 }
+  from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 
 import './battle-bridge-ignition-sync-preflight.test.mjs';
 import './windows-ignition-preflight-recovery.test.mjs';
@@ -18,6 +20,14 @@ const aiCoreHtml = new URL('../stephanos-ui/index.html', import.meta.url);
 const aiCoreMain = new URL('../stephanos-ui/src/main.jsx', import.meta.url);
 const packageJson = new URL('../package.json', import.meta.url);
 const ignitionEntry = new URL('./run-battle-bridge-ignition.mjs', import.meta.url);
+// Existing browser cases start with eligible source-entry proof so each keeps
+// exercising its original service/window invariant independently.
+const fixtureHead='a'.repeat(40);
+const sourceExecution=await executePostSyncRefreshPlan({beforeHead:'0'.repeat(40),afterHead:fixtureHead,
+  changedPaths:['docs/browser-proof-fixture.md']});
+const fixtureStartupAdmission=projectThreeAppDesktopStartupAdmissionV1({
+  ...buildPostSyncRefreshProjection(sourceExecution,{beforeHead:'0'.repeat(40),afterHead:fixtureHead}),phase:'complete'},fixtureHead);
+assert(fixtureStartupAdmission?.admitted);
 
 function runPowerShell(command, timeout = 10_000) {
   const directory = mkdtempSync(join(tmpdir(), 'ignition-observation-fixture-'));
@@ -177,7 +187,7 @@ Fail-Step -Step 'helper stopped before service readiness'
 });
 
 function launcherStatusHarness(source) {
-  const names = ['Convert-SupervisorRecordToIgnitionStatus', 'Test-IgnitionBrowserReceiptSet', 'Resolve-IgnitionStatusProjection', 'Get-IgnitionStatusProjection', 'Publish-IgnitionStatusProjection', 'Write-IgnitionStatus', 'Publish-IgnitionTerminalOutcome', 'Complete-IgnitionLaunch', 'Test-BattleBridgeSupervisorFinalContract', 'Write-IgnitionSupportSnapshot', 'Fail-Step'];
+  const names = ['Convert-SupervisorRecordToIgnitionStatus', 'Test-IgnitionBrowserReceiptSet', 'ConvertTo-ThreeAppDesktopStartupAdmission', 'Resolve-IgnitionStatusProjection', 'Get-IgnitionStatusProjection', 'Publish-IgnitionStatusProjection', 'Write-IgnitionStatus', 'Publish-IgnitionTerminalOutcome', 'Complete-IgnitionLaunch', 'Test-BattleBridgeSupervisorFinalContract', 'Write-IgnitionSupportSnapshot', 'Fail-Step'];
   const optional = ['New-IgnitionBrowserObservationClock', 'Get-IgnitionBrowserObservationSet', 'Get-IgnitionRequiredBrowserSurfaces', 'Get-IgnitionOptionalBrowserOutcome'];
   const functions = [...names, ...optional].map(name => {
     const definition = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^}\\r?$`, 'm'))?.[0];
@@ -221,6 +231,7 @@ function Write-IgnitionJson { param($Path, $Value, $Depth); if ($script:publicat
 function Write-IgnitionTranscript { param($Event); if ($script:publicationFailure -eq 'transcript') { throw 'fixture-publication-failed' }; $script:events += 'transcript:' + $Event.event }
 function Update-IgnitionSplashScreen { param($Status) }
 function Get-LauncherChildBlocker { return $script:childFixture }
+function Get-CurrentIgnitionStartupObservation { return ('${JSON.stringify({packetType:'ignition-startup-admission',sourceCohortState:'CURRENT',sourceHead:fixtureHead,currentSourceHead:fixtureHead,startupAdmission:fixtureStartupAdmission})}' | ConvertFrom-Json) }
 function Write-Host { param($Object, $ForegroundColor); if ($Object -eq 'Stephanos local server ready') { $script:events += 'console:ready' } }
 function Read-Host {}
 function Write-LiveLog { param($Message) }

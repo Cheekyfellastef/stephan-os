@@ -219,3 +219,21 @@ test('every essential launcher-chain member remains protected against removal or
   assert.equal(copied.ok, true);
   assert.equal(classifyPostSyncRefresh(copied.paths).classification, 'BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
 });
+
+
+// Exact outstanding paths in the previously blocked 993-path rollout.
+test('historical commissioning debt routes exact source paths to existing owners',()=>{
+  const natural=['scripts/starfield-vr-aer-native-build-readiness.mjs','scripts/stephanos-github-operator-briefing.mjs','scripts/stephanos-native-capacity-publisher.mjs'];
+  const hosted=['scripts/independent-merge-security-review-v2.mjs','scripts/fixtures/sovereign-specialist-authority-closure-v1.mjs'];
+  const skill='shared/skill-forge/skillGrowthProjectionV1.mjs';
+  for(const path of natural) assert.deepEqual(classifyPostSyncRefresh([path]).targetIds,['natural-reload'],path);
+  for(const path of hosted) assert.equal(classifyPostSyncRefresh([path]).classification,'NO_RUNTIME_REFRESH_REQUIRED',path);
+  assert.deepEqual(classifyPostSyncRefresh([skill]).targetIds,['stephanos-ui-4173']);
+  const paths=[...natural,...hosted,skill];
+  assert.equal(classifyPostSyncRefresh(paths).unknownPathCount,0);
+  const held=classifyPostSyncRefresh([...paths,'integrations/openclaw/stephanos-builder-provider/index.js','scripts/spatial-window-host.mjs']);
+  assert.equal(held.classification,'APPROVAL_REQUIRED_OPENCLAW');
+  assert.equal(held.spatialAdoptionRequired,true);
+  for(const path of ['scripts/independent-merge-security-review-v3.mjs','scripts/fixtures/sovereign-specialist-authority-closure-v2.mjs','shared/skill-forge/unreviewed-projection.mjs','scripts/starfield-vr-aer-native-build-readiness-v2.mjs','scripts/stephanos-github-operator-briefing-v2.mjs'])
+    assert.equal(classifyPostSyncRefresh([...paths,path]).classification,'BLOCKED_UNCLASSIFIED_RUNTIME_PATH',path);
+});
