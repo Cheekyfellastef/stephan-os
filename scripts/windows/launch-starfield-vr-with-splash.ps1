@@ -102,8 +102,13 @@ $monitorState = [pscustomobject]@{
     ConfirmationToken = $null
     RunId = $null
     GameProcess = $null
+    GameProcessIdentity = $null # Immutable game identity survives null cleanup frames
+    WitnessedRunId = $null # A single monitor child cannot switch to a second run
     Result = $null
     DetailText = ''
+    FocusAttemptedRunId = ''
+    FocusAttemptCount = 0
+    LastCleanupDiagnosticKey = ''
     StartedAtUtc = $null
     ExitedAtUtc = $null
 }
@@ -114,6 +119,7 @@ $monitorState = [pscustomobject]@{
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -207,6 +213,69 @@ namespace Stephanos.Starfield {
         public bool PermitForeground() {
             return !child.HasExited && AllowSetForegroundWindow(checked((uint)child.Id));
         }
+
+        private delegate bool EnumWindowsCallback(IntPtr hwnd, IntPtr argument);
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr argument);
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowVisible(IntPtr hwnd);
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ShowWindowAsync(IntPtr hwnd, int show);
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetForegroundWindow(IntPtr hwnd);
+
+        // UI-only focus handoff for the exact runner-witnessed game process.
+        // Never chooses an ambiguous window or authorizes the native probe.
+        public static string FocusBoundGame(int pid, string createdFileTime) {
+            if (pid <= 0 || String.IsNullOrEmpty(createdFileTime)) return "game-identity-missing";
+            try {
+                using (Process game = Process.GetProcessById(pid)) {
+                    if (game.HasExited) return "game-already-exited";
+                    string birth = game.StartTime.ToUniversalTime().ToFileTimeUtc()
+                        .ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (!String.Equals(birth, createdFileTime, StringComparison.Ordinal))
+                        return "game-creation-identity-changed";
+                    // The pinned monitor runner already authenticated the absolute image.
+                    // This UI helper only rechecks its exact PID/birth and process name;
+                    // it cannot launch a game or authorize the capture.
+                    if (!String.Equals(game.ProcessName, "Starfield", StringComparison.OrdinalIgnoreCase))
+                        return "game-process-name-changed";
+                    List<IntPtr> windows = new List<IntPtr>();
+                    EnumWindowsCallback callback = delegate(IntPtr hwnd, IntPtr argument) {
+                        uint owner;
+                        GetWindowThreadProcessId(hwnd, out owner);
+                        if (owner == (uint)pid && IsWindowVisible(hwnd)) windows.Add(hwnd);
+                        return true;
+                    };
+                    if (!EnumWindows(callback, IntPtr.Zero)) return "game-window-enumeration-failed";
+                    if (windows.Count == 0) return "game-window-not-visible";
+                    if (windows.Count != 1) return "game-window-ambiguous";
+                    IntPtr target = windows[0];
+                    if (game.HasExited) return "game-exited-before-focus";
+                    if (GetForegroundWindow() == target) return "focused";
+                    ShowWindowAsync(target, 9);
+                    SetForegroundWindow(target);
+                    for (int i = 0; i < 12; ++i) {
+                        if (game.HasExited) return "game-exited-during-focus";
+                        if (GetForegroundWindow() == target) return "focused";
+                        Thread.Sleep(100);
+                    }
+                    return "windows-denied-foreground";
+                }
+            } catch (ArgumentException) { return "game-process-unavailable"; }
+              catch (InvalidOperationException) { return "game-process-unavailable"; }
+              catch (System.ComponentModel.Win32Exception) { return "game-identity-access-denied"; }
+              catch (System.UnauthorizedAccessException) { return "game-identity-access-denied"; }
+        }
+
         public void CloseInput() {
             try { child.StandardInput.Close(); } catch (InvalidOperationException) {} catch (IOException) {}
         }
@@ -487,6 +556,99 @@ function Add-MonitorDetail {
     $detailsBox.ScrollToCaret()
 }
 
+function Get-MonitorDiagnosticField {
+    param($Record, [string]$Name)
+    if (-not $Record -or -not $Record.PSObject.Properties[$Name]) { return '' }
+    $value = $Record.PSObject.Properties[$Name].Value
+    if ($null -eq $value -or $value -is [array] -or $value -is [pscustomobject]) { return '' }
+    $safe = ([string]$value) -replace '[\x00-\x1f]+', ' '
+    return $safe.Substring(0, [Math]::Min($safe.Length, 300))
+}
+
+function Get-MonitorCleanupDiagnostics {
+    param($Event)
+    # This is a local, read-only explanation of the retained custody.
+    # It NEVER mutates a journal, deletes a lock, starts a game or releases a provider.
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('Local cleanup diagnostic (read only, no AI service):')
+    $lines.Add(('Monitor mode: ' + (Get-MonitorDiagnosticField -Record $Event -Name 'mode')))
+    $lines.Add(('Stage: ' + (Get-MonitorDiagnosticField -Record $Event -Name 'stage')))
+    $lines.Add(('Cleanup complete: ' + [string]$Event.cleanupComplete + '; normal exit proven: ' + [string]$Event.normalExitProven))
+    $lines.Add(('Unresolved child: ' + [string]$Event.unresolvedChild + '; provider released: ' + [string]$Event.providerSlotReleased))
+    $root = Join-Path $env:USERPROFILE 'Documents\Codex\2026-11-05\starfield-vr-did-not-start-and\outputs\Starfield-VR-monitor-one-click-v1'
+    $reason = ''
+    foreach ($entry in @(
+        @{ Label = 'Original'; Path = (Join-Path $root 'session.json') },
+        @{ Label = 'Paired'; Path = (Join-Path $root 'paired-source-v1\session.json') }
+    )) {
+        try {
+            if (-not (Test-MonitorCustodyPathPresent -LiteralPath $entry.Path)) { continue }
+            $file = Get-Item -LiteralPath $entry.Path -Force -ErrorAction Stop
+            if ($file.PSIsContainer -or $file.Length -gt 1048576) { throw 'journal-not-regular-or-bounded' }
+            $journal = Get-Content -LiteralPath $entry.Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            # A consumed legacy journal can coexist with the active paired run.
+            # Never present a different run's historical cleanup failure as today's blocker.
+            $journalRun = Get-MonitorDiagnosticField -Record $journal -Name 'runId'
+            $activeRun = Get-MonitorDiagnosticField -Record $Event -Name 'runId'
+            if (-not $activeRun -or $journalRun -cne $activeRun) {
+                $lines.Add(($entry.Label + ' journal belongs to another run; not used as the current cleanup reason.'))
+                continue
+            }
+            $stage = Get-MonitorDiagnosticField -Record $journal -Name 'stage'
+            $cleanupError = Get-MonitorDiagnosticField -Record $journal -Name 'cleanupError'
+            $lines.Add(($entry.Label + ' journal stage: ' + $stage))
+            if ($cleanupError) {
+                $lines.Add(($entry.Label + ' cleanup blocker: ' + $cleanupError))
+                if (-not $reason) { $reason = $cleanupError }
+            }
+            if ($journal.PSObject.Properties['activeChild'] -and $journal.activeChild) {
+                $child = $journal.activeChild
+                $lines.Add(($entry.Label + ' active helper: ' +
+                    (Get-MonitorDiagnosticField -Record $child -Name 'role') + '/' +
+                    (Get-MonitorDiagnosticField -Record $child -Name 'state')))
+                if (-not $reason) { $reason = 'A retained helper may still be running or unresolved.' }
+            }
+        } catch {
+            $lines.Add(($entry.Label + ' journal inspection could not be completed safely.'))
+            if (-not $reason) { $reason = 'The retained cleanup journal needs inspection.' }
+        }
+    }
+    if (-not $reason -and $Event.unresolvedChild) { $reason = 'The monitor has an unresolved child process.' }
+    if (-not $reason -and -not $Event.normalExitProven) { $reason = 'Normal game exit has not yet been proven.' }
+    if (-not $reason -and -not $Event.providerSlotReleased) { $reason = 'The original proxy or runtime custody has not yet been released.' }
+    return [pscustomobject]@{ Text = ($lines -join [Environment]::NewLine); Reason = $reason }
+}
+
+function Invoke-MonitorWaitingGameFocus {
+    # The reviewed native starter reports process existence before a HWND exists.
+    # Retry *only* the exact witnessed game while the same GUI is waiting for Save loaded.
+    if ($monitorState.Mode -cne 'waiting' -or $monitorState.Busy -or -not $monitorState.Process -or
+        -not $monitorState.GameProcess -or -not $monitorState.RunId -or
+        $monitorState.FocusAttemptedRunId -cne $monitorState.RunId -or
+        $processState.CloseRequested -or $monitorState.CloseRequested -or $monitorState.CloseSent -or
+        $monitorState.TransportFailed -or $monitorState.FocusAttemptCount -ge 8) {
+        $focusRetryTimer.Stop()
+        return
+    }
+    $monitorState.FocusAttemptCount += 1
+    $result = [Stephanos.Starfield.MonitorPipe]::FocusBoundGame(
+        [int]$monitorState.GameProcess.pid, [string]$monitorState.GameProcess.createdFileTime)
+    if ($result -ceq 'game-window-not-visible' -and $monitorState.FocusAttemptCount -lt 8) {
+        $statusHint.Text = 'Waiting for the exact Starfield game window to appear before handing over focus.'
+        $focusRetryTimer.Start()
+        return
+    }
+    $focusRetryTimer.Stop()
+    Add-MonitorDetail -Message ('Starfield foreground handoff: ' + $result +
+        '; attempts: ' + [string]$monitorState.FocusAttemptCount)
+    if ($result -ceq 'focused') {
+        $statusHint.Text = 'Starfield is in front. Load your save, then return here to confirm.'
+    } else {
+        $statusHint.Text = 'Starfield could not take focus (' + $result +
+            '). Select the game from the taskbar, load your save, then return here to confirm.'
+    }
+}
+
 function Update-HybridButton {
     if ($processState.ProviderBusy) {
         $hybridButton.Enabled = $false
@@ -524,6 +686,8 @@ function Stop-MonitorTransport {
     param([string]$Reason)
     if ($monitorState.TransportFailed) { return }
     $monitorState.TransportFailed = $true
+    # A broken transport must not continue bringing the game forward from a pending retry timer.
+    $focusRetryTimer.Stop()
     $monitorState.Busy = $false
     $monitorState.AllowedActions = @()
     if ($monitorState.PrepareDispatched) {
@@ -574,7 +738,12 @@ function Send-MonitorCommand {
         $monitorState.Busy = $true
         $monitorState.AllowedActions = @('cancel', 'close')
     }
-    if ($Command -in @('cancel', 'close')) { $monitorState.CloseSent = $true }
+    if ($Command -in @('cancel', 'close')) {
+        # A terminal command revokes GUI focus retries immediately, before I/O flush.
+        # Closing the monitor input is independent of native game focus.
+        $monitorState.CloseSent = $true
+        $focusRetryTimer.Stop()
+    }
     try {
         $monitorState.Process.StandardInput.WriteLine(($request | ConvertTo-Json -Depth 6 -Compress))
         $monitorState.Process.StandardInput.Flush()
@@ -637,14 +806,32 @@ function Receive-MonitorEvent {
             ($event.process.pid -isnot [int] -and $event.process.pid -isnot [long]) -or $event.process.pid -le 0 -or $event.process.pid -gt 4294967295 -or
             $event.process.createdFileTime -isnot [string] -or $event.process.createdFileTime -cnotmatch '^[0-9]{16,20}$') { throw 'monitor-state-process-invalid' }
     }
+    if ($event.process -and -not $event.runId) { throw 'monitor-state-process-without-run' }
     if ($null -ne $event.confirmationToken -and ($event.confirmationToken -isnot [string] -or $event.confirmationToken -cnotmatch '^[a-f0-9]{32,128}$')) { throw 'monitor-state-confirmation-invalid' }
     if ('confirm' -cin $event.allowedActions -and ($event.mode -cne 'waiting' -or $event.busy -or -not $event.runId -or -not $event.process -or -not $event.confirmationToken)) { throw 'monitor-state-confirmation-not-bound' }
     foreach ($name in @('outcome', 'error', 'resultZip', 'resultDirectory')) {
         $value = $event.PSObject.Properties[$name].Value
         if ($null -ne $value -and ($value -isnot [string] -or $value.Length -gt 4096)) { throw ('monitor-state-text-invalid:' + $name) }
     }
+    # One monitor child owns one run. Null cleanup frames must not erase its
+    # first witnessed identity or grant a later frame new focus/confirm authority.
+    if ($monitorState.WitnessedRunId -and $event.runId -and $monitorState.WitnessedRunId -cne $event.runId) {
+        throw 'monitor-state-run-identity-drift'
+    }
+    if ($monitorState.GameProcessIdentity -and $event.process -and
+        ($monitorState.GameProcessIdentity.pid -ne $event.process.pid -or
+         $monitorState.GameProcessIdentity.createdFileTime -cne $event.process.createdFileTime)) {
+        throw 'monitor-state-game-identity-drift'
+    }
+    if ($event.runId -and -not $monitorState.WitnessedRunId) {
+        $monitorState.WitnessedRunId = $event.runId
+    }
+    if ($event.process -and -not $monitorState.GameProcessIdentity) {
+        $monitorState.GameProcessIdentity = $event.process
+    }
     $monitorState.Mode = $event.mode
     $monitorState.Busy = $event.busy
+    if ($monitorState.Mode -cne 'waiting' -or $monitorState.Busy) { $focusRetryTimer.Stop() }
     $monitorState.AllowedActions = @($event.allowedActions)
     $monitorState.ConfirmationToken = $event.confirmationToken
     $monitorState.RunId = $event.runId
@@ -670,11 +857,28 @@ function Receive-MonitorEvent {
         $statusLabel.Text = 'Load your usual Starfield save'
         $statusHint.Text = 'Leave your character still, then click My save is loaded on the third card.'
         $progressFill.Width = 270
+        if ($event.process -and $event.runId -and -not $monitorState.CloseRequested -and
+            -not $monitorState.CloseSent -and -not $monitorState.TransportFailed -and
+            $monitorState.FocusAttemptedRunId -cne $event.runId) {
+            $monitorState.FocusAttemptedRunId = $event.runId
+            $monitorState.FocusAttemptCount = 0
+            Invoke-MonitorWaitingGameFocus
+        }
     } elseif ($event.mode -cin @('existing', 'cleanup')) {
         $hybridCard.Status.Text = 'CLEANUP REQUIRED'
         $statusLabel.Text = 'Finish the existing monitor session'
         $statusHint.Text = 'Exit Starfield through its usual menu if it is open, then click Finish cleanup.'
         $progressFill.BackColor = [System.Drawing.Color]::FromArgb(255, 172, 103)
+        $diagnostic = Get-MonitorCleanupDiagnostics -Event $event
+        if ($diagnostic.Text -cne $monitorState.LastCleanupDiagnosticKey) {
+            $monitorState.LastCleanupDiagnosticKey = $diagnostic.Text
+            Add-MonitorDetail -Message $diagnostic.Text
+        }
+        $detailsBox.Visible = $true
+        $detailsButton.Text = 'Hide details'
+        if ($diagnostic.Reason) {
+            $statusHint.Text = 'Cleanup held: ' + $diagnostic.Reason.Substring(0, [Math]::Min(140, $diagnostic.Reason.Length))
+        }
     } elseif ($event.mode -cin @('done', 'blocked')) {
         $passed = $event.outcome -ceq 'REVIEWED_MONITOR_TEST_PASSED' -and $event.analysisAccepted -and
             $event.bundleEvidenceIntegrityVerified -and $event.cleanupComplete -and $event.normalExitProven -and
@@ -1545,6 +1749,12 @@ $processState = [pscustomobject]@{
     CloseRequested = $false
 }
 
+$focusRetryTimer = New-Object System.Windows.Forms.Timer
+$focusRetryTimer.Interval = 1200
+$focusRetryTimer.Add_Tick({
+    if ($form.IsDisposed -or $processState.CloseRequested) { $focusRetryTimer.Stop(); return }
+    Invoke-MonitorWaitingGameFocus
+})
 $monitorPollTimer = New-Object System.Windows.Forms.Timer
 $monitorPollTimer.Interval = 120
 $monitorPollTimer.Add_Tick({
@@ -1606,6 +1816,7 @@ $monitorPollTimer.Add_Tick({
 $form.Add_FormClosing({
     param($sender, $eventArgs)
     $processState.CloseRequested = $true
+    $focusRetryTimer.Stop()
     $launchDelayTimer.Stop()
     $checkTimer.Stop()
     if ($monitorState.Process -and -not $monitorState.Process.HasExited) {
@@ -2030,6 +2241,7 @@ try {
     [void]$form.ShowDialog()
 }
 finally {
+    $focusRetryTimer.Stop()
     $checkTimer.Stop()
     $slotPollTimer.Stop()
     $readinessPollTimer.Stop()

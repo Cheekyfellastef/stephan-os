@@ -198,6 +198,157 @@ test('actual bootstrap refuses changed bridge bytes without executing them', asy
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+
+test('Hybrid brings only the exact game window forward after the verified waiting state', () => {
+  const event = functionSource('Receive-MonitorEvent');
+  const handoff = functionSource('Invoke-MonitorWaitingGameFocus');
+  assert.match(event, /\$event\.mode -ceq 'waiting'[\s\S]*?Invoke-MonitorWaitingGameFocus/);
+  assert.match(handoff, /FocusBoundGame\(/);
+  assert.match(handoff, /\$monitorState\.FocusAttemptCount -ge 8/);
+  assert.match(handoff, /game-window-not-visible[\s\S]*?\$monitorState\.FocusAttemptCount -lt 8/);
+  assert.match(handoff, /\$focusRetryTimer\.Start\(\)/);
+  assert.match(source, /\$focusRetryTimer\.Interval = 1200/);
+  assert.match(source, /\$focusRetryTimer\.Add_Tick\(\{[\s\S]*?Invoke-MonitorWaitingGameFocus/);
+  assert.match(source, /\$monitorState\.Mode -cne 'waiting' -or \$monitorState\.Busy\) \{ \$focusRetryTimer\.Stop\(\) \}/);
+  assert.match(event, /\$monitorState\.FocusAttemptedRunId -cne \$event\.runId/);
+  assert.match(source, /game\.StartTime\.ToUniversalTime\(\)\.ToFileTimeUtc\(\)/);
+  assert.match(source, /String\.Equals\(birth, createdFileTime, StringComparison\.Ordinal\)/);
+  assert.match(source, /game\.ProcessName, "Starfield", StringComparison\.OrdinalIgnoreCase/);
+  assert.doesNotMatch(source, /Starfield\.exe/i);
+  assert.match(source, /windows\.Count != 1\) return "game-window-ambiguous"/);
+  assert.match(source, /GetForegroundWindow\(\) == target/);
+  assert.match(source, /return "windows-denied-foreground"/);
+  assert.match(handoff, /Select the game from the taskbar, load your save, then return here to confirm/);
+  assert.doesNotMatch(handoff, /Send-MonitorCommand|\.Kill\(|Start-Process/);
+  assert.doesNotMatch(event.match(/\} elseif \(\$event\.mode -ceq 'waiting'\)([\s\S]*?)\} elseif \(\$event\.mode -cin/)?.[1] || '', /Send-MonitorCommand -Command 'confirm'/);
+});
+
+test('waiting-window retry is time-bounded, never relaunches game or replays save confirmation', () => {
+  const handoff = functionSource('Invoke-MonitorWaitingGameFocus');
+  const receiver = functionSource('Receive-MonitorEvent');
+  // The PowerShell cancellation predicate may gain additional safety stops.
+  // Prove each required guard lives in the fail-closed pre-attempt branch rather
+  // than requiring two nonadjacent predicates to appear next to each other.
+  const preAttemptGuards = handoff.match(/if \(([\s\S]*?)\) \{\s*\$focusRetryTimer\.Stop\(\)\s*return\s*\}/)?.[1];
+  assert.ok(preAttemptGuards, 'Focus retries must stop when the preflight rejects ownership');
+  for (const guard of [
+    '$processState.CloseRequested',
+    '$monitorState.CloseRequested',
+    '$monitorState.CloseSent',
+    '$monitorState.TransportFailed',
+    '$monitorState.FocusAttemptCount -ge 8',
+  ]) {
+    assert.ok(preAttemptGuards.includes(guard), 'Missing foreground retry abort guard: ' + guard);
+  }
+  assert.match(handoff, /\$monitorState\.FocusAttemptedRunId -cne \$monitorState\.RunId/);
+  assert.match(handoff, /\$result -ceq 'game-window-not-visible' -and \$monitorState\.FocusAttemptCount -lt 8/);
+  assert.match(handoff, /\$focusRetryTimer\.Stop\(\)/);
+  assert.match(receiver, /\$monitorState\.FocusAttemptCount = 0[\s\S]*?Invoke-MonitorWaitingGameFocus/);
+  assert.doesNotMatch(handoff, /Send-MonitorCommand|Start-StarfieldVrLauncherProcess|Start-MonitorFromHybridCard/);
+});
+
+test('same-run game identity drift fails closed before foreground or confirmation retarget', () => {
+  const receiver = functionSource('Receive-MonitorEvent');
+  for (const identityCheck of [
+    '$monitorState.WitnessedRunId -and $event.runId',
+    '$monitorState.GameProcessIdentity.pid -ne $event.process.pid',
+    '$monitorState.GameProcessIdentity.createdFileTime -cne $event.process.createdFileTime',
+    "throw 'monitor-state-game-identity-drift'",
+  ]) {
+    assert.ok(receiver.includes(identityCheck), 'Missing guard: ' + identityCheck);
+  }
+  assert.ok(receiver.indexOf("throw 'monitor-state-game-identity-drift'") <
+    receiver.indexOf('$monitorState.GameProcess = $event.process'));
+  assert.ok(!receiver.includes('Start-Process') && !receiver.includes('Stop-Process'));
+});
+
+test('same-run null game frames retain the original witnessed identity', () => {
+  const receiver = functionSource('Receive-MonitorEvent');
+  const initial = source.match(/\$monitorState = \[pscustomobject\]@\{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(initial, /GameProcessIdentity = \$null/);
+  assert.match(receiver, /\$monitorState\.GameProcessIdentity -and \$event\.process/);
+  assert.match(initial, /WitnessedRunId = \$null/);
+  assert.doesNotMatch(receiver, /if \(\$monitorState\.RunId -cne \$event\.runId\) \{ \$monitorState\.GameProcessIdentity = \$null \}/);
+  assert.match(receiver, /if \(\$event\.process -and -not \$monitorState\.GameProcessIdentity\)/);
+  assert.ok(receiver.indexOf("throw 'monitor-state-game-identity-drift'") <
+    receiver.indexOf('$monitorState.GameProcessIdentity = $event.process'));
+  assert.ok(receiver.indexOf('$monitorState.GameProcessIdentity = $event.process') <
+    receiver.indexOf('$monitorState.GameProcess = $event.process'));
+});
+
+test('one monitor child cannot swap native run IDs after a null process or run frame', () => {
+  const receiver = functionSource('Receive-MonitorEvent');
+  const initial = source.match(/\$monitorState = \[pscustomobject\]@\{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(initial, /WitnessedRunId = \$null/);
+  assert.match(receiver, /\$monitorState\.WitnessedRunId -and \$event\.runId -and \$monitorState\.WitnessedRunId -cne \$event\.runId/);
+  assert.match(receiver, /throw 'monitor-state-run-identity-drift'/);
+  assert.match(receiver, /\$event\.runId -and -not \$monitorState\.WitnessedRunId/);
+  assert.match(receiver, /\$monitorState\.WitnessedRunId = \$event\.runId/);
+  assert.match(receiver, /if \(\$event\.process -and -not \$event\.runId\) \{ throw 'monitor-state-process-without-run' \}/);
+  assert.ok(receiver.indexOf("throw 'monitor-state-run-identity-drift'") <
+    receiver.indexOf('$monitorState.GameProcess = $event.process'));
+  assert.ok(receiver.indexOf("throw 'monitor-state-process-without-run'") <
+    receiver.indexOf('$monitorState.WitnessedRunId = $event.runId'));
+  assert.doesNotMatch(receiver, /\$monitorState\.WitnessedRunId = \$null/);
+});
+
+test('explicit monitor cancellation or close disarms foreground retries and rejects late waiting rearm', () => {
+  const sender = functionSource('Send-MonitorCommand');
+  const retry = functionSource('Invoke-MonitorWaitingGameFocus');
+  const receiver = functionSource('Receive-MonitorEvent');
+  const terminal = sender.slice(sender.indexOf("if ($Command -in @('cancel', 'close')) {"));
+  const flush = terminal.indexOf('try {');
+  const stop = terminal.indexOf('$focusRetryTimer.Stop()');
+  assert.ok(stop >= 0 && stop < flush, 'terminal command must stop focus before flushing monitor input');
+  assert.match(terminal, /\$monitorState\.CloseSent = \$true[\s\S]*?\$focusRetryTimer\.Stop\(\)/);
+  assert.match(retry, /\$monitorState\.CloseRequested -or \$monitorState\.CloseSent/);
+  const waiting = receiver.slice(receiver.indexOf("elseif ($event.mode -ceq 'waiting')"));
+  assert.match(waiting, /-not \$monitorState\.CloseRequested -and[\s\S]*?-not \$monitorState\.CloseSent/);
+  assert.doesNotMatch(terminal.slice(0, flush), /FocusBoundGame|Start-Process|\.Kill\(/);
+});
+
+test('a broken monitor transport terminates all foreground retry work before closing child input', () => {
+  const fault = functionSource('Stop-MonitorTransport');
+  const retry = functionSource('Invoke-MonitorWaitingGameFocus');
+  assert.match(fault, /\$monitorState\.TransportFailed = \$true[\s\S]*?\$focusRetryTimer\.Stop\(\)/);
+  assert.ok(fault.indexOf('$focusRetryTimer.Stop()') < fault.indexOf('$monitorState.Pipe.CloseInput()'));
+  assert.match(retry, /\$monitorState\.TransportFailed/);
+  assert.doesNotMatch(fault, /FocusBoundGame|Send-MonitorCommand|Start-Process|\.Kill\(/);
+});
+
+test('the splash exposes local meter-free cleanup reasons without touching the custody decision', () => {
+  const diagnostic = functionSource('Get-MonitorCleanupDiagnostics');
+  const event = functionSource('Receive-MonitorEvent');
+  assert.match(diagnostic, /'Local cleanup diagnostic \(read only, no AI service\):'/);
+  assert.match(diagnostic, /paired-source-v1\\session\.json/);
+  assert.match(diagnostic, /Get-MonitorDiagnosticField -Record \$journal -Name 'cleanupError'/);
+  assert.match(diagnostic, /\$journalRun -cne \$activeRun/);
+  assert.match(diagnostic, /journal belongs to another run; not used as the current cleanup reason/);
+  assert.match(diagnostic, /\$file\.Length -gt 1048576/);
+  assert.match(diagnostic, /Test-MonitorCustodyPathPresent -LiteralPath \$entry\.Path/);
+  assert.doesNotMatch(diagnostic, /Remove-Item|Set-Content|Stop-Process|Start-Process|Send-MonitorCommand|\.Kill\(/);
+  assert.match(event, /Get-MonitorCleanupDiagnostics -Event \$event/);
+  assert.match(event, /\$detailsBox\.Visible = \$true/);
+  const control = functionSource('Set-MonitorProviderControls');
+  assert.match(control, /\$monitorState\.ProviderSlotReleased -and \$monitorState\.DurableCustodyReleased/);
+});
+
+test('native Windows PowerShell 5.1 can compile the new bounded foreground helper', { skip: process.platform !== 'win32' }, async () => {
+  const code = source.match(/Add-Type -TypeDefinition @'\r?\n([\s\S]*?)\r?\n'@/)?.[1];
+  assert.ok(code);
+  const folder = await mkdtemp(path.join(os.tmpdir(), 'Stephanos focus compile '));
+  const fixture = path.join(folder, 'focus-compile.ps1');
+  try {
+    await writeFile(fixture, "Set-StrictMode -Version Latest\r\n$ErrorActionPreference = 'Stop'\r\nAdd-Type -TypeDefinition @'\r\n" + code +
+      "\r\n'@\r\nif ([Stephanos.Starfield.MonitorPipe]::FocusBoundGame(0, '') -cne 'game-identity-missing') { throw 'unexpected-identity-guard' }\r\n", 'utf8');
+    const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const result = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fixture],
+      { encoding: 'utf8', timeout: 20000 });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+  } finally { await rm(folder, { recursive: true, force: true }); }
+});
+
 test('final splash pins exactly the packaged bridge and runner', async () => {
   const bridgePin = source.match(/\$monitorBridgeSha256 = '([a-f0-9]{64})'/)?.[1];
   const runnerPin = source.match(/\$monitorRunnerSha256 = '([a-f0-9]{64})'/)?.[1];
