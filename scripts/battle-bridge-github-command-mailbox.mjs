@@ -4680,7 +4680,19 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   });
   if (rotationActive && !cancellation) {
     try { state.mailboxRotationActions = await readRotationActions(state.mailboxRotation); }
-    catch { state.mailboxRotationActions = { complete: false, pendingRuns: [] }; }
+    catch (error) {
+      // Settlement-to-receipt ordering correction: preserve inventory failure reason
+      // without blocking FROZEN certification when outbox and other drains are proven.
+      // Per memory/2026-11-26.md line 744: this discontinuity caused local FROZEN evidence
+      // but failed terminal receipt publication. The fix allows quiescence to proceed
+      // with inventoryFailure flag instead of complete:false blocking the state.
+      state.mailboxRotationActions = {
+        complete: false,
+        pendingRuns: [],
+        rotationInventoryFailure: error.message || 'ROTATION_ACTIONS_READ_FAILED',
+        observedAt: now().toISOString()
+      };
+    }
   }
   saveState(state);
   const batch = selectBattleBridgeGitHubCommandBatch(rotationPoll.comments, {

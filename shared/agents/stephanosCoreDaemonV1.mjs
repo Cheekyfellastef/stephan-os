@@ -51,13 +51,15 @@ export function projectStephanosCoreDaemonState(input = {}) {
     && missionWorkerHeartbeatAgeMs <= 5 * 60 * 1000;
   const sovereignCommanderHealthy = bool(input.sovereignCommanderHealthy);
   const backendHealthy = bool(input.backendHealthy);
+  const ui4173BuildIdentityHealthy = bool(input.ui4173BuildIdentityHealthy);
   const gamingActive = input.gamingActive !== false;
   const observedHealthyCount = [
     sovereignCommanderHealthy,
     backendHealthy,
     missionWorkerHealthy,
+    ui4173BuildIdentityHealthy,
   ].filter(Boolean).length;
-  const readiness = observedHealthyCount === 3 ? 'READY' : 'DEGRADED';
+  const readiness = observedHealthyCount === 4 ? 'READY' : 'DEGRADED';
 
   return Object.freeze({
     schemaVersion: STEPHANOS_CORE_DAEMON_SCHEMA,
@@ -66,6 +68,7 @@ export function projectStephanosCoreDaemonState(input = {}) {
     readiness,
     sovereignCommanderHealthy,
     backendHealthy,
+    ui4173BuildIdentityHealthy,
     missionWorkerHealthy,
     missionWorkerHeartbeatAgeMs,
     gamingActive,

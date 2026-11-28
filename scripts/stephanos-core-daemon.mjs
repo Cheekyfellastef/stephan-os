@@ -93,6 +93,7 @@ const OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow';
 const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2961';
 const CONTROL_PLANE_SELF_HEAL_ACTION_ID = 'repair-control-plane';
 const BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge';
+const UI_4173_SELF_HEAL_ACTION_ID = 'refresh-stephanos-ui-4173';
 const RELATED_ISSUE = '#2593';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
 const bootstrapSovereignParentProofEligible = (
@@ -157,6 +158,48 @@ async function probe(url, expectedService = '') {
     if (!expectedService) return true;
     const body = await response.json();
     return body?.ok === true && body?.service === expectedService;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function probeSovereignCommander() {
+  return probe('http://127.0.0.1:18791/health', 'stephanos-sovereign-commander');
+}
+
+async function probeBackendHealth() {
+  return probe('http://127.0.0.1:8787/api/health');
+}
+
+async function probeStephanosUiBuildIdentity(sourceHead) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch('http://127.0.0.1:4173/__stephanos/health', {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    if (!response.ok) return false;
+    const body = await response.json();
+    const shaRegex = /^[0-9a-f]{40}$/i;
+
+    // Check all build identity conditions
+    if (body.runtimeBuildCurrent !== true) {
+      return false; // Stale build detected
+    }
+    if (!shaRegex.test(body.commitHash || '')) {
+      return false; // Truncated or invalid commit hash
+    }
+    if (body.commitHash.toLowerCase() !== sourceHead.toLowerCase()) {
+      return false; // HEAD mismatch - dist not rebuilt after git update
+    }
+    if (body.blocker && body.blocker.length > 0) {
+      return false; // Runtime blocker present
+    }
+
+    return true;
   } catch {
     return false;
   } finally {
@@ -502,25 +545,50 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
     return Object.freeze({ attempted: true, recovered: false });
   }
 
+  // Check if UI 4173 build identity is healthy (added for port 4173 monitoring)
+  let uiHealthy = await probeStephanosUiBuildIdentity(sourceHead);
+  if (!uiHealthy) {
+    // Attempt bounded repair using the refresh script
+    const uiRepair = await runBoundedDependencyMaintenance(
+      UI_4173_SELF_HEAL_ACTION_ID,
+      sourceHead,
+      'stephanos-ui-4173-build-refresh',
+    );
+    if (uiRepair?.proofHash) proofHashes.push(String(uiRepair.proofHash));
+    if (uiRepair?.ok !== true) {
+      lastDependencySelfHealVerdict = 'UI_4173_BUILD_REFRESH_BLOCKED';
+      lastDependencySelfHealBlocker = String(
+        uiRepair?.blocker || 'UI_4173_BUILD_REFRESH_BLOCKED',
+      ).slice(0, 160);
+      lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
+      return Object.freeze({ attempted: true, recovered: false });
+    }
+    // Re-verify after repair
+    uiHealthy = await probeStephanosUiBuildIdentity(sourceHead);
+  }
+
   const [verifiedCommander, verifiedBackend, verifiedWorkerAge] = await Promise.all([
-    probe('http://127.0.0.1:18791/health', 'stephanos-sovereign-commander'),
-    probe('http://127.0.0.1:8787/api/health'),
+    probeSovereignCommander(),
+    probeBackendHealth(),
     readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }),
   ]);
   const verifiedWorker = canonicalMissionWorkerEvidenceAllowsWork(verifiedWorkerAge);
   const recovered = verifiedCommander && verifiedBackend && verifiedWorker;
+  // uiHealthy is already computed above after potential repair
   lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
-  lastDependencySelfHealVerdict = recovered
+  lastDependencySelfHealVerdict = recovered && uiHealthy
     ? 'CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED'
     : 'CORE_DEPENDENCY_SELF_HEAL_VERIFICATION_STILL_UNHEALTHY';
-  lastDependencySelfHealBlocker = recovered
+  lastDependencySelfHealBlocker = recovered && uiHealthy
     ? ''
-    : !verifiedCommander
-      ? 'SOVEREIGN_COMMANDER_UNHEALTHY_AFTER_REPAIR'
-      : !verifiedBackend
-        ? 'BACKEND_8787_UNHEALTHY_AFTER_REPAIR'
-        : 'MISSION_WORKER_UNHEALTHY_AFTER_REPAIR';
-  return Object.freeze({ attempted: true, recovered });
+    : !uiHealthy
+      ? 'UI_4173_BUILD_IDENTITY_UNHEALTHY'
+      : !verifiedCommander
+        ? 'SOVEREIGN_COMMANDER_UNHEALTHY_AFTER_REPAIR'
+        : !verifiedBackend
+          ? 'BACKEND_8787_UNHEALTHY_AFTER_REPAIR'
+          : 'MISSION_WORKER_UNHEALTHY_AFTER_REPAIR';
+  return Object.freeze({ attempted: true, recovered: recovered && uiHealthy });
 }
 
 function startOptionalDependencyRepair(state, sourceHead) {
@@ -1284,11 +1352,12 @@ async function sample(sourceHead) {
         finalVerdict: 'SOVEREIGN_COMMANDER_AUTHENTICATED_PARENT_BOOTSTRAP_PROVEN',
       })
     : probeSovereignCommanderRuntimeCompatibility();
-  const [sovereignCommanderRuntime, backendHealthy, missionWorkerHeartbeatAgeMs, isGamingActive] = await Promise.all([
+  const [sovereignCommanderRuntime, backendHealthy, missionWorkerHeartbeatAgeMs, isGamingActive, ui4173BuildIdentityHealthy] = await Promise.all([
     sovereignCommanderRuntimePromise,
-    probe('http://127.0.0.1:8787/api/health'),
+    probeBackendHealth(),
     readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }),
     gamingActive(),
+    probeStephanosUiBuildIdentity(sourceHead),
   ]);
   return projectStephanosCoreDaemonState({
     sourceHead,
@@ -1296,6 +1365,7 @@ async function sample(sourceHead) {
     backendHealthy,
     missionWorkerHeartbeatAgeMs,
     gamingActive: isGamingActive,
+    ui4173BuildIdentityHealthy,
   });
 }
 
