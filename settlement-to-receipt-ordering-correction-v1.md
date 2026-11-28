@@ -1,8 +1,8 @@
 # Settlement-to-Receipt Ordering Correction for FROZEN Certification
 
-**Date:** 2026-11-28  
-**Goal:** #2315 — Switch canonical mailbox to #3552  
-**PR:** #3574 — feat(#3552): switch canonical mailbox to issue #3552  
+**Date:** 2026-11-28
+**Goal:** #2315 — Switch canonical mailbox to #3552
+**PR:** #3574 — feat(#3552): switch canonical mailbox to issue #3552
 **Status:** IN PROGRESS (addressing code review findings)
 
 ## Problem Statement
@@ -18,7 +18,7 @@ TypeError: Cannot convert undefined or null to object at Object.hasOwn (<anonymo
 ## Implemented Fixes
 
 ### Fix 1: Null-Safety Guard (Regression Fix)
-**Commit:** `b0a1bce38`  
+**Commit:** `b0a1bce38`
 **File:** `shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs`
 
 Added explicit null check before accessing properties to prevent TypeError:
@@ -53,9 +53,9 @@ if(actions.complete!==true && !Object.hasOwn(actions,'rotationInventoryFailure')
 4. Once resolved, continue with merge approval and deployment
 
 ## Related Artifacts
-- PR: https://github.com/Cheekyfellastef/stephan-os/pull/3574  
-- CI Run: https://github.com/Cheekyfellastef/stephan-os/actions/runs/46142730976  
-- Original mailbox #3258: exceeded GitHub 2500-comment limit  
+- PR: https://github.com/Cheekyfellastef/stephan-os/pull/3574
+- CI Run: https://github.com/Cheekyfellastef/stephan-os/actions/runs/46142730976
+- Original mailbox #3258: exceeded GitHub 2500-comment limit
 - Reconciliation fence posted to #3552: https://github.com/Cheekyfellastef/stephan-os/issues/3552#issuecomment-7239120068
 
 ## Notes
