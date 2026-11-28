@@ -6,6 +6,8 @@ import './seedCanopyParallelResourceV1.test.mjs';
 import './seedCanopyParallelGitHubApprovalV1.test.mjs';
 import './seedCanopyParallelSupervisorV1.test.mjs';
 import '../../tests/seed-canopy-parallel-forge-integration.test.mjs';
+// Keep OpenClaw's fail-closed seed proofs in the existing surface-ignition CI suite.
+import './openClawExcellenceSeedV1.test.mjs';
 import assert from 'node:assert/strict';
 import { deriveAgentsWorkspaceView, deriveFlywheelWorkspaceView } from './upliftWorkspaceProjectionV1.mjs';
 
@@ -170,6 +172,64 @@ test('Flywheel workspace derives evidence-backed uplift and history from Shared 
   assert.equal(builder.upliftNeedCount > 0, true);
 });
 
+
+test('truth projection lets explicit failure fields veto positive-looking status text', () => {
+  const cases = [
+    [{ status: 'READY' }, 'CURRENT'],
+    [{ status: 'SEED_ACTIVE' }, 'CURRENT'],
+    [{ status: 'BOOTSTRAP_ACTIVE' }, 'CURRENT'],
+    [{ status: 'PASSED' }, 'CURRENT'],
+    [{ status: 'READY', finalVerdict: 'FAILED' }, 'CONFLICTING'],
+    [{ status: 'PASS', verdict: 'FAILED' }, 'CONFLICTING'],
+    [{ state: 'RUNNING', phase: 'BLOCKED' }, 'CONFLICTING'],
+    [{ truth: 'CURRENT', status: 'DEGRADED' }, 'STALE'],
+    [{ status: 'PASS_PENDING' }, 'STALE'],
+    [{ status: 'UNKNOWN_SENSOR' }, 'UNKNOWN'],
+    [{ status: 'NOT_READY' }, 'CONFLICTING'],
+    [{ status: 'READY', finalVerdict: 'PROOF_REQUIRED' }, 'UNKNOWN'],
+    [{ status: 'READY', finalVerdict: 'REVIEW_REQUIRED' }, 'UNKNOWN'],
+    [{ status: 'READY', finalVerdict: 'AWAITING_REVIEW' }, 'STALE'],
+    [{ status: 'READY', finalVerdict: 'NEEDS_OPERATOR_APPROVAL' }, 'UNKNOWN'],
+    [{ status: 'READY', finalVerdict: 'P0_FINDINGS' }, 'CONFLICTING'],
+    [{ status: 'READY', finalVerdict: 'P1_BLOCKER' }, 'CONFLICTING'],
+    [{ status: 'READY', finalVerdict: 'SECURITY_FINDINGS' }, 'CONFLICTING'],
+    [{ status: 'READY', finalVerdict: 'APPROVAL_BOUNDARY_V2_SELF_CHANGE_REQUIRES_QUALIFIED_REVIEW' }, 'UNKNOWN'],
+    [{ status: 'READY', finalVerdict: 'P0_FINDINGS_NO_P1_FINDINGS_OPEN' }, 'CONFLICTING'],
+    [{ status: 'READY', finalVerdict: 'NO_P0_FINDINGS_P1_FINDINGS_UNRESOLVED' }, 'CONFLICTING'],
+    [{ status: 'READY', finalVerdict: 'CLEARED_P0_FINDINGS_P1_FINDINGS' }, 'CONFLICTING'],
+    [{ status: 'READY', finalVerdict: 'ZERO_P0_FINDINGS_P1_BLOCKERS' }, 'CONFLICTING'],
+    [{ status: 'READY', finalVerdict: 'ZERO_P0_FINDINGS' }, 'CURRENT'],
+    [{ status: 'READY', finalVerdict: 'CLEARED_P0_FINDINGS' }, 'CURRENT'],
+    [{ status: 'READY', finalVerdict: 'NO_P0_FINDINGS' }, 'CURRENT'],
+    [{ status: 'READY', finalVerdict: 'AWAITING_REVIEW', phase: 'UNQUALIFIED' }, 'UNKNOWN'],
+    [{ status: 'READY', finalVerdict: 'REVIEW_COMPLETE' }, 'CURRENT'],
+    [{ status: 'READY', finalVerdict: 'SOURCE_MUTATION_LEASE_MISSING' }, 'UNKNOWN'],
+    [{ status: 'READY', finalVerdict: 'SOURCE_LEASE_DENIED' }, 'CONFLICTING'],
+    [{ status: 'SEED_ACTIVE', finalVerdict: 'UNVERIFIED' }, 'UNKNOWN'],
+    [{ status: 'PASSED', phase: 'UNQUALIFIED' }, 'UNKNOWN'],
+  ];
+  for (const [fields, expected] of cases) {
+    const payload = feed();
+    payload.records = {
+      statusRecords: [{
+        kind: 'stephanos.shared_workspace.status',
+        participantId: 'truth-probe',
+        timestampUtc: '2026-11-03T09:45:00.000Z',
+        summary: 'Truth precedence probe',
+        ...fields,
+      }],
+      capabilityRecords: [],
+      receiptRecords: [],
+      eventRecords: [],
+      lessonRecords: [],
+      proofRecords: [],
+    };
+    const view = deriveFlywheelWorkspaceView(payload);
+    const participant = view.participants.find((entry) => entry.participantId === 'truth-probe');
+    assert.ok(participant, JSON.stringify(fields));
+    assert.equal(participant.truth, expected, JSON.stringify(fields));
+  }
+});
 
 test('passing logical controller pulse named Capability Gap Intake is not a current capability failure', () => {
   const payload = feed();
@@ -412,7 +472,7 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
   assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
   assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
-  assert.equal(unavailable.outcomeSeeds.length, 9);
+  assert.equal(unavailable.outcomeSeeds.length, 10);
   assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
 
   const payload = feed();
@@ -576,7 +636,7 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.autonomyVerdict, 'YES');
   assert.equal(live.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 2);
-  assert.equal(live.outcomeSeeds.length, 9);
+  assert.equal(live.outcomeSeeds.length, 10);
   assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
 });
 
@@ -977,7 +1037,7 @@ test('Flywheel exposes conversational intelligence as a persistent evidence-back
   assert.equal(live.conversationalIntelligenceSeedGrowth.groundingSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.brainSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.coherenceSignalCount >= 1, true);
-  assert.equal(live.outcomeSeeds.length, 9);
+  assert.equal(live.outcomeSeeds.length, 10);
   assert.match(live.conversationalIntelligenceSeedGrowth.nextBestAction, /next conversation|ratcheting|retained lessons/i);
 });
 
@@ -1551,7 +1611,7 @@ test('Flywheel exposes workspace integrity provenance as a persistent evidence-b
   assert.equal(live.workspaceIntegritySeedGrowth.orphanAuditProofCount >= 1, true);
   assert.equal(live.workspaceIntegritySeedGrowth.continuousAuditProofCount >= 1, true);
   assert.equal(live.workspaceIntegritySeedGrowth.pressureState, 'CURRENT');
-  assert.equal(live.outcomeSeeds.length, 9);
+  assert.equal(live.outcomeSeeds.length, 10);
 });
 
 test('Goal Conveyor & Fleet Care requires live heartbeat and typed proof, and recognises existing owner incidents', () => {

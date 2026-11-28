@@ -20,7 +20,9 @@ internal static class CanonicalInventoryDerivationTests
         Assert(vectors.RootElement.GetProperty("schemaVersion").GetString()
             == "stephanos.seed-canopy-canonical-inventory-vectors.v1", "FIXTURE_SCHEMA");
         JsonElement cases = vectors.RootElement.GetProperty("cases");
-        Assert(cases.GetArrayLength() == 16, "FIXTURE_CASE_COUNT");
+        using var inventory = JsonDocument.Parse(projection);
+        JsonElement seeds = inventory.RootElement.GetProperty("seeds");
+        VerifyVectorCoverage(cases, seeds);
         byte[] manifest = Utf8.GetBytes(cases[0].GetProperty("manifest").GetRawText());
         string target = cases[0].GetProperty("manifest").GetProperty("targetPath").GetString()!;
         byte[] expected = Utf8.GetBytes(cases[0].GetProperty("expectedContent").GetString()!);
@@ -47,7 +49,35 @@ internal static class CanonicalInventoryDerivationTests
             fixture.AssertReleased();
         }
 
-        Test("sixteen-existing-js-renderer-vectors-have-identical-output-bytes", () =>
+        Test("vector-coverage-rejects-forged-cardinality-order-and-identities", () =>
+        {
+            void RejectCoverage(Action<JsonArray> mutate)
+            {
+                JsonArray altered = JsonNode.Parse(cases.GetRawText())!.AsArray();
+                mutate(altered);
+                using var changed = JsonDocument.Parse(altered.ToJsonString());
+                bool rejected = false;
+                try { VerifyVectorCoverage(changed.RootElement, seeds); }
+                catch (Exception error) when (error.Message.StartsWith(
+                    "SEED_DERIVATION_TEST_FAILED_", StringComparison.Ordinal))
+                { rejected = true; }
+                Assert(rejected, "MUTATED_VECTOR_COVERAGE_ACCEPTED");
+            }
+            RejectCoverage(items => items.RemoveAt(0));
+            RejectCoverage(items => items.RemoveAt(items.Count - 1));
+            RejectCoverage(items => items.Add(items[0]!.DeepClone()));
+            RejectCoverage(items =>
+            {
+                JsonNode first = items[0]!.DeepClone();
+                items[0] = items[1]!.DeepClone();
+                items[1] = first;
+            });
+            RejectCoverage(items => items[0]!["name"] = "canonical:forged-seed");
+            RejectCoverage(items => items[0]!["manifest"]!["seedId"] = "forged-seed");
+            RejectCoverage(items => items[seeds.GetArrayLength()]!["name"] = "unreviewed-vector");
+        });
+
+        Test("every-canonical-seed-and-seven-hostile-renderer-vectors-have-identical-output-bytes", () =>
         {
             foreach (var item in cases.EnumerateArray())
             {
@@ -272,6 +302,50 @@ internal static class CanonicalInventoryDerivationTests
             unbound.AssertReleased();
         });
         return (passed, golden);
+    }
+
+    // Each new canonical Seed Canopy record requires exactly one byte-exact
+    // renderer vector. The seven distinct hostile cases remain mandatory.
+    // A stale fixed count (formerly 16) would fail whenever a legitimate seed
+    // is added, even if JS and native bytes agree. Never loosen case coverage.
+    private static readonly string[] FixedHostileVectors = [
+        "unicode-and-markdown-literals",
+        "replace-cr-lf-tab-and-angle-brackets",
+        "ecmascript-trim-includes-bom",
+        "ecmascript-trim-preserves-nel",
+        "maximum-intent-ascii",
+        "maximum-intent-astral-pair-at-boundary",
+        "maximum-intent-astral-pairs",
+    ];
+
+    private static void VerifyVectorCoverage(JsonElement cases, JsonElement seeds)
+    {
+        Assert(seeds.ValueKind == JsonValueKind.Array &&
+            seeds.GetArrayLength() is >= 1 and <= 64, "FIXTURE_SEED_COUNT");
+        Assert(cases.ValueKind == JsonValueKind.Array &&
+            cases.GetArrayLength() == seeds.GetArrayLength() + FixedHostileVectors.Length,
+            "FIXTURE_CASE_COUNT");
+        for (int i = 0; i < seeds.GetArrayLength(); i++)
+        {
+            string seedId = seeds[i].GetProperty("seedId").GetString()!;
+            Assert(cases[i].GetProperty("name").GetString() == "canonical:" + seedId,
+                "CANONICAL_VECTOR_IDENTITY");
+            Assert(cases[i].GetProperty("manifest").GetProperty("seedId").GetString() == seedId,
+                "CANONICAL_VECTOR_MANIFEST_BINDING");
+            Assert(cases[i].GetProperty("manifest").GetProperty("targetPath").GetString() ==
+                "docs/architecture/native-seed-inventory-" +
+                (i + 1).ToString("D2", CultureInfo.InvariantCulture) + ".md",
+                "CANONICAL_VECTOR_TARGET_BINDING");
+        }
+        string firstSeedId = seeds[0].GetProperty("seedId").GetString()!;
+        for (int i = 0; i < FixedHostileVectors.Length; i++)
+        {
+            JsonElement fixture = cases[seeds.GetArrayLength() + i];
+            Assert(fixture.GetProperty("name").GetString() == FixedHostileVectors[i],
+                "HOSTILE_VECTOR_NAME_OR_ORDER");
+            Assert(fixture.GetProperty("manifest").GetProperty("seedId").GetString() == firstSeedId,
+                "HOSTILE_VECTOR_CANONICAL_SEED");
+        }
     }
 
     private sealed class Fixture
