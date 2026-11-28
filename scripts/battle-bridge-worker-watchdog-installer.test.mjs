@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+// Exercise PR #2443's beacon/worker cadence and Core custody regression in the existing Windows watchdog proof lane.
+import './battle-bridge-github-api-traffic-conservation.test.mjs';
 
 const installPath = new URL('./windows/install-battle-bridge-worker-watchdog.ps1', import.meta.url);
 const statusPath = new URL('./windows/status-battle-bridge-worker-watchdog.ps1', import.meta.url);
@@ -179,7 +181,8 @@ test('installer exposes only StartNow and registers hidden limited fixed watchdo
   assert.match(source, /\/\/B \/\/NoLogo/);
   assert.match(source, /worker-watchdog/);
   assert.match(source, /remoteCodexVisibilityReconciler = \$true/);
-  assert.match(source, /-RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
+  assert.match(source, /intervalMinutes = 2/);
+  assert.match(source, /-RepetitionInterval \(New-TimeSpan -Minutes 2\)/);
   assert.match(source, /-AtLogOn/);
   assert.match(source, /-Hidden/);
   assert.match(source, /-RunLevel Limited/);
