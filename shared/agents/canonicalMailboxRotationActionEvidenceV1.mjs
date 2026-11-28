@@ -180,11 +180,13 @@ function validEvidenceEnvelope(actions){
 
 export function mailboxActionsExecutionQuiescent(actions,{now,mainHead,activationHead}={}){
  // Settlement-to-receipt ordering correction (memory/2026-11-26.md line 744):
- // allow quiescence when rotationInventoryFailure present and pendingRuns empty,
- // preventing FROZEN→DRAINING regression from non-fatal Actions inventory read failures.
+ // null-safety guard only; do not certify quiescence when inventory cannot be read.
  if(actions==null)return false;
  if(actions.complete!==true && !Object.hasOwn(actions,'rotationInventoryFailure')
    ||!Array.isArray(actions.pendingRuns))return false;
+ // AGENTS.md: No fabricated proof. Cannot certify quiescence without verified inventory.
+ // rotationInventoryFailure indicates we cannot observe Actions state, so fail closed.
+ if(Object.hasOwn(actions,'rotationInventoryFailure'))return false;
  if(now!==undefined&&(!Number.isFinite(Date.parse(now))||!Number.isFinite(Date.parse(actions.observedAt))
    ||Date.parse(now)-Date.parse(actions.observedAt)<0||Date.parse(now)-Date.parse(actions.observedAt)>120000))return false;
  if(Object.hasOwn(actions,'executionEvidence')||Object.hasOwn(actions,'evidenceDigest')){
