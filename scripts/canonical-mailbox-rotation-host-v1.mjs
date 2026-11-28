@@ -135,7 +135,12 @@ export async function executeMailboxRotationOnHost(command, {
         && /^MAILBOX_ROTATION_ACTIONS_INVENTORY_INCOMPLETE_(?:QUEUED|IN_PROGRESS|WAITING|REQUESTED|PENDING)_(?:READ|RESPONSE|TOTAL_DRIFT|PAGE_LENGTH|PAGE_LIMIT)$/.test(error.message);
       const blocker = typed.has(error?.message) || inventoryStage ? error.message
         : 'MAILBOX_ROTATION_ACTION_EVIDENCE_READ_FAILED';
-      state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
+      // A failed fresh read invalidates prior evidence; the outer guard must
+      // not recertify FROZEN from a previously successful observation.
+      state.mailboxRotationActions = { complete: false, pendingRuns: [],
+        rotationInventoryFailure: blocker, observedAt: now() };
+      state.mailboxRotation = { ...state.mailboxRotation,
+        ...mailboxActionEvidenceSummary(state.mailboxRotationActions), phase: 'DRAINING', drained: false };
       persist(state);
       return held(blocker);
     }
@@ -147,7 +152,8 @@ export async function executeMailboxRotationOnHost(command, {
         issueNumber: record.predecessorIssue, barrierCommentId: record.barrierCommentId,
       });
     } catch {
-      // Missing or malformed historical evidence is not an empty queue.
+      // Invalidate prior inventory; an unreadable predecessor is not an empty queue.
+      state.mailboxRotationInventory = null;
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
       persist(state);
       return held('MAILBOX_ROTATION_PREDECESSOR_HISTORY_READ_FAILED');

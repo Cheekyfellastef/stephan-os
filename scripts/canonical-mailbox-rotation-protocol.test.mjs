@@ -457,3 +457,25 @@ test('repeated transient evidence errors stay fail-closed after exactly two GET 
     assert.equal(f.events.filter(e => e.type === 'fence').length, 1, reader);
   }
 });
+
+test('failed fresh Actions observation invalidates prior FROZEN evidence before outer settlement',async()=>{
+  const f=fixture();await executeMailboxRotationOnHost(command(),f);
+  Object.assign(f.state,settleMailboxRotationDrain(f.state,{outboxPendingCount:0,now}));
+  assert.equal(f.state.mailboxRotation.phase,'FROZEN');
+  f.selectedCommentId=200;f.readActions=async()=>{throw Error('MAILBOX_ACTION_BATCH_READ_FAILED')};
+  const result=await executeMailboxRotationOnHost(control('STATUS'),f);
+  assert.equal(result.ok,false);
+  assert.equal(f.state.mailboxRotationActions.complete,false);
+  assert.equal(settleMailboxRotationDrain(f.state,{outboxPendingCount:0,now}).mailboxRotation.phase,'DRAINING');
+});
+
+test('failed fresh predecessor observation invalidates prior empty inventory before outer settlement',async()=>{
+  const f=fixture();await executeMailboxRotationOnHost(command(),f);
+  Object.assign(f.state,settleMailboxRotationDrain(f.state,{outboxPendingCount:0,now}));
+  assert.equal(f.state.mailboxRotation.phase,'FROZEN');
+  f.selectedCommentId=200;f.readComments=async()=>{throw Error('MAILBOX_HISTORY_PAGE_INVALID')};
+  const result=await executeMailboxRotationOnHost(control('STATUS'),f);
+  assert.equal(result.ok,false);
+  assert.equal(f.state.mailboxRotationInventory,null);
+  assert.equal(settleMailboxRotationDrain(f.state,{outboxPendingCount:0,now}).mailboxRotation.phase,'DRAINING');
+});
