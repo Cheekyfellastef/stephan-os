@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
 import { resolve } from 'node:path';
