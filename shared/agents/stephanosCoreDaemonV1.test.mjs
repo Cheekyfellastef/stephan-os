@@ -27,6 +27,7 @@ test('core daemon is a coordinator, not a second authority plane', () => {
     sourceHead: HEAD,
     sovereignCommanderHealthy: true,
     backendHealthy: true,
+    ui4173BuildIdentityHealthy: true,
     missionWorkerHeartbeatAgeMs: 10_000,
     gamingActive: false,
   });
@@ -47,6 +48,7 @@ test('UI/backend loss degrades observed stack without killing the core', () => {
     sourceHead: HEAD,
     sovereignCommanderHealthy: true,
     backendHealthy: false,
+    ui4173BuildIdentityHealthy: true,
     missionWorkerHeartbeatAgeMs: 10_000,
     gamingActive: true,
   });
@@ -65,6 +67,7 @@ test('absent or malformed worker heartbeat evidence stays unknown and degrades t
   for (const age of [null, undefined, '', '0', false, true, [], {}, NaN, Infinity, -1]) {
     const state = projectStephanosCoreDaemonState({
       sourceHead: HEAD, sovereignCommanderHealthy: true, backendHealthy: true,
+      ui4173BuildIdentityHealthy: true,
       missionWorkerHeartbeatAgeMs: age, gamingActive: false,
     });
     assert.equal(state.missionWorkerHeartbeatAgeMs, null);
@@ -79,6 +82,7 @@ test('worker health requires a measured age within the existing five minute wind
   for (const [age, healthy] of [[0, true], [299999.5, true], [300000, true], [300001, false]]) {
     const state = projectStephanosCoreDaemonState({
       sourceHead: HEAD, sovereignCommanderHealthy: true, backendHealthy: true,
+      ui4173BuildIdentityHealthy: true,
       missionWorkerHeartbeatAgeMs: age,
     });
     assert.equal(state.missionWorkerHeartbeatAgeMs, age);

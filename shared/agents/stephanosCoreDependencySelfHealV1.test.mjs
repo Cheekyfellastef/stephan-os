@@ -112,9 +112,13 @@ function isolatedRepair({ verifiedAge = null, repairOk = true } = {}) {
     },
     DEPENDENCY_SELF_HEAL_COOLDOWN_MS: 120_000,
     BATTLE_BRIDGE_SELF_HEAL_ACTION_ID: 'repair-battle-bridge',
+    UI_4173_SELF_HEAL_ACTION_ID: 'refresh-ui-build',
     workerHeartbeatPath: 'test-worker-heartbeat',
     workspaceRoot: 'workspace-fixture',
     probe: async () => true,
+    probeSovereignCommander: async () => true,
+    probeBackendHealth: async () => true,
+    probeStephanosUiBuildIdentity: async () => true,
     readCanonicalMissionWorkerHeartbeatAgeMs: () => verifiedAge,
     runBoundedDependencyMaintenance: async (actionId, head, missionId) => {
       actions.push({ actionId, head, missionId });
